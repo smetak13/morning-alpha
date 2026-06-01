@@ -15,14 +15,127 @@ openai:
 email:
   subject_prefix: "Personalized investment morning report"
 
-sector_reads:
+market_interests:
   enabled: true
-  max_articles_per_sector: 3
-  sectors:
-    - technology
-    - financial_services
-    - utilities
-    - consumer_cyclical
+  max_articles_per_interest: 3
+  max_total_articles: 5
+  min_confidence_score: 140
+  interests:
+    - name: AI Infrastructure
+      sectors:
+        - technology
+        - utilities
+      keywords:
+        - AI capex
+        - datacenter
+        - GPU
+        - hyperscaler
+        - power demand
+        - nuclear power
+        - electricity demand
+      related_tickers:
+        - MSFT
+        - NVDA
+        - GOOGL
+        - AMZN
+        - CEG
+        - VST
+
+    - name: Cloud and Enterprise Software
+      sectors:
+        - technology
+      keywords:
+        - cloud
+        - SaaS
+        - enterprise software
+        - Azure
+        - AWS
+        - Google Cloud
+        - hybrid cloud
+        - Red Hat
+        - cybersecurity
+        - identity management
+        - SMB software
+        - tax software
+      related_tickers:
+        - MSFT
+        - AMZN
+        - GOOGL
+        - IBM
+        - INTU
+        - OKTA
+
+    - name: Fintech Payments and Credit
+      sectors:
+        - financial_services
+        - technology
+      keywords:
+        - digital payments
+        - payment volume
+        - cross-border payments
+        - fintech
+        - credit scoring
+        - lending volumes
+        - loan defaults
+        - deposits
+        - interchange fees
+        - consumer credit
+      related_tickers:
+        - MA
+        - FICO
+        - SOFI
+        - MELI
+
+    - name: Latin America E-Commerce and Payments
+      sectors:
+        - consumer_cyclical
+        - financial_services
+      keywords:
+        - e-commerce
+        - marketplace
+        - digital adoption
+        - Mercado Pago
+        - GMV
+        - TPV
+        - fintech regulation
+      related_tickers:
+        - MELI
+
+    - name: EV Autonomy and Energy Storage
+      sectors:
+        - consumer_cyclical
+        - technology
+        - utilities
+      keywords:
+        - robotaxi
+        - autonomous driving
+        - autonomy
+        - full self-driving
+        - FSD
+        - EV demand
+        - electric vehicles
+        - vehicle deliveries
+        - automotive gross margin
+        - battery storage
+        - energy storage
+        - charging network
+        - Tesla Energy
+      related_tickers:
+        - TSLA
+
+    - name: Quantum Computing
+      sectors:
+        - technology
+      keywords:
+        - quantum computing
+        - quantum systems
+        - superconducting quantum
+        - trapped ion
+        - commercial adoption
+        - quantum roadmap
+      related_tickers:
+        - IONQ
+        - RGTI
 
 scoring:
   portfolio_ticker: 80

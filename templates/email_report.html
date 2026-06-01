@@ -109,10 +109,24 @@
         <p>No material watchlist-specific news found in the selected window.</p>
       {% endfor %}
 
-      <h2>Sector Reads</h2>
+      <h2>Market Interests</h2>
       {% for item in report.top_market_themes %}
         <div class="item">
           <h3>{{ item.theme }}</h3>
+          {% if item.why_you_see_this %}
+            <p><strong>Why you see this:</strong> {{ item.why_you_see_this }}</p>
+          {% endif %}
+          {% if item.today_signals %}
+            <p><strong>Today's signals:</strong></p>
+            <ul>
+              {% for signal in item.today_signals %}
+                <li>{{ signal }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+          {% if item.read_through %}
+            <p><strong>Read-through:</strong> {{ item.read_through }}</p>
+          {% endif %}
           {% if item.articles %}
             {% for article in item.articles[:3] %}
               <div class="sector-article">
