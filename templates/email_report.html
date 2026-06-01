@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ subject }}</title>
+    <style>
+      body { margin: 0; padding: 0; background: #f6f7f9; color: #14171f; font-family: Arial, Helvetica, sans-serif; }
+      .container { max-width: 760px; margin: 0 auto; padding: 24px; background: #ffffff; }
+      h1 { font-size: 24px; margin: 0 0 6px; }
+      h2 { font-size: 17px; margin: 28px 0 10px; border-bottom: 1px solid #d9dde5; padding-bottom: 6px; }
+      h3 { font-size: 14px; margin: 18px 0 6px; }
+      p, li { font-size: 14px; line-height: 1.45; }
+      ul { padding-left: 20px; }
+      .meta { color: #616978; font-size: 12px; margin-bottom: 22px; }
+      .item { border-left: 3px solid #2f6fed; padding-left: 12px; margin: 14px 0; }
+      .flag { display: inline-block; padding: 2px 7px; border-radius: 4px; background: #eef2ff; color: #1d3f92; font-size: 12px; font-weight: bold; }
+      .source { color: #4b5565; font-size: 12px; }
+      a { color: #1b5fd1; text-decoration: none; }
+      .disclaimer { margin-top: 28px; padding-top: 14px; border-top: 1px solid #d9dde5; color: #616978; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>{{ subject }}</h1>
+      <div class="meta">Report date: {{ report.report_date }} | Generated: {{ generated_at }}</div>
+
+      <h2>Executive Summary</h2>
+      <ul>
+        {% for item in report.executive_summary %}
+          <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+
+      <h2>Portfolio News</h2>
+      {% for item in report.portfolio_news %}
+        <div class="item">
+          <h3>{{ item.ticker }}: {{ item.headline }}</h3>
+          <p>{{ item.why_it_matters }}</p>
+          <p>
+            <span class="flag">{{ item.attention_label }}</span>
+            {% if item.source_url %}
+              <span class="source"> | <a href="{{ item.source_url }}">Full article{% if item.source %} - {{ item.source }}{% endif %}</a></span>
+            {% endif %}
+          </p>
+        </div>
+      {% else %}
+        <p>No material portfolio-specific news found in the selected window.</p>
+      {% endfor %}
+
+      <h2>Thesis Impact</h2>
+      {% for item in report.thesis_impact %}
+        <div class="item">
+          <h3>{{ item.ticker }}: {{ item.impact }}</h3>
+          <p>{{ item.rationale }}</p>
+          <p><strong>Monitor next:</strong> {{ item.monitor_next }}</p>
+        </div>
+      {% else %}
+        <p>No thesis-impacting items were identified.</p>
+      {% endfor %}
+
+      <h2>Watchlist News</h2>
+      {% for item in report.watchlist_news %}
+        <div class="item">
+          <h3>{{ item.ticker }}: {{ item.headline }}</h3>
+          <p>{{ item.why_it_matters }}</p>
+          <p>
+            <span class="flag">{{ item.attention_label }}</span>
+            {% if item.source_url %}
+              <span class="source"> | <a href="{{ item.source_url }}">Full article{% if item.source %} - {{ item.source }}{% endif %}</a></span>
+            {% endif %}
+          </p>
+        </div>
+      {% else %}
+        <p>No material watchlist-specific news found in the selected window.</p>
+      {% endfor %}
+
+      <h2>Top Market Themes</h2>
+      <ul>
+        {% for item in report.top_market_themes %}
+          <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+
+      <h2>Attention Flags</h2>
+      {% for item in report.attention_flags %}
+        <div class="item">
+          <h3>{{ item.ticker }} <span class="flag">{{ item.label }}</span></h3>
+          <p>{{ item.reason }}</p>
+        </div>
+      {% else %}
+        <p>No attention flags.</p>
+      {% endfor %}
+
+      <h2>Sources</h2>
+      <ul>
+        {% for source in report.sources %}
+          <li class="source"><a href="{{ source.url }}">{{ source.title }}</a> - {{ source.source }}</li>
+        {% endfor %}
+      </ul>
+
+      <p class="disclaimer">
+        This report is informational only. It flags relevance and topics for further review; it does not provide buy, sell, or hold recommendations.
+      </p>
+    </div>
+  </body>
+</html>

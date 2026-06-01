@@ -1,0 +1,6 @@
+Jinja2>=3.1.4
+openai>=1.82.0
+python-dotenv>=1.0.1
+PyYAML>=6.0.2
+requests>=2.32.3
+tzdata>=2025.2

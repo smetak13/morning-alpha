@@ -1,0 +1,46 @@
+timezone: Europe/Prague
+report_time: "08:00"
+
+fmp:
+  base_url: https://financialmodelingprep.com/stable
+  news_limit_per_ticker: 30
+  general_news_limit: 40
+  request_timeout_seconds: 20
+
+openai:
+  model: gpt-4.1-mini
+  max_input_items: 35
+
+email:
+  subject_prefix: "Personalized investment morning report"
+
+scoring:
+  portfolio_ticker: 80
+  watchlist_ticker: 45
+  thesis_keyword: 8
+  source_quality_multiplier: 10
+  duplicate_source: 8
+  price_move_abs_3pct: 15
+  price_move_abs_5pct: 25
+  volume_ratio_2x: 15
+  event_weights:
+    earnings: 35
+    guidance: 35
+    m_and_a: 30
+    regulation: 30
+    lawsuit: 25
+    buyback: 20
+    dividend: 15
+    sec_filing: 25
+    management: 20
+
+source_quality:
+  reuters.com: 1.0
+  bloomberg.com: 1.0
+  wsj.com: 0.95
+  ft.com: 0.95
+  sec.gov: 1.0
+  cnbc.com: 0.8
+  marketwatch.com: 0.75
+  seekingalpha.com: 0.65
+  benzinga.com: 0.6

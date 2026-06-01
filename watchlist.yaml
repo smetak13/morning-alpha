@@ -1,0 +1,128 @@
+tickers:
+  - ticker: NVDA
+    thesis:
+      why_i_watch_it:
+        - AI infrastructure demand is a key market driver
+      bull_case:
+        - data center revenue keeps compounding
+      bear_case:
+        - hyperscaler capex slows
+      key_metrics:
+        - data center revenue growth
+        - gross margin
+      red_flags:
+        - export restrictions
+        - customer concentration
+      action_triggers:
+        - flag if guidance implies a material demand slowdown
+
+  - ticker: GOOGL
+    thesis:
+      why_i_watch_it:
+        - dominant position in search and digital advertising
+        - strong AI capabilities and infrastructure
+        - cloud business still has meaningful growth potential
+      bull_case:
+        - AI enhances search monetization
+        - Google Cloud continues accelerating growth
+      bear_case:
+        - AI disrupts traditional search economics
+        - regulatory pressure weakens core businesses
+      key_metrics:
+        - search revenue growth
+        - Google Cloud growth
+        - operating margin
+      red_flags:
+        - declining search market share
+        - increasing AI infrastructure costs without monetization
+        - antitrust actions
+      action_triggers:
+        - flag if search revenue growth turns negative
+        - flag if cloud growth falls below 15%
+
+  - ticker: IBM
+    thesis:
+      why_i_watch_it:
+        - enterprise AI adoption may benefit IBM's software portfolio
+        - growing focus on hybrid cloud and consulting
+      bull_case:
+        - AI-related software revenue accelerates
+        - Red Hat continues driving growth
+      bear_case:
+        - legacy business offsets growth initiatives
+        - AI adoption remains slower than expected
+      key_metrics:
+        - software revenue growth
+        - free cash flow
+        - Red Hat growth
+      red_flags:
+        - stagnant software growth
+        - declining consulting demand
+      action_triggers:
+        - flag if software growth falls below 5%
+
+  - ticker: IONQ
+    thesis:
+      why_i_watch_it:
+        - one of the leading public quantum computing companies
+        - potential long-term winner if quantum computing reaches commercial scale
+      bull_case:
+        - significant technological breakthroughs
+        - enterprise adoption accelerates
+      bear_case:
+        - commercialization takes much longer than expected
+        - competing technologies gain advantage
+      key_metrics:
+        - bookings growth
+        - revenue growth
+        - cash runway
+      red_flags:
+        - repeated delays in technology roadmap
+        - weakening balance sheet
+      action_triggers:
+        - flag if cash runway drops below two years
+        - flag if bookings decline year-over-year
+
+  - ticker: RGTI
+    thesis:
+      why_i_watch_it:
+        - speculative exposure to quantum computing
+        - potential upside if superconducting quantum systems succeed
+      bull_case:
+        - technology milestones achieved ahead of expectations
+        - increasing commercial partnerships
+      bear_case:
+        - dilution and capital requirements remain high
+        - technology falls behind competitors
+      key_metrics:
+        - cash position
+        - technology roadmap progress
+        - strategic partnerships
+      red_flags:
+        - significant equity dilution
+        - missed technical milestones
+      action_triggers:
+        - flag if company raises capital at distressed valuations
+        - flag if major roadmap milestones are delayed
+
+  - ticker: SOFI
+    thesis:
+      why_i_watch_it:
+        - digital banking platform with expanding product ecosystem
+        - potential beneficiary of continued fintech adoption
+      bull_case:
+        - member growth remains strong
+        - banking segment drives profitability expansion
+      bear_case:
+        - credit quality deteriorates
+        - loan growth slows significantly
+      key_metrics:
+        - member growth
+        - adjusted EBITDA
+        - net revenue growth
+      red_flags:
+        - rising loan defaults
+        - declining deposit growth
+      action_triggers:
+        - flag if member growth falls below 20%
+        - flag if credit losses increase materially

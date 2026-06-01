@@ -1,0 +1,234 @@
+tickers:
+  - ticker: MSFT
+    position_size_pct: 18
+    thesis:
+      why_i_own_it:
+        - dominant enterprise software ecosystem
+        - Azure cloud growth
+        - strong AI positioning through OpenAI partnership
+      bull_case:
+        - Azure continues gaining market share
+        - AI products increase monetization per customer
+      bear_case:
+        - cloud growth decelerates significantly
+        - AI investments fail to generate expected returns
+      key_metrics:
+        - Azure growth
+        - operating margin
+        - free cash flow
+      red_flags:
+        - slowing enterprise spending
+        - margin compression
+        - loss of cloud market share
+      action_triggers:
+        - if Azure growth drops below 15%, flag for review
+        - if operating margin declines for two consecutive quarters, flag for review
+
+  - ticker: META
+    position_size_pct: 15
+    thesis:
+      why_i_own_it:
+        - strong free cash flow
+        - resilient ads business
+        - AI may improve engagement and monetization
+      bull_case:
+        - revenue growth remains healthy
+        - AI capex translates into higher monetization
+      bear_case:
+        - AI capex destroys free cash flow
+        - regulation hurts ads targeting
+      key_metrics:
+        - revenue growth
+        - FCF margin
+        - capex guidance
+      red_flags:
+        - FCF margin decline
+        - aggressive AI capex without revenue impact
+        - regulatory pressure
+      action_triggers:
+        - if FCF margin falls below 25%, flag for review
+        - if revenue growth is below 5% for two consecutive quarters, flag for review
+
+  - ticker: INTU
+    position_size_pct: 12
+    thesis:
+      why_i_own_it:
+        - mission-critical financial software
+        - strong recurring revenue
+        - pricing power and ecosystem moat
+      bull_case:
+        - continued growth in small business and tax products
+        - AI improves customer retention and upselling
+      bear_case:
+        - slowing SMB demand
+        - increased competition from fintech players
+      key_metrics:
+        - revenue growth
+        - operating margin
+        - customer retention
+      red_flags:
+        - declining margins
+        - slowing subscription growth
+      action_triggers:
+        - if revenue growth drops below 10%, flag for review
+
+  - ticker: MELI
+    position_size_pct: 11
+    thesis:
+      why_i_own_it:
+        - leading e-commerce platform in Latin America
+        - strong fintech growth through Mercado Pago
+        - long runway for digital adoption
+      bull_case:
+        - payments business grows faster than expected
+        - e-commerce penetration continues increasing
+      bear_case:
+        - macro instability in key markets
+        - regulatory pressure on fintech operations
+      key_metrics:
+        - GMV growth
+        - TPV growth
+        - operating margin
+      red_flags:
+        - slowing fintech growth
+        - worsening profitability
+      action_triggers:
+        - if TPV growth drops below 20%, flag for review
+
+  - ticker: VST
+    position_size_pct: 10
+    thesis:
+      why_i_own_it:
+        - growing power demand from AI datacenters
+        - attractive generation asset base
+        - favorable energy market dynamics
+      bull_case:
+        - sustained power price strength
+        - increasing datacenter demand
+      bear_case:
+        - declining wholesale electricity prices
+        - regulatory intervention
+      key_metrics:
+        - EBITDA
+        - power generation output
+        - forward power prices
+      red_flags:
+        - falling power demand forecasts
+        - adverse regulatory developments
+      action_triggers:
+        - if management lowers guidance, flag for review
+
+  - ticker: CEG
+    position_size_pct: 9
+    thesis:
+      why_i_own_it:
+        - nuclear generation leadership
+        - beneficiary of AI-related electricity demand
+        - long-term contracted cash flows
+      bull_case:
+        - increased nuclear demand from hyperscalers
+        - favorable regulatory environment
+      bear_case:
+        - lower-than-expected power demand
+        - political pressure on energy markets
+      key_metrics:
+        - EBITDA
+        - power contracts
+        - nuclear fleet utilization
+      red_flags:
+        - declining contracted volumes
+        - operational issues at nuclear plants
+      action_triggers:
+        - if contracted revenue outlook declines materially, flag for review
+
+  - ticker: MA
+    position_size_pct: 8
+    thesis:
+      why_i_own_it:
+        - global payments network moat
+        - secular shift from cash to digital payments
+        - high margins and capital-light model
+      bull_case:
+        - continued growth in cross-border payments
+        - strong consumer spending
+      bear_case:
+        - recession impacts transaction volumes
+        - regulatory pressure on fees
+      key_metrics:
+        - payment volume growth
+        - cross-border volume growth
+        - operating margin
+      red_flags:
+        - slowing payment growth
+        - regulatory investigations
+      action_triggers:
+        - if payment volume growth falls below 5%, flag for review
+
+  - ticker: TSLA
+    position_size_pct: 7
+    thesis:
+      why_i_own_it:
+        - autonomy and robotaxi optionality
+        - energy business growth
+        - manufacturing scale advantage
+      bull_case:
+        - successful robotaxi rollout
+        - energy segment becomes major profit driver
+      bear_case:
+        - continued EV margin compression
+        - delayed autonomy progress
+      key_metrics:
+        - automotive gross margin
+        - vehicle deliveries
+        - energy storage deployments
+      red_flags:
+        - declining margins
+        - weak delivery growth
+      action_triggers:
+        - if automotive gross margin drops below 15%, flag for review
+
+  - ticker: FICO
+    position_size_pct: 5
+    thesis:
+      why_i_own_it:
+        - dominant credit scoring franchise
+        - pricing power
+        - highly profitable business model
+      bull_case:
+        - continued pricing increases
+        - stable mortgage and lending activity
+      bear_case:
+        - regulatory pressure on credit scoring
+        - slowdown in lending volumes
+      key_metrics:
+        - revenue growth
+        - operating margin
+        - pricing growth
+      red_flags:
+        - regulatory challenges
+        - slowing pricing power
+      action_triggers:
+        - if revenue growth drops below 8%, flag for review
+
+  - ticker: AMZN
+    position_size_pct: 5
+    thesis:
+      why_i_own_it:
+        - AWS leadership
+        - improving retail profitability
+        - AI infrastructure beneficiary
+      bull_case:
+        - AWS accelerates growth
+        - retail margins continue expanding
+      bear_case:
+        - cloud competition intensifies
+        - heavy AI capex reduces returns
+      key_metrics:
+        - AWS growth
+        - operating income
+        - free cash flow
+      red_flags:
+        - AWS deceleration
+        - deteriorating retail margins
+      action_triggers:
+        - if AWS growth falls below 10%, flag for review
