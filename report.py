@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import email.message
+import html
 import json
 import math
 import os
@@ -59,6 +60,228 @@ STOPWORDS = {
     "would",
 }
 
+SECTOR_KEYWORDS = {
+    "technology": (
+        "technology",
+        "software",
+        "cloud",
+        "cybersecurity",
+        "semiconductor",
+        "chip",
+        "chips",
+        "ai",
+        "artificial",
+        "intelligence",
+        "datacenter",
+        "data",
+        "center",
+        "saas",
+    ),
+    "communication_services": (
+        "advertising",
+        "streaming",
+        "media",
+        "telecom",
+        "communications",
+        "social",
+        "gaming",
+        "internet",
+    ),
+    "financial_services": (
+        "bank",
+        "banks",
+        "banking",
+        "insurance",
+        "fintech",
+        "credit",
+        "loan",
+        "loans",
+        "asset",
+        "wealth",
+        "payments",
+        "capital",
+    ),
+    "healthcare": (
+        "healthcare",
+        "health",
+        "biotech",
+        "pharma",
+        "drug",
+        "drugs",
+        "medical",
+        "medicare",
+        "clinical",
+        "therapy",
+    ),
+    "consumer_cyclical": (
+        "retail",
+        "consumer",
+        "automotive",
+        "auto",
+        "ecommerce",
+        "travel",
+        "restaurant",
+        "housing",
+        "apparel",
+    ),
+    "consumer_defensive": (
+        "grocery",
+        "food",
+        "beverage",
+        "staples",
+        "household",
+        "tobacco",
+        "defensive",
+    ),
+    "industrials": (
+        "industrial",
+        "industrials",
+        "aerospace",
+        "defense",
+        "machinery",
+        "manufacturing",
+        "logistics",
+        "transport",
+    ),
+    "energy": (
+        "energy",
+        "oil",
+        "gas",
+        "lng",
+        "lpg",
+        "opec",
+        "crude",
+        "pipeline",
+        "drilling",
+    ),
+    "utilities": (
+        "utilities",
+        "utility",
+        "power",
+        "electricity",
+        "grid",
+        "nuclear",
+        "renewable",
+        "solar",
+        "wind",
+    ),
+    "real_estate": (
+        "real",
+        "estate",
+        "reit",
+        "housing",
+        "mortgage",
+        "office",
+        "property",
+        "properties",
+    ),
+    "materials": (
+        "materials",
+        "mining",
+        "metals",
+        "steel",
+        "copper",
+        "gold",
+        "chemical",
+        "chemicals",
+        "lithium",
+    ),
+}
+
+MARKET_THEME_KEYWORDS = {
+    "Market rally and valuation risks": (
+        "market",
+        "markets",
+        "stocks",
+        "equities",
+        "rally",
+        "valuation",
+        "valuations",
+        "earnings",
+        "margin",
+        "margins",
+        "bubble",
+        "crash",
+        "risk",
+        "risks",
+        "obstacle",
+        "obstacles",
+    ),
+    "AI infrastructure and cloud": (
+        "ai",
+        "artificial",
+        "intelligence",
+        "cloud",
+        "datacenter",
+        "data",
+        "center",
+        "chip",
+        "chips",
+        "gpu",
+        "semiconductor",
+    ),
+    "Rates and macro outlook": (
+        "fed",
+        "federal",
+        "reserve",
+        "rate",
+        "rates",
+        "inflation",
+        "jobs",
+        "payroll",
+        "treasury",
+        "yield",
+        "gdp",
+        "recession",
+    ),
+    "Geopolitics and regulation": (
+        "tariff",
+        "sanction",
+        "china",
+        "iran",
+        "geopolitical",
+        "regulation",
+        "regulator",
+        "antitrust",
+        "investigation",
+    ),
+    "Energy and commodities": (
+        "oil",
+        "gas",
+        "lng",
+        "lpg",
+        "opec",
+        "crude",
+        "energy",
+        "power",
+        "electricity",
+        "nuclear",
+        "commodity",
+    ),
+    "Credit and capital markets": (
+        "bond",
+        "bonds",
+        "debt",
+        "credit",
+        "loan",
+        "loans",
+        "financing",
+        "issuance",
+        "yield",
+        "spread",
+    ),
+    "Consumer and retail": (
+        "consumer",
+        "retail",
+        "spending",
+        "sales",
+        "housing",
+        "mortgage",
+        "autos",
+        "travel",
+    ),
+}
+
 
 @dataclass(frozen=True)
 class Holding:
@@ -84,12 +307,14 @@ class NewsItem:
     published_at: str | None
     symbols: list[str]
     event_types: list[str]
+    item_type: str = "news"
     score: float = 0
     score_reasons: list[str] | None = None
     matched_thesis_terms: list[str] | None = None
     duplicate_source_count: int = 1
     price_change_pct: float | None = None
     volume_ratio: float | None = None
+    popularity: float | None = None
 
 
 def require_dependency(module_name: str, install_name: str | None = None) -> Any:
@@ -135,6 +360,25 @@ def first_env(*names: str) -> str | None:
     return None
 
 
+def first_number(data: dict[str, Any], *names: str) -> float | None:
+    for name in names:
+        value = data.get(name)
+        if value is None:
+            continue
+        try:
+            return float(str(value).replace(",", ""))
+        except ValueError:
+            continue
+    return None
+
+
+def clean_text(value: Any) -> str:
+    text = html.unescape(str(value or ""))
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
 def parse_holdings(raw: dict[str, Any], default_position_size: float = 0) -> dict[str, Holding]:
     holdings: dict[str, Holding] = {}
     for item in raw.get("tickers", []):
@@ -172,6 +416,11 @@ def flatten_strings(value: Any) -> list[str]:
 def tokenize(text: str) -> list[str]:
     terms = re.findall(r"[A-Za-z][A-Za-z0-9\-]{2,}", text.lower())
     return [term for term in terms if term not in STOPWORDS and len(term) >= 4]
+
+
+def market_theme_terms(text: str) -> set[str]:
+    terms = re.findall(r"[A-Za-z][A-Za-z0-9\-]{1,}", text.lower())
+    return {term for term in terms if term not in STOPWORDS and len(term) >= 2}
 
 
 def thesis_keywords(holding: Holding) -> set[str]:
@@ -321,6 +570,10 @@ class FmpClient:
         data = self.get("news/general-latest", {"page": 0, "limit": limit})
         return data if isinstance(data, list) else []
 
+    def fmp_articles(self, limit: int) -> list[dict[str, Any]]:
+        data = self.get("fmp-articles", {"page": 0, "limit": limit})
+        return data if isinstance(data, list) else []
+
     def quote(self, symbol: str) -> dict[str, Any] | None:
         data = self.get("quote", {"symbol": symbol})
         if isinstance(data, list) and data:
@@ -350,16 +603,17 @@ def normalize_symbols(value: Any) -> list[str]:
     return sorted({part.upper().strip() for part in parts if part and part.strip()})
 
 
-def normalize_news_item(raw: dict[str, Any]) -> NewsItem | None:
-    title = str(raw.get("title") or raw.get("headline") or "").strip()
+def normalize_news_item(raw: dict[str, Any], item_type: str = "news") -> NewsItem | None:
+    title = clean_text(raw.get("title") or raw.get("headline") or "")
     url = str(raw.get("url") or raw.get("link") or "").strip()
     if not title or not url:
         return None
-    text = str(raw.get("text") or raw.get("summary") or raw.get("content") or "").strip()
+    text = clean_text(raw.get("text") or raw.get("summary") or raw.get("content") or "")
     source = str(raw.get("site") or raw.get("source") or domain_from_url(url) or "unknown").strip()
     published_at = raw.get("publishedDate") or raw.get("published_at") or raw.get("date")
     symbols = normalize_symbols(raw.get("symbols") or raw.get("symbol") or raw.get("ticker"))
     event_types = detect_event_types(f"{title} {text}")
+    popularity = first_number(raw, "views", "viewCount", "readCount", "reads", "popularity")
     return NewsItem(
         ticker=symbols[0] if symbols else None,
         title=title,
@@ -369,6 +623,8 @@ def normalize_news_item(raw: dict[str, Any]) -> NewsItem | None:
         published_at=str(published_at) if published_at else None,
         symbols=symbols,
         event_types=event_types,
+        item_type=item_type,
+        popularity=popularity,
         score_reasons=[],
         matched_thesis_terms=[],
     )
@@ -495,6 +751,192 @@ def truncate(text: str, max_chars: int) -> str:
     return clean[: max_chars - 1].rstrip() + "..."
 
 
+def compact_news_item(item: NewsItem) -> dict[str, Any]:
+    return {
+        "ticker": item.ticker,
+        "symbols": item.symbols,
+        "item_type": item.item_type,
+        "title": item.title,
+        "snippet": truncate(item.text, 360),
+        "source": item.source,
+        "url": item.url,
+        "published_at": item.published_at,
+        "event_types": item.event_types,
+        "relevance_score": item.score,
+        "notability_score": notable_article_score(item),
+        "popularity": item.popularity,
+    }
+
+
+def notable_article_score(item: NewsItem) -> float:
+    score = 0.0
+    if item.item_type == "fmp_article":
+        score += 60
+    elif item.item_type == "general_news":
+        score += 25
+    else:
+        score += 10
+
+    score += min(item.score, 80) * 0.25
+    score += len(item.event_types) * 8
+
+    if item.duplicate_source_count > 1:
+        score += min(item.duplicate_source_count, 5) * 6
+    if item.popularity is not None and item.popularity > 0:
+        score += min(math.log10(item.popularity + 1) * 12, 60)
+
+    title_terms = market_theme_terms(item.title)
+    broad_terms = {
+        "market",
+        "markets",
+        "stocks",
+        "equities",
+        "earnings",
+        "outlook",
+        "inflation",
+        "rates",
+        "fed",
+        "ai",
+        "energy",
+        "china",
+        "tariff",
+        "regulation",
+        "bonds",
+        "credit",
+    }
+    score += len(title_terms.intersection(broad_terms)) * 4
+    return round(score, 2)
+
+
+def notable_market_article_candidates(items: list[NewsItem], max_articles: int = 6) -> list[dict[str, Any]]:
+    seen_urls: set[str] = set()
+    candidates = []
+    for item in sorted(items, key=notable_article_score, reverse=True):
+        if not item.url or item.url in seen_urls:
+            continue
+        seen_urls.add(item.url)
+        candidates.append(
+            {
+                "theme_hint": item.title,
+                "candidate_type": "notable_article",
+                "supporting_articles": [compact_news_item(item)],
+                "article_count": 1,
+                "candidate_score": notable_article_score(item),
+            }
+        )
+        if len(candidates) >= max_articles:
+            break
+    return candidates
+
+
+def sector_label(sector: str) -> str:
+    return " ".join(word.capitalize() for word in sector.replace("-", "_").split("_") if word)
+
+
+def sector_terms(sector: str) -> set[str]:
+    configured = SECTOR_KEYWORDS.get(sector, ())
+    if configured:
+        return set(configured)
+    return market_theme_terms(sector.replace("_", " "))
+
+
+def sector_article_candidates(
+    items: list[NewsItem],
+    selected_sectors: list[str],
+    max_articles_per_sector: int,
+) -> list[dict[str, Any]]:
+    used_urls: set[str] = set()
+    candidates = []
+    scored_items = sorted(items, key=notable_article_score, reverse=True)
+
+    for sector in selected_sectors:
+        keywords = sector_terms(sector)
+        if not keywords:
+            continue
+
+        sector_articles = []
+        for item in scored_items:
+            if not item.url or item.url in used_urls:
+                continue
+            text_terms = market_theme_terms(f"{item.title} {item.text}")
+            hits = text_terms.intersection(keywords)
+            if not hits:
+                continue
+            article = compact_news_item(item)
+            article["sector_match_terms"] = sorted(hits)[:8]
+            sector_articles.append(article)
+            used_urls.add(item.url)
+            if len(sector_articles) >= max_articles_per_sector:
+                break
+
+        if sector_articles:
+            candidates.append(
+                {
+                    "theme_hint": sector_label(sector),
+                    "theme_type": "sector_reads",
+                    "sector": sector,
+                    "supporting_articles": sector_articles,
+                    "article_count": len(sector_articles),
+                    "candidate_score": round(sum(article.get("notability_score", 0) for article in sector_articles), 2),
+                }
+            )
+
+    return candidates
+
+
+def broad_market_theme_candidates(items: list[NewsItem], max_themes: int = 4, max_articles: int = 3) -> list[dict[str, Any]]:
+    buckets: dict[str, list[tuple[float, NewsItem]]] = {theme: [] for theme in MARKET_THEME_KEYWORDS}
+    other: list[tuple[float, NewsItem]] = []
+
+    for item in items:
+        text_terms = market_theme_terms(f"{item.title} {item.text}")
+        best_theme = None
+        best_hits: set[str] = set()
+        for theme, keywords in MARKET_THEME_KEYWORDS.items():
+            hits = text_terms.intersection(keywords)
+            if len(hits) > len(best_hits):
+                best_theme = theme
+                best_hits = hits
+
+        min_hits = 1 if best_theme == "AI infrastructure and cloud" and "ai" in best_hits else 2
+        if best_theme and len(best_hits) >= min_hits:
+            buckets[best_theme].append((len(best_hits) * 25 + item.score, item))
+        else:
+            other.append((item.score, item))
+
+    candidates = []
+    for theme, scored_items in buckets.items():
+        if not scored_items:
+            continue
+        scored_items.sort(key=lambda pair: pair[0], reverse=True)
+        articles = [compact_news_item(item) for _, item in scored_items[:max_articles]]
+        candidate_type = "theme" if len(scored_items) >= 2 else "notable_article"
+        candidates.append(
+            {
+                "theme_hint": theme,
+                "candidate_type": candidate_type,
+                "supporting_articles": articles,
+                "article_count": len(scored_items),
+                "candidate_score": round(sum(score for score, _ in scored_items[:max_articles]), 2),
+            }
+        )
+
+    if other:
+        other.sort(key=lambda pair: pair[0], reverse=True)
+        candidates.append(
+            {
+                "theme_hint": "Other notable market news",
+                "candidate_type": "notable_article" if len(other) < 2 else "theme",
+                "supporting_articles": [compact_news_item(item) for _, item in other[:max_articles]],
+                "article_count": len(other),
+                "candidate_score": round(sum(score for score, _ in other[:max_articles]), 2),
+            }
+        )
+
+    candidates.sort(key=lambda candidate: candidate["candidate_score"], reverse=True)
+    return candidates[:max_themes]
+
+
 def compact_context(
     report_date: dt.date,
     window_start: dt.datetime,
@@ -503,8 +945,28 @@ def compact_context(
     watchlist: dict[str, Holding],
     items: list[NewsItem],
     max_items: int,
+    config: dict[str, Any],
 ) -> dict[str, Any]:
     top_items = sorted(items, key=lambda item: item.score, reverse=True)[:max_items]
+    excluded_tickers = set(portfolio) | set(watchlist)
+    broad_candidates = [
+        item
+        for item in sorted(items, key=lambda item: item.score, reverse=True)
+        if item.ticker not in excluded_tickers and not set(item.symbols).intersection(excluded_tickers)
+    ]
+    fmp_article_items = [item for item in broad_candidates if item.item_type == "fmp_article"]
+    fallback_broad_items = [item for item in broad_candidates if item.item_type != "fmp_article"]
+    broad_market_items = (fmp_article_items + fallback_broad_items)[:20]
+    sector_config = config.get("sector_reads", {})
+    selected_sectors = sector_config.get("sectors", [])
+    if not isinstance(selected_sectors, list):
+        selected_sectors = []
+    max_sector_articles = int(sector_config.get("max_articles_per_sector", 3))
+    market_theme_candidates = (
+        sector_article_candidates(broad_market_items, selected_sectors, max_sector_articles)
+        if sector_config.get("enabled", True)
+        else notable_market_article_candidates(broad_market_items)
+    )
     return {
         "report_date": report_date.isoformat(),
         "news_window": {
@@ -545,6 +1007,13 @@ def compact_context(
             }
             for item in top_items
         ],
+        "broad_market_news": [compact_news_item(item) for item in broad_market_items],
+        "market_theme_candidates": market_theme_candidates,
+        "sector_reads_config": {
+            "enabled": bool(sector_config.get("enabled", True)),
+            "selected_sectors": selected_sectors,
+            "max_articles_per_sector": max_sector_articles,
+        },
         "constraints": {
             "allowed_attention_labels": sorted(ATTENTION_LABELS),
             "must_not_include": [
@@ -582,6 +1051,9 @@ def default_report(context: dict[str, Any]) -> dict[str, Any]:
             "ticker": item.get("ticker") or "MARKET",
             "headline": item.get("title", ""),
             "why_it_matters": "Relevant based on ticker match, event type, price/volume signal, or thesis keyword match.",
+            "article_summary": [
+                item.get("snippet", "No article summary available."),
+            ],
             "attention_label": "monitor",
             "source": item.get("source", ""),
             "source_url": item.get("url", ""),
@@ -607,7 +1079,7 @@ def default_report(context: dict[str, Any]) -> dict[str, Any]:
         "portfolio_news": portfolio_news,
         "thesis_impact": [],
         "watchlist_news": watchlist_news,
-        "top_market_themes": [],
+        "top_market_themes": build_default_market_themes(context),
         "attention_flags": flags,
         "sources": [
             {
@@ -633,7 +1105,34 @@ def generate_report_with_openai(context: dict[str, Any], config: dict[str, Any])
         "Return valid JSON only."
     )
     user = {
-        "task": "Create a daily investment morning report from this prefiltered context.",
+        "task": (
+            "Create a daily investment morning report from this prefiltered context. "
+            "For the top_market_themes section, create a short list of notable market reads from context.market_theme_candidates. "
+            "Each item must use exactly one candidate and exactly that candidate's single supporting article. "
+            "Do not turn a single article into a broad trend."
+        ),
+        "writing_guidance": [
+            "Write for beginner investors: explain financial implications plainly and avoid unexplained jargon.",
+            "For portfolio_news and watchlist_news, keep why_it_matters short, then add article_summary with 3-5 factual bullet points based only on the supplied snippet/title/source metadata.",
+            "For thesis_impact, explain how the news could affect the user's stated thesis, key metrics, red flags, and action triggers.",
+            "Only include portfolio holdings in thesis_impact; do not include watchlist-only companies there.",
+            "Use top_market_themes as notable market reads outside the user's portfolio and watchlist.",
+            "For top_market_themes, do not combine articles from different market_theme_candidates into one item.",
+            "Do not reuse the same source article URL across multiple top_market_themes.",
+            "For top_market_themes, set theme_type to notable_article, use the article title or a very close paraphrase as theme, and summarize only that article's actual topic.",
+            "Do not add macro, geopolitical, regulatory, or sector claims to a notable market read unless directly supported by its single source article.",
+            "When impact is uncertain, say what is unknown and what evidence would clarify it.",
+            "Do not give buy, sell, hold, position sizing, price target, or trading advice.",
+        ],
+        "sector_read_guidance": [
+            "Treat top_market_themes as sector reads, not inferred market trends.",
+            "Use context.market_theme_candidates only; each candidate is one configured sector from config.sector_reads.",
+            "For each item, set theme to the sector label and create articles from the supplied source_articles for that sector.",
+            "For each sector article, write a concise two-sentence summary based only on that article's title and snippet.",
+            "Do not write a sector-level summary; leave item.summary empty because each article has its own summary.",
+            "Use human-readable sector labels such as Technology or Consumer Cyclical, not snake_case.",
+            "Do not combine sectors, do not add claims that are not supported by the supplied articles, and do not mention portfolio/watchlist company news.",
+        ],
         "output_schema": {
             "report_date": "YYYY-MM-DD",
             "executive_summary": ["string"],
@@ -642,6 +1141,9 @@ def generate_report_with_openai(context: dict[str, Any], config: dict[str, Any])
                     "ticker": "string",
                     "headline": "string",
                     "why_it_matters": "string",
+                    "article_summary": [
+                        "bullet point with the most important facts from the article, written for a beginner investor"
+                    ],
                     "attention_label": "no_action|monitor|review_thesis|review_valuation|deeper_analysis_needed",
                     "source": "string",
                     "source_url": "string",
@@ -651,8 +1153,12 @@ def generate_report_with_openai(context: dict[str, Any], config: dict[str, Any])
                 {
                     "ticker": "string",
                     "impact": "supports|challenges|mixed|unclear",
-                    "rationale": "string",
-                    "monitor_next": "string",
+                    "rationale": "beginner-friendly explanation of how the news relates to the user's thesis",
+                    "portfolio_relevance": "explain in practical terms why this may matter for an existing holder, without buy/sell advice",
+                    "thesis_points_affected": ["specific thesis, metric, red flag, or action trigger affected by the news"],
+                    "possible_positive_readthrough": "string",
+                    "possible_negative_readthrough": "string",
+                    "monitor_next": "concrete metric, filing, management comment, or follow-up event to watch",
                 }
             ],
             "watchlist_news": [
@@ -660,12 +1166,36 @@ def generate_report_with_openai(context: dict[str, Any], config: dict[str, Any])
                     "ticker": "string",
                     "headline": "string",
                     "why_it_matters": "string",
+                    "article_summary": [
+                        "bullet point with the most important facts from the article, written for a beginner investor"
+                    ],
                     "attention_label": "no_action|monitor|review_thesis|review_valuation|deeper_analysis_needed",
                     "source": "string",
                     "source_url": "string",
                 }
             ],
-            "top_market_themes": ["string"],
+            "top_market_themes": [
+                {
+                    "theme": "string",
+                    "theme_type": "sector_reads",
+                    "summary": "string",
+                    "articles": [
+                        {
+                            "headline": "string",
+                            "summary": "2 sentence beginner-friendly article summary",
+                            "source": "string",
+                            "source_url": "string",
+                        }
+                    ],
+                    "source_articles": [
+                        {
+                            "title": "string",
+                            "source": "string",
+                            "url": "string",
+                        }
+                    ],
+                }
+            ],
             "attention_flags": [
                 {
                     "ticker": "string",
@@ -726,15 +1256,244 @@ def enrich_report_item_sources(items: list[dict[str, Any]], context: dict[str, A
             item["source_url"] = best_match.get("url", "")
 
 
+def article_from_news(news: dict[str, Any]) -> dict[str, str]:
+    return {
+        "headline": clean_text(news.get("headline") or news.get("title") or ""),
+        "title": clean_text(news.get("title") or news.get("headline") or ""),
+        "summary": clean_text(news.get("summary") or news.get("snippet") or ""),
+        "source": clean_text(news.get("source") or ""),
+        "source_url": str(news.get("source_url") or news.get("url") or ""),
+        "url": str(news.get("url") or news.get("source_url") or ""),
+    }
+
+
+def configured_tickers(context: dict[str, Any]) -> set[str]:
+    tickers = set()
+    for section in ("portfolio", "watchlist"):
+        for item in context.get(section, []):
+            ticker = item.get("ticker")
+            if ticker:
+                tickers.add(str(ticker).upper())
+    return tickers
+
+
+def news_mentions_configured_ticker(news: dict[str, Any], tickers: set[str]) -> bool:
+    ticker = str(news.get("ticker") or "").upper()
+    symbols = {str(symbol).upper() for symbol in news.get("symbols", []) if symbol}
+    return ticker in tickers or bool(symbols.intersection(tickers))
+
+
+def matching_articles_for_theme(theme: dict[str, Any], context: dict[str, Any], limit: int = 3) -> list[dict[str, str]]:
+    theme_terms = normalize_match_text(f"{theme.get('theme', '')} {theme.get('summary', '')}")
+    excluded_tickers = configured_tickers(context)
+    scored_articles = []
+    for news in context.get("broad_market_news", []):
+        if not news.get("url"):
+            continue
+        if news_mentions_configured_ticker(news, excluded_tickers):
+            continue
+        article_terms = normalize_match_text(f"{news.get('title', '')} {news.get('snippet', '')}")
+        overlap = len(theme_terms.intersection(article_terms))
+        relevance = float(news.get("relevance_score") or 0)
+        score = overlap * 10 + relevance
+        scored_articles.append((score, article_from_news(news)))
+    scored_articles.sort(key=lambda item: item[0], reverse=True)
+    return [article for score, article in scored_articles[:limit] if score > 0 and article["url"]]
+
+
+def build_default_market_themes(context: dict[str, Any]) -> list[dict[str, Any]]:
+    themes = []
+    used_urls: set[str] = set()
+    for candidate in context.get("market_theme_candidates", []):
+        if len(themes) >= 3:
+            break
+        articles = [
+            article_from_news(article)
+            for article in candidate.get("supporting_articles", [])
+            if article.get("url") and article.get("url") not in used_urls
+        ][:3]
+        if not articles:
+            continue
+        used_urls.update(article["url"] for article in articles if article.get("url"))
+        themes.append(
+            {
+                "theme": candidate.get("theme_hint", "Notable market article"),
+                "theme_type": "notable_article",
+                "summary": "Notable market article selected from broad market news outside the configured portfolio and watchlist.",
+                "source_articles": articles,
+            }
+        )
+    return themes
+
+
+def normalize_market_themes(report: dict[str, Any], context: dict[str, Any]) -> None:
+    if report.get("top_market_themes_v2") and not report.get("top_market_themes"):
+        report["top_market_themes"] = report["top_market_themes_v2"]
+
+    normalized = []
+    excluded_tickers = configured_tickers(context)
+    used_urls: set[str] = set()
+    for section in ("portfolio_news", "watchlist_news"):
+        for existing_item in report.get(section, []):
+            existing_url = existing_item.get("source_url") or existing_item.get("url")
+            if existing_url:
+                used_urls.add(str(existing_url))
+    for item in report.get("top_market_themes", []):
+        if isinstance(item, str):
+            theme = {"theme": item, "theme_type": "theme", "summary": "", "source_articles": []}
+        elif isinstance(item, dict):
+            theme = {
+                "theme": str(item.get("theme") or item.get("title") or "Market theme"),
+                "theme_type": str(item.get("theme_type") or item.get("candidate_type") or "theme"),
+                "summary": str(item.get("summary") or item.get("why_it_matters") or ""),
+                "source_articles": item.get("source_articles") or item.get("articles") or item.get("sources") or [],
+            }
+        else:
+            continue
+
+        source_articles = []
+        for article in theme.get("source_articles", []):
+            if not isinstance(article, dict):
+                continue
+            url = article.get("url") or article.get("source_url")
+            if not url:
+                continue
+            all_news = context.get("ranked_news", []) + context.get("broad_market_news", [])
+            matching_news = next((news for news in all_news if news.get("url") == url), None)
+            if matching_news and news_mentions_configured_ticker(matching_news, excluded_tickers):
+                continue
+            if url in used_urls:
+                continue
+            source_articles.append(
+                {
+                    "title": str(article.get("title") or article.get("headline") or url),
+                    "source": str(article.get("source") or ""),
+                    "url": str(url),
+                }
+            )
+            used_urls.add(str(url))
+            if len(source_articles) >= 3:
+                break
+
+        candidate_articles = candidate_articles_for_theme(theme, context)
+        candidate_articles = [
+            article for article in candidate_articles if article.get("url") and article["url"] not in used_urls
+        ]
+        if not source_articles:
+            source_articles = candidate_articles
+        elif candidate_articles and not theme_articles_fit_candidate(source_articles, candidate_articles):
+            used_urls.difference_update(article["url"] for article in source_articles if article.get("url"))
+            source_articles = candidate_articles
+        used_urls.update(article["url"] for article in source_articles if article.get("url"))
+        theme["source_articles"] = source_articles[:3]
+        theme["summary"] = ""
+        normalize_sector_label(theme)
+        normalize_sector_read_articles(theme)
+        normalized.append(theme)
+
+    report["top_market_themes"] = normalized
+
+
+def filter_thesis_impact_to_portfolio(report: dict[str, Any], context: dict[str, Any]) -> None:
+    portfolio_tickers = {str(item.get("ticker") or "").upper() for item in context.get("portfolio", [])}
+    report["thesis_impact"] = [
+        item
+        for item in report.get("thesis_impact", [])
+        if str(item.get("ticker") or "").upper() in portfolio_tickers
+    ]
+
+
+def candidate_articles_for_theme(theme: dict[str, Any], context: dict[str, Any]) -> list[dict[str, str]]:
+    candidates = context.get("market_theme_candidates", [])
+    if not candidates:
+        return matching_articles_for_theme(theme, context, limit=3)
+
+    theme_terms = normalize_match_text(f"{theme.get('theme', '')} {theme.get('summary', '')}")
+    best_candidate = None
+    best_score = -1
+    for candidate in candidates:
+        candidate_text = candidate.get("theme_hint", "")
+        for article in candidate.get("supporting_articles", []):
+            candidate_text += f" {article.get('title', '')} {article.get('snippet', '')}"
+        candidate_terms = normalize_match_text(candidate_text)
+        overlap = len(theme_terms.intersection(candidate_terms))
+        score = overlap * 10 + float(candidate.get("candidate_score") or 0)
+        if score > best_score:
+            best_score = score
+            best_candidate = candidate
+
+    if not best_candidate:
+        return []
+    return [
+        article_from_news(article)
+        for article in best_candidate.get("supporting_articles", [])
+        if article.get("url")
+    ][:3]
+
+
+def theme_articles_fit_candidate(source_articles: list[dict[str, str]], candidate_articles: list[dict[str, str]]) -> bool:
+    candidate_urls = {article["url"] for article in candidate_articles if article.get("url")}
+    if not candidate_urls:
+        return False
+    source_urls = {article["url"] for article in source_articles if article.get("url")}
+    return bool(source_urls.intersection(candidate_urls))
+
+
+def normalize_sector_read_articles(theme: dict[str, Any]) -> None:
+    raw_articles = theme.get("articles") or theme.get("source_articles") or []
+    normalized = []
+    for article in raw_articles[:3]:
+        if not isinstance(article, dict):
+            continue
+        source_url = article.get("source_url") or article.get("url")
+        if not source_url:
+            continue
+        headline = clean_text(article.get("headline") or article.get("title") or source_url)
+        summary = clean_text(article.get("summary") or article.get("snippet") or "")
+        normalized.append(
+            {
+                "headline": headline,
+                "summary": summary,
+                "source": clean_text(article.get("source") or ""),
+                "source_url": str(source_url),
+            }
+        )
+    theme["articles"] = normalized
+
+
+def normalize_sector_label(theme: dict[str, Any]) -> None:
+    sector = theme.get("sector")
+    raw_theme = str(theme.get("theme") or "")
+    if sector:
+        theme["theme"] = sector_label(str(sector))
+        return
+    normalized_key = raw_theme.strip().lower().replace(" ", "_").replace("-", "_")
+    if normalized_key in SECTOR_KEYWORDS:
+        theme["theme"] = sector_label(normalized_key)
+    else:
+        theme["theme"] = sector_label(raw_theme)
+
+
 def validate_report(report: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     report["report_date"] = str(report.get("report_date") or context["report_date"])
     for key in ("executive_summary", "portfolio_news", "thesis_impact", "watchlist_news", "top_market_themes", "attention_flags", "sources"):
         if not isinstance(report.get(key), list):
             report[key] = []
+    normalize_market_themes(report, context)
+    filter_thesis_impact_to_portfolio(report, context)
     for section in ("portfolio_news", "watchlist_news"):
         for item in report[section]:
             item["attention_label"] = validate_label(item.get("attention_label"))
+            if isinstance(item.get("article_summary"), str):
+                item["article_summary"] = [item["article_summary"]]
+            elif not isinstance(item.get("article_summary"), list):
+                item["article_summary"] = []
         enrich_report_item_sources(report[section], context)
+    for item in report["thesis_impact"]:
+        if isinstance(item.get("thesis_points_affected"), str):
+            item["thesis_points_affected"] = [item["thesis_points_affected"]]
+        elif not isinstance(item.get("thesis_points_affected"), list):
+            item["thesis_points_affected"] = []
     for item in report["attention_flags"]:
         item["label"] = validate_label(item.get("label"))
     if not report["sources"]:
@@ -804,18 +1563,30 @@ def fetch_and_rank_news(
 ) -> list[NewsItem]:
     symbols = sorted(set(portfolio) | set(watchlist))
     fmp_config = config.get("fmp", {})
-    raw_items: list[dict[str, Any]] = []
-    raw_items.extend(
-        client.stock_news(
+    typed_raw_items: list[tuple[dict[str, Any], str]] = []
+    typed_raw_items.extend(
+        (item, "stock_news")
+        for item in client.stock_news(
             symbols=symbols,
             start=window_start.date(),
             end=window_end.date(),
             limit=int(fmp_config.get("news_limit_per_ticker", 30)) * max(1, len(symbols)),
         )
     )
-    raw_items.extend(client.general_news(limit=int(fmp_config.get("general_news_limit", 40))))
+    typed_raw_items.extend(
+        (item, "general_news")
+        for item in client.general_news(limit=int(fmp_config.get("general_news_limit", 40)))
+    )
+    typed_raw_items.extend(
+        (item, "fmp_article")
+        for item in client.fmp_articles(limit=int(fmp_config.get("fmp_articles_limit", 30)))
+    )
 
-    normalized = [item for item in (normalize_news_item(raw) for raw in raw_items) if item is not None]
+    normalized = [
+        item
+        for item in (normalize_news_item(raw, item_type=item_type) for raw, item_type in typed_raw_items)
+        if item is not None
+    ]
     filtered = []
     for item in normalized:
         published = parse_date(item.published_at)
@@ -888,6 +1659,7 @@ def main() -> int:
         watchlist=watchlist,
         items=ranked_news,
         max_items=int(config.get("openai", {}).get("max_input_items", 35)),
+        config=config,
     )
 
     if args.skip_openai:

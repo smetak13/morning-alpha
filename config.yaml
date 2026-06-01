@@ -5,6 +5,7 @@ fmp:
   base_url: https://financialmodelingprep.com/stable
   news_limit_per_ticker: 30
   general_news_limit: 40
+  fmp_articles_limit: 30
   request_timeout_seconds: 20
 
 openai:
@@ -13,6 +14,15 @@ openai:
 
 email:
   subject_prefix: "Personalized investment morning report"
+
+sector_reads:
+  enabled: true
+  max_articles_per_sector: 3
+  sectors:
+    - technology
+    - financial_services
+    - utilities
+    - consumer_cyclical
 
 scoring:
   portfolio_ticker: 80
