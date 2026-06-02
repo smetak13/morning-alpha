@@ -1,0 +1,55 @@
+name: Daily Investment Report
+
+on:
+  schedule:
+    # GitHub schedules run in UTC. These two entries cover 07:00 Europe/Prague
+    # in winter (06:00 UTC) and summer (05:00 UTC); the job below skips the
+    # non-matching run.
+    - cron: "0 5 * * 1-5"
+    - cron: "0 6 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check Prague time
+        id: prague-time
+        run: |
+          hour="$(TZ=Europe/Prague date +%H)"
+          if [ "$hour" = "07" ]; then
+            echo "run_report=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_report=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping because Europe/Prague hour is $hour, not 07."
+          fi
+
+      - name: Checkout
+        if: steps.prague-time.outputs.run_report == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.prague-time.outputs.run_report == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        if: steps.prague-time.outputs.run_report == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Generate and send report
+        if: steps.prague-time.outputs.run_report == 'true'
+        env:
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SMTP_HOST: ${{ vars.SMTP_HOST }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          SMTP_USE_SSL: ${{ vars.SMTP_USE_SSL }}
+          SMTP_USE_TLS: ${{ vars.SMTP_USE_TLS }}
+          SMTP_USERNAME: ${{ vars.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ vars.SMTP_FROM }}
+          SMTP_TO: ${{ vars.SMTP_TO }}
+        run: python report.py --date latest --send-email
