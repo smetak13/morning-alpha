@@ -126,3 +126,56 @@ tickers:
       action_triggers:
         - flag if member growth falls below 20%
         - flag if credit losses increase materially
+
+  - ticker: IREN
+    thesis:
+      why_i_watch_it:
+        - leveraged exposure to AI datacenter and GPU infrastructure growth
+        - access to large-scale power capacity is becoming a strategic asset
+        - potential beneficiary of the AI compute buildout cycle
+      bull_case:
+        - hyperscaler and enterprise AI demand continues accelerating
+        - GPU cloud utilization remains high
+        - power-constrained competitors struggle to expand capacity
+      bear_case:
+        - AI capex cycle slows
+        - GPU supply increases faster than demand
+        - heavy capital spending dilutes shareholders
+      key_metrics:
+        - energized datacenter capacity (MW)
+        - GPU deployment
+        - AI cloud revenue
+        - contracted AI backlog
+      red_flags:
+        - large equity dilution
+        - declining GPU utilization
+        - delays in datacenter construction
+        - slowing hyperscaler demand
+      action_triggers:
+        - flag if AI cloud revenue growth materially slows
+        - flag if major datacenter projects are delayed
+        - flag if company raises significant equity without matching capacity growth
+
+  - ticker: DBX
+    thesis:
+      why_i_watch_it:
+        - strong free cash flow generation
+        - shareholder-friendly capital allocation through buybacks
+        - potentially undervalued software company
+      bull_case:
+        - continued growth in paying users and ARPU
+        - efficient capital returns increase per-share value
+      bear_case:
+        - collaboration software market becomes more competitive
+        - limited growth profile constrains valuation expansion
+      key_metrics:
+        - free cash flow
+        - paying users
+        - average revenue per user
+      red_flags:
+        - slowing user growth
+        - declining free cash flow margins
+        - reduced buyback activity
+      action_triggers:
+        - flag if free cash flow declines year-over-year
+        - flag if paying user growth turns negative
