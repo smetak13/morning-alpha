@@ -207,3 +207,31 @@ tickers:
         - flag if customer growth falls below 15%
         - flag if credit loss ratio rises materially
         - flag if profitability deteriorates for two consecutive quarters
+
+  - ticker: NOW
+    thesis:
+      why_i_watch_it:
+        - leading enterprise workflow and automation platform
+        - strong recurring revenue model
+        - potential beneficiary of AI-driven productivity adoption
+      bull_case:
+        - AI features increase customer spending and retention
+        - enterprise workflow automation continues expanding across departments
+        - operating leverage drives margin expansion
+      bear_case:
+        - enterprise IT spending slows
+        - AI capabilities fail to generate meaningful incremental revenue
+        - competition from Microsoft and other platform vendors intensifies
+      key_metrics:
+        - subscription revenue growth
+        - remaining performance obligations (RPO)
+        - operating margin
+        - customer retention
+      red_flags:
+        - slowing large customer additions
+        - declining subscription growth
+        - weakening RPO growth
+      action_triggers:
+        - flag if subscription revenue growth falls below 15%
+        - flag if RPO growth slows materially
+        - flag if operating margins deteriorate for two consecutive quarters
