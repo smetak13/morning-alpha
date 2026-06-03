@@ -179,3 +179,31 @@ tickers:
       action_triggers:
         - flag if free cash flow declines year-over-year
         - flag if paying user growth turns negative
+
+  - ticker: NU
+    thesis:
+      why_i_watch_it:
+        - leading digital banking platform in Latin America
+        - large growth runway due to low banking penetration
+        - scalable business model with expanding product ecosystem
+      bull_case:
+        - customer growth remains strong
+        - cross-selling increases revenue per customer
+        - operating leverage drives profitability
+      bear_case:
+        - credit losses rise during economic slowdown
+        - competition intensifies across key markets
+        - regulatory environment becomes less favorable
+      key_metrics:
+        - customer growth
+        - average revenue per active customer
+        - net interest margin
+        - credit loss ratio
+      red_flags:
+        - rising delinquency rates
+        - slowing customer acquisition
+        - declining profitability
+      action_triggers:
+        - flag if customer growth falls below 15%
+        - flag if credit loss ratio rises materially
+        - flag if profitability deteriorates for two consecutive quarters
