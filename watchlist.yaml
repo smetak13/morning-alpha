@@ -235,3 +235,31 @@ tickers:
         - flag if subscription revenue growth falls below 15%
         - flag if RPO growth slows materially
         - flag if operating margins deteriorate for two consecutive quarters
+
+  - ticker: SPGI
+    thesis:
+      why_i_watch_it:
+        - mission-critical financial data and ratings franchise
+        - highly recurring and asset-light business model
+        - strong pricing power and durable competitive moat
+      bull_case:
+        - capital markets activity rebounds
+        - continued growth in index and data businesses
+        - operating leverage drives earnings growth
+      bear_case:
+        - prolonged weakness in debt issuance
+        - regulatory pressure on ratings agencies
+        - slower growth in financial data subscriptions
+      key_metrics:
+        - revenue growth
+        - operating margin
+        - ratings revenue
+        - recurring subscription revenue
+      red_flags:
+        - declining debt issuance activity
+        - regulatory investigations
+        - slowing recurring revenue growth
+      action_triggers:
+        - flag if recurring revenue growth falls below 5%
+        - flag if operating margin declines for two consecutive quarters
+        - flag if ratings revenue deteriorates materially
