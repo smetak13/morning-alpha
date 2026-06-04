@@ -49,6 +49,28 @@ python report.py --date latest --skip-openai
 
 Outputs are written to `out/context.json`, `out/report.json`, and `out/report.html`.
 
+## API Server
+
+The FastAPI server is separate from `report.py` and proxies auth requests to Neon Auth:
+
+```powershell
+python server.py
+```
+
+Available auth endpoints:
+
+- `POST /register` with `email`, `password`, and optional `name`
+- `POST /login` with `email`, `password`, and optional `remember_me`
+- `POST /register` or `POST /login` with `provider="google"` and a Google `id_token`
+- `POST /register/google/id-token` with a Google `id_token`
+- `POST /login/google/id-token` with a Google `id_token`
+- `GET /me` to read the current Neon Auth session and local `public.users` row
+- `POST /logout`
+
+By default the server listens on port `8000` and runs `alembic upgrade head` on startup. Set `API_RUN_MIGRATIONS_ON_STARTUP=false` to disable automatic migrations. `API_PUBLIC_URL` is sent as the fallback `Origin` header when CLI clients such as curl do not provide one.
+
+On successful register, the server forwards Neon Auth session cookies to the client and creates `public.users.id` from Neon Auth's `user.id` if it does not already exist. Existing local user rows are not updated by register/login; login and `GET /me` only read the local row.
+
 ## Cron
 
 Run on a VPS/VM with timezone set explicitly:
