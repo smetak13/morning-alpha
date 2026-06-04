@@ -76,7 +76,7 @@ class GoogleIdTokenRequest(BaseModel):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="fin-news API", lifespan=lifespan)
+    app = FastAPI(title="Morning Alpha API", lifespan=lifespan)
 
     allowed_origins = [origin.strip() for origin in os.getenv("API_CORS_ORIGINS", "").split(",") if origin.strip()]
     if allowed_origins:
@@ -398,5 +398,5 @@ if __name__ == "__main__":
     host = os.getenv("API_HOST", "127.0.0.1")
     port = int(os.getenv("API_PORT", "8000"))
     migrations_enabled = parse_bool(os.getenv("API_RUN_MIGRATIONS_ON_STARTUP"), default=True)
-    print(f"Starting fin-news API on http://{host}:{port} (startup migrations: {migrations_enabled})")
+    print(f"Starting Morning Alpha API on http://{host}:{port} (startup migrations: {migrations_enabled})")
     uvicorn.run(app, host=host, port=port)

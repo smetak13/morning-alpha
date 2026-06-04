@@ -1,4 +1,4 @@
-# fin-news
+# Morning Alpha
 
 MVP CLI for a personalized investment morning report.
 
@@ -75,7 +75,7 @@ Run on a VPS/VM with timezone set explicitly:
 
 ```cron
 TZ=Europe/Prague
-0 8 * * 1-5 cd /path/to/fin-news && . .venv/bin/activate && python report.py --date latest --send-email >> logs/report.log 2>&1
+0 8 * * 1-5 cd /path/to/morning-alpha && . .venv/bin/activate && python report.py --date latest --send-email >> logs/report.log 2>&1
 ```
 
 The script resolves `latest` to the latest completed regular US trading day using a built-in NYSE holiday calendar.

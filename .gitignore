@@ -206,7 +206,7 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
-# fin-news generated output
+# morning-alpha generated output
 out/
 logs/
 
