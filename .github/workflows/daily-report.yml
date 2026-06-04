@@ -2,7 +2,8 @@ name: Daily Investment Report
 
 on:
   schedule:
-    - cron: "0 6 * * 1-5"
+    - cron: "17 6 * * 1-5"
+      timezone: "Europe/Prague"
   workflow_dispatch:
 
 jobs:
