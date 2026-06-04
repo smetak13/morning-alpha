@@ -1885,6 +1885,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="config.yaml", help="Path to config YAML.")
     parser.add_argument("--portfolio", default="portfolio.yaml", help="Path to portfolio YAML.")
     parser.add_argument("--watchlist", default="watchlist.yaml", help="Path to watchlist YAML.")
+    parser.add_argument("--check-db", action="store_true", help="Verify the configured Neon/Postgres connection and exit.")
+    parser.add_argument(
+        "--check-auth-config",
+        action="store_true",
+        help="Verify Neon Auth environment configuration and exit.",
+    )
     parser.add_argument("--send-email", action="store_true", help="Send the generated report through SMTP.")
     parser.add_argument("--skip-openai", action="store_true", help="Use deterministic fallback report generation.")
     parser.add_argument("--output-html", default="out/report.html", help="Where to write the rendered HTML report.")
@@ -1896,6 +1902,41 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     load_dotenv_if_available()
+
+    if args.check_db or args.check_auth_config:
+        ok = True
+        if args.check_db:
+            try:
+                from database import check_connection
+
+                info = check_connection()
+                version = info.get("version", "").splitlines()[0]
+                print(
+                    "Database connection OK: "
+                    f"database={info.get('database')} role={info.get('role')} host={info.get('host')}"
+                )
+                print(f"Postgres: {version}")
+            except Exception as exc:
+                ok = False
+                print(f"Database connection failed: {exc}", file=sys.stderr)
+
+        if args.check_auth_config:
+            from neon_auth import load_settings
+
+            settings = load_settings()
+            missing = settings.missing_required()
+            if missing:
+                ok = False
+                print(f"Neon Auth config incomplete. Missing: {', '.join(missing)}", file=sys.stderr)
+            else:
+                providers = []
+                if settings.email_password_enabled:
+                    providers.append("email/password")
+                if settings.google_oauth_enabled:
+                    providers.append("Google OAuth")
+                print(f"Neon Auth config OK: url={settings.auth_url} providers={', '.join(providers) or 'none'}")
+
+        return 0 if ok else 1
 
     config = load_yaml(ROOT / args.config)
     portfolio = parse_holdings(load_yaml(ROOT / args.portfolio))
