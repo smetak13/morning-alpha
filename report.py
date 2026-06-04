@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import email.message
 import html
 import json
 import math
 import os
 import re
-import smtplib
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -1792,37 +1790,24 @@ def render_email(report: dict[str, Any], subject: str) -> str:
 
 
 def send_email(subject: str, html: str) -> None:
-    host = first_env("SMTP_HOST", "SMTP_SERVER")
-    username = first_env("SMTP_USERNAME", "SMTP_SENDER")
-    password = first_env("SMTP_PASSWORD", "SMTP_PWD")
-    from_address = first_env("SMTP_FROM", "SMTP_SENDER")
-    recipients_raw = first_env("SMTP_TO", "SMTP_RECIPIENTS", "SMTP_RECIPIENT") or ""
+    resend = require_dependency("resend")
+
+    api_key = os.getenv("RESEND_API_KEY")
+    from_address = os.getenv("RESEND_FROM", "onboarding@resend.dev")
+    recipients_raw = os.getenv("RESEND_TO") or ""
     to_addresses = [item.strip() for item in recipients_raw.split(",") if item.strip()]
-    if not host or not from_address or not to_addresses:
-        raise SystemExit("SMTP_HOST/SMTP_SERVER, SMTP_FROM/SMTP_SENDER, and SMTP_TO must be set to send email.")
+    if not api_key or not from_address or not to_addresses:
+        raise SystemExit("RESEND_API_KEY, RESEND_FROM, and RESEND_TO must be set to send email.")
 
-    port = int(os.getenv("SMTP_PORT", "465" if host.lower() == "smtp.gmail.com" else "587"))
-    use_ssl = parse_bool(os.getenv("SMTP_USE_SSL"), default=port == 465)
-    use_tls = parse_bool(os.getenv("SMTP_USE_TLS"), default=not use_ssl)
-
-    message = email.message.EmailMessage()
-    message["Subject"] = subject
-    message["From"] = from_address
-    message["To"] = ", ".join(to_addresses)
-    message.set_content("Your email client does not support HTML reports.")
-    message.add_alternative(html, subtype="html")
-
-    if use_ssl:
-        smtp_context = smtplib.SMTP_SSL(host, port, timeout=30)
-    else:
-        smtp_context = smtplib.SMTP(host, port, timeout=30)
-
-    with smtp_context as smtp:
-        if use_tls and not use_ssl:
-            smtp.starttls()
-        if username and password:
-            smtp.login(username, password)
-        smtp.send_message(message)
+    resend.api_key = api_key
+    resend.Emails.send(
+        {
+            "from": from_address,
+            "to": to_addresses,
+            "subject": subject,
+            "html": html,
+        }
+    )
 
 
 def fetch_and_rank_news(
@@ -1891,7 +1876,7 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Verify Neon Auth environment configuration and exit.",
     )
-    parser.add_argument("--send-email", action="store_true", help="Send the generated report through SMTP.")
+    parser.add_argument("--send-email", action="store_true", help="Send the generated report through Resend.")
     parser.add_argument("--skip-openai", action="store_true", help="Use deterministic fallback report generation.")
     parser.add_argument("--output-html", default="out/report.html", help="Where to write the rendered HTML report.")
     parser.add_argument("--output-json", default="out/report.json", help="Where to write the structured report JSON.")

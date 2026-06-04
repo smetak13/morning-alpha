@@ -2,7 +2,7 @@
 
 MVP CLI for a personalized investment morning report.
 
-The app reads `portfolio.yaml`, `watchlist.yaml`, `config.yaml`, fetches FMP news and market data, ranks news by portfolio/watchlist/thesis relevance, sends compact JSON to OpenAI, renders an HTML email with Jinja2, and can send it through SMTP.
+The app reads `portfolio.yaml`, `watchlist.yaml`, `config.yaml`, fetches FMP news and market data, ranks news by portfolio/watchlist/thesis relevance, sends compact JSON to OpenAI, renders an HTML email with Jinja2, and can send it through Resend.
 
 ## Setup
 
@@ -19,9 +19,7 @@ Fill `.env`:
 - `OPENAI_API_KEY`
 - `DATABASE_URL` from Neon Console > Connect
 - `NEON_AUTH_BASE_URL` from Neon Console after enabling Auth
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TO`
-
-For Gmail SMTP use port `465` with `SMTP_USE_SSL=true` and an app password. The script also accepts the aliases from the other project: `SMTP_SERVER`, `SMTP_SENDER`, and `SMTP_PWD`.
+- `RESEND_API_KEY`, `RESEND_FROM`, `RESEND_TO`
 
 Edit:
 
