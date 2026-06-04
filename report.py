@@ -599,6 +599,31 @@ def source_key(source: str, url: str) -> str:
     return domain or source.lower().strip()
 
 
+def domain_matches(domain: str, configured_domain: str) -> bool:
+    domain = domain.lower().strip()
+    configured_domain = configured_domain.lower().strip()
+    return domain == configured_domain or domain.endswith(f".{configured_domain}")
+
+
+def source_domain_is_excluded(item: NewsItem, config: dict[str, Any]) -> bool:
+    domain = domain_from_url(item.url)
+    excluded = config.get("excluded_source_domains", [])
+    if not isinstance(excluded, list):
+        return False
+    return any(domain_matches(domain, str(configured)) for configured in excluded if configured)
+
+
+def source_quality_score(source: str, url: str, config: dict[str, Any]) -> float:
+    source = source_key(source, url)
+    configured = config.get("source_quality", {})
+    if not isinstance(configured, dict):
+        return 0.5
+    for domain, score in configured.items():
+        if domain_matches(source, str(domain)):
+            return float(score)
+    return 0.5
+
+
 def normalize_symbols(value: Any) -> list[str]:
     if isinstance(value, str):
         parts = re.split(r"[,;\s]+", value)
@@ -727,8 +752,7 @@ def score_news_item(
         score += float(event_weights.get(event_type, 0))
         reasons.append(f"event:{event_type}")
 
-    source = source_key(item.source, item.url)
-    source_quality = float(config.get("source_quality", {}).get(source, 0.5))
+    source_quality = source_quality_score(item.source, item.url, config)
     score += source_quality * float(scoring.get("source_quality_multiplier", 10))
 
     if item.duplicate_source_count > 1:
@@ -1167,10 +1191,14 @@ def compact_context(
         for item in sorted(items, key=lambda item: item.score, reverse=True)
         if item.url not in personalized_urls
     ]
-    fmp_article_items = [item for item in broad_candidates if item.item_type == "fmp_article"]
-    fallback_broad_items = [item for item in broad_candidates if item.item_type != "fmp_article"]
-    broad_market_items = (fmp_article_items + fallback_broad_items)[:20]
     interest_config = config.get("market_interests") or {}
+    market_interests_enabled = bool(interest_config.get("enabled", True))
+    if market_interests_enabled:
+        fmp_article_items = [item for item in broad_candidates if item.item_type == "fmp_article"]
+        fallback_broad_items = [item for item in broad_candidates if item.item_type != "fmp_article"]
+        broad_market_items = (fmp_article_items + fallback_broad_items)[:20]
+    else:
+        broad_market_items = []
     interests = interest_config.get("interests", [])
     if not isinstance(interests, list):
         interests = []
@@ -1179,7 +1207,7 @@ def compact_context(
     )
     max_total_interest_articles = int(interest_config.get("max_total_articles", 5))
     min_interest_confidence = float(interest_config.get("min_confidence_score", 110))
-    if interest_config.get("enabled", True) and interests:
+    if market_interests_enabled and interests:
         market_theme_candidates = market_interest_candidates(
             broad_market_items,
             interests,
@@ -1189,6 +1217,8 @@ def compact_context(
             max_total_interest_articles,
             min_interest_confidence,
         )
+    elif not market_interests_enabled:
+        market_theme_candidates = []
     else:
         sector_config = config.get("sector_reads", {})
         selected_sectors = sector_config.get("sectors", [])
@@ -1243,7 +1273,7 @@ def compact_context(
         "broad_market_news": [compact_news_item(item) for item in broad_market_items],
         "market_theme_candidates": market_theme_candidates,
         "market_interests_config": {
-            "enabled": bool(interest_config.get("enabled", True)),
+            "enabled": market_interests_enabled,
             "max_articles_per_interest": max_interest_articles,
             "max_total_articles": max_total_interest_articles,
             "min_confidence_score": min_interest_confidence,
@@ -1447,6 +1477,13 @@ def generate_report_with_openai(context: dict[str, Any], config: dict[str, Any])
         },
         "context": context,
     }
+    if not context.get("market_theme_candidates"):
+        user["task"] = "Create a daily investment morning report from this prefiltered context. Return top_market_themes as an empty list."
+        user["writing_guidance"] = [
+            item for item in user["writing_guidance"] if "top_market_themes" not in item
+        ]
+        user.pop("market_interest_guidance", None)
+        user["output_schema"]["top_market_themes"] = []
     response = client.responses.create(
         model=model,
         input=[
@@ -1750,7 +1787,10 @@ def validate_report(report: dict[str, Any], context: dict[str, Any]) -> dict[str
     for key in ("executive_summary", "portfolio_news", "thesis_impact", "watchlist_news", "top_market_themes", "attention_flags", "sources"):
         if not isinstance(report.get(key), list):
             report[key] = []
-    normalize_market_themes(report, context)
+    if context.get("market_theme_candidates"):
+        normalize_market_themes(report, context)
+    else:
+        report["top_market_themes"] = []
     filter_thesis_impact_to_portfolio(report, context)
     for section in ("portfolio_news", "watchlist_news"):
         for item in report[section]:
@@ -1847,6 +1887,8 @@ def fetch_and_rank_news(
     ]
     filtered = []
     for item in normalized:
+        if source_domain_is_excluded(item, config):
+            continue
         published = parse_date(item.published_at)
         if published and not (window_start <= published.astimezone(window_start.tzinfo) <= window_end):
             continue

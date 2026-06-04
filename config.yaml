@@ -16,7 +16,7 @@ email:
   subject_prefix: "Personalized investment morning report"
 
 market_interests:
-  enabled: true
+  enabled: false
   max_articles_per_interest: 3
   max_total_articles: 5
   min_confidence_score: 140
@@ -165,5 +165,7 @@ source_quality:
   sec.gov: 1.0
   cnbc.com: 0.8
   marketwatch.com: 0.75
-  seekingalpha.com: 0.65
   benzinga.com: 0.6
+
+excluded_source_domains:
+  - seekingalpha.com
