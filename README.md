@@ -1,8 +1,8 @@
 # Morning Alpha
 
-MVP CLI for a personalized investment morning report.
+Wake up to what matters.
 
-The app reads `portfolio.yaml`, `watchlist.yaml`, `config.yaml`, fetches FMP news and market data, ranks news by portfolio/watchlist/thesis relevance, sends compact JSON to OpenAI, renders an HTML email with Jinja2, and can send it through Resend.
+Personalized investment intelligence for long-term investors.
 
 ## Setup
 
@@ -23,26 +23,25 @@ Fill `.env`:
 
 Edit:
 
-- `portfolio.yaml`
 - `watchlist.yaml`
 - `config.yaml`
 
 ## Run
 
 ```powershell
-python report.py --date latest --send-email
+python report.py --user-id e909f631-669f-465c-b9bb-5849f075ba11 --date latest --send-email
 ```
 
 Generate files without sending:
 
 ```powershell
-python report.py --date latest
+python report.py --user-id e909f631-669f-465c-b9bb-5849f075ba11 --date latest
 ```
 
 Use deterministic fallback output without OpenAI:
 
 ```powershell
-python report.py --date latest --skip-openai
+python report.py --user-id e909f631-669f-465c-b9bb-5849f075ba11 --date latest --skip-openai
 ```
 
 Outputs are written to `out/context.json`, `out/report.json`, `out/usage.json`, and `out/report.html`. `out/usage.json` includes OpenAI input/output token counts and an estimated per-report cost from the pricing configured in `config.yaml`.
@@ -75,7 +74,7 @@ Run on a VPS/VM with timezone set explicitly:
 
 ```cron
 TZ=Europe/Prague
-0 8 * * 1-5 cd /path/to/morning-alpha && . .venv/bin/activate && python report.py --date latest --send-email >> logs/report.log 2>&1
+0 8 * * 1-5 cd /path/to/morning-alpha && . .venv/bin/activate && python report.py --user-id e909f631-669f-465c-b9bb-5849f075ba11 --date latest --send-email >> logs/report.log 2>&1
 ```
 
 The script resolves `latest` to the latest completed regular US trading day using a built-in NYSE holiday calendar.

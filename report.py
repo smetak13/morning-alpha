@@ -403,6 +403,67 @@ def parse_holdings(raw: dict[str, Any], default_position_size: float = 0) -> dic
     return holdings
 
 
+def normalize_text_array(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value if item is not None]
+    return [str(value)]
+
+
+def load_portfolio_from_db(user_id: str) -> dict[str, Holding]:
+    try:
+        from psycopg.rows import dict_row
+    except ImportError as exc:
+        raise RuntimeError("Missing dependency 'psycopg'. Install dependencies with: pip install -r requirements.txt") from exc
+
+    from database import connection
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select
+                    stocks.symbol,
+                    portfolio_items.position_size_pct,
+                    portfolio_items.why_i_own_it,
+                    portfolio_items.bull_case,
+                    portfolio_items.bear_case,
+                    portfolio_items.key_metrics,
+                    portfolio_items.red_flags,
+                    portfolio_items.action_triggers
+                from public.portfolio_items
+                join public.stocks on stocks.id = portfolio_items.stock_id
+                where portfolio_items.user_id = %s
+                order by portfolio_items.position_size_pct desc nulls last, stocks.symbol
+                """,
+                (user_id,),
+            )
+            rows = cursor.fetchall()
+
+    holdings: dict[str, Holding] = {}
+    for row in rows:
+        symbol = str(row["symbol"]).upper().strip()
+        if not symbol:
+            continue
+        holdings[symbol] = Holding(
+            ticker=symbol,
+            position_size_pct=float(row["position_size_pct"] or 0),
+            thesis={
+                "why_i_own_it": normalize_text_array(row["why_i_own_it"]),
+                "bull_case": normalize_text_array(row["bull_case"]),
+                "bear_case": normalize_text_array(row["bear_case"]),
+                "key_metrics": normalize_text_array(row["key_metrics"]),
+                "red_flags": normalize_text_array(row["red_flags"]),
+                "action_triggers": normalize_text_array(row["action_triggers"]),
+            },
+        )
+
+    if not holdings:
+        raise SystemExit(f"No portfolio items found for user_id={user_id}.")
+    return holdings
+
+
 def flatten_strings(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
@@ -2141,7 +2202,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a personalized investment morning report.")
     parser.add_argument("--date", default="latest", help="'latest' or an explicit YYYY-MM-DD US trading date.")
     parser.add_argument("--config", default="config.yaml", help="Path to config YAML.")
-    parser.add_argument("--portfolio", default="portfolio.yaml", help="Path to portfolio YAML.")
+    parser.add_argument("--user-id", help="User ID whose portfolio should be used for the report.")
     parser.add_argument("--watchlist", default="watchlist.yaml", help="Path to watchlist YAML.")
     parser.add_argument("--check-db", action="store_true", help="Verify the configured Neon/Postgres connection and exit.")
     parser.add_argument(
@@ -2197,8 +2258,11 @@ def main() -> int:
 
         return 0 if ok else 1
 
+    if not args.user_id:
+        raise SystemExit("--user-id is required when generating a report.")
+
     config = load_yaml(ROOT / args.config)
-    portfolio = parse_holdings(load_yaml(ROOT / args.portfolio))
+    portfolio = load_portfolio_from_db(args.user_id)
     watchlist = parse_holdings(load_yaml(ROOT / args.watchlist))
 
     if args.date == "latest":
