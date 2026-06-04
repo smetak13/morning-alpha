@@ -1387,6 +1387,62 @@ def parse_model_json(text: str) -> dict[str, Any]:
         raise
 
 
+def get_nested_attr_or_key(value: Any, *path: str, default: Any = None) -> Any:
+    current = value
+    for key in path:
+        if current is None:
+            return default
+        if isinstance(current, dict):
+            current = current.get(key)
+        else:
+            current = getattr(current, key, None)
+    return default if current is None else current
+
+
+def model_pricing(config: dict[str, Any], model: str) -> dict[str, float]:
+    pricing = config.get("openai", {}).get("pricing_per_1m_tokens", {})
+    if not isinstance(pricing, dict):
+        pricing = {}
+    model_rates = pricing.get(model) or pricing.get("default") or {}
+    return {
+        "input": float(model_rates.get("input", 0)),
+        "cached_input": float(model_rates.get("cached_input", model_rates.get("input", 0))),
+        "output": float(model_rates.get("output", 0)),
+    }
+
+
+def openai_usage_summary(response: Any, model: str, config: dict[str, Any]) -> dict[str, Any]:
+    usage = get_nested_attr_or_key(response, "usage", default={})
+    input_tokens = int(get_nested_attr_or_key(usage, "input_tokens", default=0) or 0)
+    output_tokens = int(get_nested_attr_or_key(usage, "output_tokens", default=0) or 0)
+    total_tokens = int(get_nested_attr_or_key(usage, "total_tokens", default=input_tokens + output_tokens) or 0)
+    cached_input_tokens = int(
+        get_nested_attr_or_key(usage, "input_tokens_details", "cached_tokens", default=0) or 0
+    )
+    billable_input_tokens = max(input_tokens - cached_input_tokens, 0)
+    rates = model_pricing(config, model)
+    input_cost = billable_input_tokens * rates["input"] / 1_000_000
+    cached_input_cost = cached_input_tokens * rates["cached_input"] / 1_000_000
+    output_cost = output_tokens * rates["output"] / 1_000_000
+    total_cost = input_cost + cached_input_cost + output_cost
+    return {
+        "provider": "openai",
+        "model": model,
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached_input_tokens,
+        "billable_input_tokens": billable_input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "pricing_per_1m_tokens_usd": rates,
+        "cost_usd": {
+            "input": round(input_cost, 8),
+            "cached_input": round(cached_input_cost, 8),
+            "output": round(output_cost, 8),
+            "total": round(total_cost, 8),
+        },
+    }
+
+
 def default_report(context: dict[str, Any]) -> dict[str, Any]:
     items = context.get("ranked_news", [])
     portfolio_tickers = {item["ticker"] for item in context.get("portfolio", [])}
@@ -1440,7 +1496,7 @@ def default_report(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def generate_report_with_openai(context: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+def generate_report_with_openai(context: dict[str, Any], config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     from openai import OpenAI
 
     model = config.get("openai", {}).get("model", "gpt-4.1-mini")
@@ -1578,7 +1634,28 @@ def generate_report_with_openai(context: dict[str, Any], config: dict[str, Any])
     )
     report = parse_model_json(response.output_text)
     report.setdefault("report_date", context["report_date"])
-    return validate_report(report, context)
+    return validate_report(report, context), openai_usage_summary(response, model, config)
+
+
+def skipped_openai_usage(config: dict[str, Any]) -> dict[str, Any]:
+    model = config.get("openai", {}).get("model", "gpt-4.1-mini")
+    return {
+        "provider": "openai",
+        "model": model,
+        "skipped": True,
+        "input_tokens": 0,
+        "cached_input_tokens": 0,
+        "billable_input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "pricing_per_1m_tokens_usd": model_pricing(config, model),
+        "cost_usd": {
+            "input": 0,
+            "cached_input": 0,
+            "output": 0,
+            "total": 0,
+        },
+    }
 
 
 def validate_label(value: str | None) -> str:
@@ -2077,6 +2154,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-html", default="out/report.html", help="Where to write the rendered HTML report.")
     parser.add_argument("--output-json", default="out/report.json", help="Where to write the structured report JSON.")
     parser.add_argument("--context-json", default="out/context.json", help="Where to write the compact OpenAI input JSON.")
+    parser.add_argument("--usage-json", default="out/usage.json", help="Where to write OpenAI token usage and cost JSON.")
     return parser.parse_args()
 
 
@@ -2159,10 +2237,11 @@ def main() -> int:
 
     if args.skip_openai:
         report = validate_report(default_report(context), context)
+        usage = skipped_openai_usage(config)
     else:
         if not os.getenv("OPENAI_API_KEY"):
             raise SystemExit("OPENAI_API_KEY is required unless --skip-openai is used.")
-        report = generate_report_with_openai(context, config)
+        report, usage = generate_report_with_openai(context, config)
 
     subject = build_subject(config, report_date)
     html = render_email(report, subject)
@@ -2170,6 +2249,7 @@ def main() -> int:
     for output_path, payload, is_json in (
         (Path(args.context_json), context, True),
         (Path(args.output_json), report, True),
+        (Path(args.usage_json), usage, True),
         (Path(args.output_html), html, False),
     ):
         path = output_path if output_path.is_absolute() else ROOT / output_path
@@ -2185,6 +2265,17 @@ def main() -> int:
     else:
         print(f"Generated report: {subject}")
         print(f"HTML: {Path(args.output_html)}")
+    if usage.get("skipped"):
+        print("OpenAI usage: skipped")
+    else:
+        print(
+            "OpenAI usage: "
+            f"input={usage.get('input_tokens', 0)} "
+            f"cached_input={usage.get('cached_input_tokens', 0)} "
+            f"output={usage.get('output_tokens', 0)} "
+            f"total={usage.get('total_tokens', 0)} "
+            f"cost=${float(usage.get('cost_usd', {}).get('total', 0)):.6f}"
+        )
     return 0
 
 

@@ -45,7 +45,7 @@ Use deterministic fallback output without OpenAI:
 python report.py --date latest --skip-openai
 ```
 
-Outputs are written to `out/context.json`, `out/report.json`, and `out/report.html`.
+Outputs are written to `out/context.json`, `out/report.json`, `out/usage.json`, and `out/report.html`. `out/usage.json` includes OpenAI input/output token counts and an estimated per-report cost from the pricing configured in `config.yaml`.
 
 ## API Server
 
