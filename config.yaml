@@ -169,3 +169,59 @@ source_quality:
 
 excluded_source_domains:
   - seekingalpha.com
+
+company_aliases:
+  AMZN:
+    - Amazon
+    - AWS
+  CEG:
+    - Constellation Energy
+  DBX:
+    - Dropbox
+  FICO:
+    - Fair Isaac
+  GOOGL:
+    - Alphabet
+    - Google
+  IBM:
+    - IBM
+    - Red Hat
+  INTU:
+    - Intuit
+    - QuickBooks
+    - TurboTax
+  IONQ:
+    - IonQ
+  IREN:
+    - IREN
+    - Iris Energy
+  MA:
+    - Mastercard
+  MELI:
+    - MercadoLibre
+    - Mercado Libre
+    - Mercado Pago
+  META:
+    - Meta
+    - Facebook
+    - Instagram
+  MSFT:
+    - Microsoft
+    - Azure
+  NOW:
+    - ServiceNow
+  NU:
+    - Nu Holdings
+    - Nubank
+  NVDA:
+    - Nvidia
+  RGTI:
+    - Rigetti
+  SOFI:
+    - SoFi
+  SPGI:
+    - S&P Global
+  TSLA:
+    - Tesla
+  VST:
+    - Vistra

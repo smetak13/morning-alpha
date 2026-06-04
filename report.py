@@ -644,6 +644,19 @@ def normalize_symbols(value: Any) -> list[str]:
     return sorted(symbols)
 
 
+def title_ticker_symbols(title: str) -> list[str]:
+    symbols = set()
+    prefix_symbol = re.match(r"^\s*([A-Z]{1,6})\s*:", title)
+    if prefix_symbol:
+        symbols.update(normalize_symbols([prefix_symbol.group(1)]))
+    exchange_symbols = re.findall(
+        r"\b(?:NASDAQ|NYSE|AMEX|OTC|TSX|LSE|NYSEARCA)\s*:\s*([A-Z][A-Z0-9.\-]{0,5})\b",
+        title,
+    )
+    symbols.update(normalize_symbols(exchange_symbols))
+    return sorted(symbols)
+
+
 def normalize_news_item(raw: dict[str, Any], item_type: str = "news") -> NewsItem | None:
     title = clean_text(raw.get("title") or raw.get("headline") or "")
     url = clean_url(raw.get("url") or raw.get("link") or "")
@@ -653,8 +666,7 @@ def normalize_news_item(raw: dict[str, Any], item_type: str = "news") -> NewsIte
     source = str(raw.get("site") or raw.get("source") or domain_from_url(url) or "unknown").strip()
     published_at = raw.get("publishedDate") or raw.get("published_at") or raw.get("date")
     symbols = normalize_symbols(raw.get("symbols") or raw.get("symbol") or raw.get("ticker"))
-    title_prefix_symbol = re.match(r"^\s*([A-Z]{1,6})\s*:", title)
-    title_symbols = normalize_symbols([title_prefix_symbol.group(1)] if title_prefix_symbol else [])
+    title_symbols = title_ticker_symbols(title)
     if title_symbols:
         symbols = sorted(set(symbols).intersection(title_symbols) or set(title_symbols))
     event_types = detect_event_types(f"{title} {text}")
@@ -731,14 +743,17 @@ def score_news_item(
     reasons: list[str] = []
     score = 0.0
     configured_symbols = set(portfolio) | set(watchlist)
-    mentioned_configured_symbols = [
-        symbol for symbol in configured_symbols if ticker_mention_count(item, symbol) > 0
+    strong_configured_symbols = [
+        symbol for symbol in configured_symbols if item_strongly_matches_ticker(item, symbol, config)
     ]
-    symbols = sorted(set(item.symbols or ([item.ticker] if item.ticker else [])).union(mentioned_configured_symbols))
+    original_symbols = set(item.symbols or ([item.ticker] if item.ticker else []))
+    symbols = sorted((original_symbols - configured_symbols).union(strong_configured_symbols))
     item.symbols = symbols
+    if item.ticker and item.ticker in configured_symbols and item.ticker not in strong_configured_symbols:
+        item.ticker = None
 
-    portfolio_symbols = [symbol for symbol in symbols if symbol in portfolio]
-    watchlist_symbols = [symbol for symbol in symbols if symbol in watchlist]
+    portfolio_symbols = [symbol for symbol in strong_configured_symbols if symbol in portfolio]
+    watchlist_symbols = [symbol for symbol in strong_configured_symbols if symbol in watchlist and symbol not in portfolio]
 
     if portfolio_symbols:
         score += float(scoring.get("portfolio_ticker", 80))
@@ -764,7 +779,7 @@ def score_news_item(
     if candidate_primary_symbols:
         primary_symbol = max(
             candidate_primary_symbols,
-            key=lambda symbol: (ticker_mention_count(item, symbol), -candidate_primary_symbols.index(symbol)),
+            key=lambda symbol: (ticker_match_score(item, symbol, config), -candidate_primary_symbols.index(symbol)),
         )
     if primary_symbol:
         item.ticker = primary_symbol
@@ -946,11 +961,72 @@ def item_mentions_ticker(item: NewsItem, ticker: str) -> bool:
         return True
     if item.ticker and item.ticker.upper() == ticker:
         return True
-    return bool(re.search(rf"\b{re.escape(ticker)}\b", f"{item.title} {item.text}", re.IGNORECASE))
+    return bool(re.search(rf"\b{re.escape(ticker)}\b", f"{item.title} {item.text}"))
 
 
 def ticker_mention_count(item: NewsItem, ticker: str) -> int:
-    return len(re.findall(rf"\b{re.escape(ticker)}\b", f"{item.title} {item.text}", re.IGNORECASE))
+    return len(re.findall(rf"\b{re.escape(ticker)}\b", f"{item.title} {item.text}"))
+
+
+def company_aliases_for_ticker(ticker: str, config: dict[str, Any]) -> list[str]:
+    aliases = config.get("company_aliases", {})
+    if not isinstance(aliases, dict):
+        return []
+    configured = aliases.get(ticker.upper(), [])
+    if isinstance(configured, str):
+        return [configured]
+    if isinstance(configured, list):
+        return [str(alias) for alias in configured if str(alias).strip()]
+    return []
+
+
+def phrase_in_text(value: str, phrase: str, ignore_case: bool = True) -> bool:
+    phrase = str(phrase).strip()
+    if not phrase:
+        return False
+    flags = re.IGNORECASE if ignore_case else 0
+    return bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])", value, flags))
+
+
+def item_strongly_matches_ticker(item: NewsItem, ticker: str, config: dict[str, Any]) -> bool:
+    ticker = ticker.upper()
+    title_symbols = set(title_ticker_symbols(item.title))
+    if ticker in title_symbols:
+        return True
+
+    title_has_ticker = bool(re.search(rf"\b{re.escape(ticker)}\b", item.title))
+    title_has_alias = any(primary_alias_in_title(item.title, alias) for alias in company_aliases_for_ticker(ticker, config))
+    if title_has_ticker or title_has_alias:
+        return True
+
+    return False
+
+
+def ticker_match_score(item: NewsItem, ticker: str, config: dict[str, Any]) -> int:
+    ticker = ticker.upper()
+    score = 0
+    if ticker in set(title_ticker_symbols(item.title)):
+        score += 100
+    if any(primary_alias_in_title(item.title, alias) for alias in company_aliases_for_ticker(ticker, config)):
+        score += 80
+    if re.search(rf"\b{re.escape(ticker)}\b", item.title):
+        score += 70
+    if ticker in {symbol.upper() for symbol in item.symbols}:
+        score += 50
+    score += min(ticker_mention_count(item, ticker), 5)
+    return score
+
+
+def primary_alias_in_title(title: str, alias: str) -> bool:
+    if not phrase_in_text(title, alias):
+        return False
+    match = re.search(rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", title, re.IGNORECASE)
+    if not match:
+        return False
+    tail = title[match.end() : match.end() + 12].lower()
+    if re.match(r"\s+(ceo|cfo|cto|coo|founder|chair|executive)\b", tail):
+        return False
+    return match.start() <= 40
 
 
 def keyword_match_count(item: NewsItem, keywords: list[str]) -> int:
@@ -1183,12 +1259,13 @@ def compact_context(
     max_items: int,
     config: dict[str, Any],
 ) -> dict[str, Any]:
-    top_items = sorted(items, key=lambda item: item.score, reverse=True)[:max_items]
     excluded_tickers = set(portfolio) | set(watchlist)
+    sorted_items = sorted(items, key=lambda item: item.score, reverse=True)
+    top_items = [item for item in sorted_items if item.ticker in excluded_tickers][:max_items]
     personalized_urls = {item.url for item in top_items if item.ticker in excluded_tickers and item.url}
     broad_candidates = [
         item
-        for item in sorted(items, key=lambda item: item.score, reverse=True)
+        for item in sorted_items
         if item.url not in personalized_urls
     ]
     interest_config = config.get("market_interests") or {}
@@ -1230,6 +1307,8 @@ def compact_context(
             if sector_config.get("enabled", True)
             else notable_market_article_candidates(broad_market_items)
         )
+    portfolio_tickers = set(portfolio)
+    watchlist_tickers = set(watchlist) - portfolio_tickers
     return {
         "report_date": report_date.isoformat(),
         "news_window": {
@@ -1278,6 +1357,10 @@ def compact_context(
             "max_total_articles": max_total_interest_articles,
             "min_confidence_score": min_interest_confidence,
             "interest_names": [interest.get("name") for interest in interests if isinstance(interest, dict)],
+        },
+        "candidate_counts": {
+            "portfolio_news": sum(1 for item in top_items if item.ticker in portfolio_tickers),
+            "watchlist_news": sum(1 for item in top_items if item.ticker in watchlist_tickers),
         },
         "constraints": {
             "allowed_attention_labels": sorted(ATTENTION_LABELS),
@@ -1379,6 +1462,8 @@ def generate_report_with_openai(context: dict[str, Any], config: dict[str, Any])
         "writing_guidance": [
             "Write for beginner investors: explain financial implications plainly and avoid unexplained jargon.",
             "For portfolio_news and watchlist_news, keep why_it_matters short, then add article_summary with 3-5 factual bullet points based only on the supplied snippet/title/source metadata.",
+            "For portfolio_news and watchlist_news, include only articles whose context.ranked_news ticker exactly matches that section item ticker.",
+            "Never include portfolio tickers in watchlist_news.",
             "For thesis_impact, explain how the news could affect the user's stated thesis, key metrics, red flags, and action triggers.",
             "Only include portfolio holdings in thesis_impact; do not include watchlist-only companies there.",
             "Use top_market_themes as notable market reads outside the user's portfolio and watchlist.",
@@ -1531,6 +1616,73 @@ def enrich_report_item_sources(items: list[dict[str, Any]], context: dict[str, A
         if best_match and best_score > 0:
             item["source"] = item.get("source") or best_match.get("source", "")
             item["source_url"] = best_match.get("url", "")
+
+
+def filter_news_sections_to_context(report: dict[str, Any], context: dict[str, Any]) -> None:
+    portfolio_tickers = {str(item.get("ticker") or "").upper() for item in context.get("portfolio", [])}
+    watchlist_tickers = {str(item.get("ticker") or "").upper() for item in context.get("watchlist", [])} - portfolio_tickers
+    news_by_url = {
+        str(item.get("url") or ""): item
+        for item in context.get("ranked_news", [])
+        if item.get("url")
+    }
+
+    for section, allowed_tickers in (
+        ("portfolio_news", portfolio_tickers),
+        ("watchlist_news", watchlist_tickers),
+    ):
+        filtered = []
+        for item in report.get(section, []):
+            ticker = str(item.get("ticker") or "").upper()
+            if ticker not in allowed_tickers:
+                continue
+            source_url = str(item.get("source_url") or item.get("url") or "")
+            matching_news = news_by_url.get(source_url)
+            if not matching_news:
+                continue
+            if str(matching_news.get("ticker") or "").upper() != ticker:
+                continue
+            filtered.append(item)
+        report[section] = filtered
+
+
+def default_news_entry_from_context_item(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ticker": item.get("ticker") or "MARKET",
+        "headline": item.get("title", ""),
+        "why_it_matters": "This article directly mentions a company on the watchlist and may be relevant to monitor.",
+        "article_summary": [item.get("snippet") or "No article summary available."],
+        "attention_label": validate_label("monitor"),
+        "source": item.get("source", ""),
+        "source_url": item.get("url", ""),
+    }
+
+
+def fill_missing_watchlist_news(report: dict[str, Any], context: dict[str, Any], limit: int = 3) -> None:
+    if report.get("watchlist_news"):
+        return
+
+    portfolio_tickers = {str(item.get("ticker") or "").upper() for item in context.get("portfolio", [])}
+    watchlist_tickers = {str(item.get("ticker") or "").upper() for item in context.get("watchlist", [])} - portfolio_tickers
+    used_urls = {
+        str(item.get("source_url") or item.get("url") or "")
+        for section in ("portfolio_news", "watchlist_news")
+        for item in report.get(section, [])
+        if item.get("source_url") or item.get("url")
+    }
+
+    fallback = []
+    for item in context.get("ranked_news", []):
+        ticker = str(item.get("ticker") or "").upper()
+        url = str(item.get("url") or "")
+        if ticker not in watchlist_tickers or not url or url in used_urls:
+            continue
+        fallback.append(default_news_entry_from_context_item(item))
+        used_urls.add(url)
+        if len(fallback) >= limit:
+            break
+
+    report["watchlist_news"] = fallback
 
 
 def article_from_news(news: dict[str, Any]) -> dict[str, str]:
@@ -1800,6 +1952,8 @@ def validate_report(report: dict[str, Any], context: dict[str, Any]) -> dict[str
             elif not isinstance(item.get("article_summary"), list):
                 item["article_summary"] = []
         enrich_report_item_sources(report[section], context)
+    filter_news_sections_to_context(report, context)
+    fill_missing_watchlist_news(report, context)
     for item in report["thesis_impact"]:
         if isinstance(item.get("thesis_points_affected"), str):
             item["thesis_points_affected"] = [item["thesis_points_affected"]]
