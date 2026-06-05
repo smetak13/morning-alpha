@@ -23,7 +23,6 @@ Fill `.env`:
 
 Edit:
 
-- `watchlist.yaml`
 - `config.yaml`
 
 ## Run

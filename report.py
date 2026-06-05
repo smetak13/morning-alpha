@@ -386,77 +386,12 @@ def clean_url(value: Any) -> str:
     return url
 
 
-def parse_holdings(raw: dict[str, Any], default_position_size: float = 0) -> dict[str, Holding]:
-    holdings: dict[str, Holding] = {}
-    for item in raw.get("tickers", []):
-        if isinstance(item, str):
-            ticker = item.upper()
-            holdings[ticker] = Holding(ticker=ticker, position_size_pct=default_position_size, thesis={})
-            continue
-        ticker = str(item.get("ticker", "")).upper().strip()
-        if not ticker:
-            continue
-        holdings[ticker] = Holding(
-            ticker=ticker,
-            position_size_pct=float(item.get("position_size_pct", default_position_size) or 0),
-            thesis=item.get("thesis", {}) or {},
-            company_name=str(item.get("company_name") or "").strip() or None,
-        )
-    return holdings
-
-
 def normalize_text_array(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, (list, tuple)):
         return [str(item) for item in value if item is not None]
     return [str(value)]
-
-
-def load_stock_company_names(symbols: list[str]) -> dict[str, str]:
-    normalized_symbols = sorted({str(symbol).upper().strip() for symbol in symbols if str(symbol).strip()})
-    if not normalized_symbols:
-        return {}
-
-    try:
-        from psycopg.rows import dict_row
-    except ImportError as exc:
-        raise RuntimeError("Missing dependency 'psycopg'. Install dependencies with: pip install -r requirements.txt") from exc
-
-    from database import connection
-
-    with connection(row_factory=dict_row) as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                select symbol, company_name
-                from public.stocks
-                where symbol = any(%s)
-                """,
-                (normalized_symbols,),
-            )
-            rows = cursor.fetchall()
-
-    return {
-        str(row["symbol"]).upper().strip(): str(row["company_name"]).strip()
-        for row in rows
-        if row["symbol"] and row["company_name"]
-    }
-
-
-def with_stock_company_names(holdings: dict[str, Holding]) -> dict[str, Holding]:
-    company_names = load_stock_company_names(list(holdings))
-    if not company_names:
-        return holdings
-    return {
-        symbol: Holding(
-            ticker=holding.ticker,
-            position_size_pct=holding.position_size_pct,
-            thesis=holding.thesis,
-            company_name=holding.company_name or company_names.get(symbol),
-        )
-        for symbol, holding in holdings.items()
-    }
 
 
 def load_portfolio_from_db(user_id: str) -> dict[str, Holding]:
@@ -511,6 +446,57 @@ def load_portfolio_from_db(user_id: str) -> dict[str, Holding]:
 
     if not holdings:
         raise SystemExit(f"No portfolio items found for user_id={user_id}.")
+    return holdings
+
+
+def load_watchlist_from_db(user_id: str) -> dict[str, Holding]:
+    try:
+        from psycopg.rows import dict_row
+    except ImportError as exc:
+        raise RuntimeError("Missing dependency 'psycopg'. Install dependencies with: pip install -r requirements.txt") from exc
+
+    from database import connection
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select
+                    stocks.symbol,
+                    stocks.company_name,
+                    watchlist_items.why_i_watch_it,
+                    watchlist_items.bull_case,
+                    watchlist_items.bear_case,
+                    watchlist_items.key_metrics,
+                    watchlist_items.red_flags,
+                    watchlist_items.action_triggers
+                from public.watchlist_items
+                join public.stocks on stocks.id = watchlist_items.stock_id
+                where watchlist_items.user_id = %s
+                order by stocks.symbol
+                """,
+                (user_id,),
+            )
+            rows = cursor.fetchall()
+
+    holdings: dict[str, Holding] = {}
+    for row in rows:
+        symbol = str(row["symbol"]).upper().strip()
+        if not symbol:
+            continue
+        holdings[symbol] = Holding(
+            ticker=symbol,
+            position_size_pct=0,
+            company_name=str(row["company_name"]).strip() or None,
+            thesis={
+                "why_i_watch_it": normalize_text_array(row["why_i_watch_it"]),
+                "bull_case": normalize_text_array(row["bull_case"]),
+                "bear_case": normalize_text_array(row["bear_case"]),
+                "key_metrics": normalize_text_array(row["key_metrics"]),
+                "red_flags": normalize_text_array(row["red_flags"]),
+                "action_triggers": normalize_text_array(row["action_triggers"]),
+            },
+        )
     return holdings
 
 
@@ -2362,7 +2348,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--date", default="latest", help="'latest' or an explicit YYYY-MM-DD US trading date.")
     parser.add_argument("--config", default="config.yaml", help="Path to config YAML.")
     parser.add_argument("--user-id", help="User ID whose portfolio should be used for the report.")
-    parser.add_argument("--watchlist", default="watchlist.yaml", help="Path to watchlist YAML.")
     parser.add_argument("--check-db", action="store_true", help="Verify the configured Neon/Postgres connection and exit.")
     parser.add_argument(
         "--check-auth-config",
@@ -2422,7 +2407,7 @@ def main() -> int:
 
     config = load_yaml(ROOT / args.config)
     portfolio = load_portfolio_from_db(args.user_id)
-    watchlist = with_stock_company_names(parse_holdings(load_yaml(ROOT / args.watchlist)))
+    watchlist = load_watchlist_from_db(args.user_id)
 
     if args.date == "latest":
         report_date = latest_completed_us_trading_day()
