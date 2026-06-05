@@ -286,6 +286,7 @@ class Holding:
     ticker: str
     position_size_pct: float
     thesis: dict[str, Any]
+    company_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -399,6 +400,7 @@ def parse_holdings(raw: dict[str, Any], default_position_size: float = 0) -> dic
             ticker=ticker,
             position_size_pct=float(item.get("position_size_pct", default_position_size) or 0),
             thesis=item.get("thesis", {}) or {},
+            company_name=str(item.get("company_name") or "").strip() or None,
         )
     return holdings
 
@@ -409,6 +411,52 @@ def normalize_text_array(value: Any) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [str(item) for item in value if item is not None]
     return [str(value)]
+
+
+def load_stock_company_names(symbols: list[str]) -> dict[str, str]:
+    normalized_symbols = sorted({str(symbol).upper().strip() for symbol in symbols if str(symbol).strip()})
+    if not normalized_symbols:
+        return {}
+
+    try:
+        from psycopg.rows import dict_row
+    except ImportError as exc:
+        raise RuntimeError("Missing dependency 'psycopg'. Install dependencies with: pip install -r requirements.txt") from exc
+
+    from database import connection
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select symbol, company_name
+                from public.stocks
+                where symbol = any(%s)
+                """,
+                (normalized_symbols,),
+            )
+            rows = cursor.fetchall()
+
+    return {
+        str(row["symbol"]).upper().strip(): str(row["company_name"]).strip()
+        for row in rows
+        if row["symbol"] and row["company_name"]
+    }
+
+
+def with_stock_company_names(holdings: dict[str, Holding]) -> dict[str, Holding]:
+    company_names = load_stock_company_names(list(holdings))
+    if not company_names:
+        return holdings
+    return {
+        symbol: Holding(
+            ticker=holding.ticker,
+            position_size_pct=holding.position_size_pct,
+            thesis=holding.thesis,
+            company_name=holding.company_name or company_names.get(symbol),
+        )
+        for symbol, holding in holdings.items()
+    }
 
 
 def load_portfolio_from_db(user_id: str) -> dict[str, Holding]:
@@ -425,6 +473,7 @@ def load_portfolio_from_db(user_id: str) -> dict[str, Holding]:
                 """
                 select
                     stocks.symbol,
+                    stocks.company_name,
                     portfolio_items.position_size_pct,
                     portfolio_items.why_i_own_it,
                     portfolio_items.bull_case,
@@ -449,6 +498,7 @@ def load_portfolio_from_db(user_id: str) -> dict[str, Holding]:
         holdings[symbol] = Holding(
             ticker=symbol,
             position_size_pct=float(row["position_size_pct"] or 0),
+            company_name=str(row["company_name"]).strip() or None,
             thesis={
                 "why_i_own_it": normalize_text_array(row["why_i_own_it"]),
                 "bull_case": normalize_text_array(row["bull_case"]),
@@ -804,8 +854,9 @@ def score_news_item(
     reasons: list[str] = []
     score = 0.0
     configured_symbols = set(portfolio) | set(watchlist)
+    configured_holdings = {**watchlist, **portfolio}
     strong_configured_symbols = [
-        symbol for symbol in configured_symbols if item_strongly_matches_ticker(item, symbol, config)
+        symbol for symbol in configured_symbols if item_strongly_matches_holding(item, configured_holdings[symbol])
     ]
     original_symbols = set(item.symbols or ([item.ticker] if item.ticker else []))
     symbols = sorted((original_symbols - configured_symbols).union(strong_configured_symbols))
@@ -840,7 +891,10 @@ def score_news_item(
     if candidate_primary_symbols:
         primary_symbol = max(
             candidate_primary_symbols,
-            key=lambda symbol: (ticker_match_score(item, symbol, config), -candidate_primary_symbols.index(symbol)),
+            key=lambda symbol: (
+                ticker_match_score(item, configured_holdings.get(symbol, Holding(ticker=symbol, position_size_pct=0, thesis={}))),
+                -candidate_primary_symbols.index(symbol),
+            ),
         )
     if primary_symbol:
         item.ticker = primary_symbol
@@ -1029,16 +1083,110 @@ def ticker_mention_count(item: NewsItem, ticker: str) -> int:
     return len(re.findall(rf"\b{re.escape(ticker)}\b", f"{item.title} {item.text}"))
 
 
-def company_aliases_for_ticker(ticker: str, config: dict[str, Any]) -> list[str]:
-    aliases = config.get("company_aliases", {})
-    if not isinstance(aliases, dict):
+LEGAL_COMPANY_SUFFIXES = (
+    "incorporated",
+    "corporation",
+    "corp",
+    "inc",
+    "limited",
+    "ltd",
+    "plc",
+    "llc",
+    "s.a.",
+    "sa",
+    "n.v.",
+    "nv",
+    "ag",
+    "se",
+)
+
+GENERIC_COMPANY_NAME_WORDS = {
+    "the",
+    "global",
+    "holdings",
+    "holding",
+    "group",
+    "technologies",
+    "technology",
+    "systems",
+    "solutions",
+    "energy",
+    "financial",
+    "capital",
+}
+
+GENERIC_ENTITY_PHRASES = {
+    "AI",
+    "EV",
+    "FCF",
+    "GMV",
+    "TPV",
+    "SMB",
+    "RPO",
+    "EBITDA",
+}
+
+
+def without_legal_suffixes(company_name: str) -> str:
+    name = re.sub(r"\s+", " ", company_name.replace(",", " ")).strip(" .")
+    while name:
+        changed = False
+        for suffix in LEGAL_COMPANY_SUFFIXES:
+            pattern = rf"\s+{re.escape(suffix)}\.?$"
+            updated = re.sub(pattern, "", name, flags=re.IGNORECASE).strip(" .")
+            if updated != name:
+                name = updated
+                changed = True
+                break
+        if not changed:
+            return name
+    return name
+
+
+def company_name_match_phrases(company_name: str | None) -> list[str]:
+    if not company_name:
         return []
-    configured = aliases.get(ticker.upper(), [])
-    if isinstance(configured, str):
-        return [configured]
-    if isinstance(configured, list):
-        return [str(alias) for alias in configured if str(alias).strip()]
-    return []
+
+    phrases: list[str] = []
+    for phrase in (company_name.strip(), without_legal_suffixes(company_name)):
+        phrase = re.sub(r"\s+", " ", phrase).strip(" .")
+        if phrase and phrase.lower() not in {item.lower() for item in phrases}:
+            phrases.append(phrase)
+
+    primary_word_match = re.match(r"[A-Za-z][A-Za-z0-9&.\-]+", without_legal_suffixes(company_name))
+    if primary_word_match:
+        primary_word = primary_word_match.group(0).replace(".com", "")
+        normalized = re.sub(r"[^A-Za-z0-9&]", "", primary_word).strip()
+        if len(normalized) >= 4 and normalized.lower() not in GENERIC_COMPANY_NAME_WORDS:
+            if normalized.lower() not in {item.lower() for item in phrases}:
+                phrases.append(normalized)
+
+    return phrases
+
+
+def thesis_entity_phrases(holding: Holding) -> list[str]:
+    phrases: list[str] = []
+    seen: set[str] = set()
+    for text in flatten_strings(holding.thesis):
+        for match in re.finditer(
+            r"\b(?:[A-Z][A-Za-z0-9&.\-]{2,}|[A-Z]{3,})(?:\s+(?:[A-Z][A-Za-z0-9&.\-]{2,}|[A-Z]{3,}))*\b",
+            text,
+        ):
+            phrase = match.group(0).strip(" .")
+            if phrase in GENERIC_ENTITY_PHRASES:
+                continue
+            key = phrase.lower()
+            if key not in seen:
+                seen.add(key)
+                phrases.append(phrase)
+    return phrases
+
+
+def item_symbol_matches_holding(item: NewsItem, ticker: str) -> bool:
+    ticker = ticker.upper()
+    if ticker in {symbol.upper() for symbol in item.symbols}:
+        return True
+    return bool(item.ticker and item.ticker.upper() == ticker)
 
 
 def phrase_in_text(value: str, phrase: str, ignore_case: bool = True) -> bool:
@@ -1049,39 +1197,50 @@ def phrase_in_text(value: str, phrase: str, ignore_case: bool = True) -> bool:
     return bool(re.search(rf"(?<![A-Za-z0-9]){re.escape(phrase)}(?![A-Za-z0-9])", value, flags))
 
 
-def item_strongly_matches_ticker(item: NewsItem, ticker: str, config: dict[str, Any]) -> bool:
-    ticker = ticker.upper()
+def item_strongly_matches_holding(item: NewsItem, holding: Holding) -> bool:
+    ticker = holding.ticker.upper()
     title_symbols = set(title_ticker_symbols(item.title))
     if ticker in title_symbols:
         return True
 
     title_has_ticker = bool(re.search(rf"\b{re.escape(ticker)}\b", item.title))
-    title_has_alias = any(primary_alias_in_title(item.title, alias) for alias in company_aliases_for_ticker(ticker, config))
-    if title_has_ticker or title_has_alias:
+    title_has_company_name = any(
+        primary_match_phrase_in_title(item.title, phrase) for phrase in company_name_match_phrases(holding.company_name)
+    )
+    title_has_thesis_entity = any(
+        primary_match_phrase_in_title(item.title, phrase) for phrase in thesis_entity_phrases(holding)
+    )
+    if title_has_ticker or title_has_company_name:
+        return True
+    if item_symbol_matches_holding(item, ticker) and title_has_thesis_entity:
         return True
 
     return False
 
 
-def ticker_match_score(item: NewsItem, ticker: str, config: dict[str, Any]) -> int:
-    ticker = ticker.upper()
+def ticker_match_score(item: NewsItem, holding: Holding) -> int:
+    ticker = holding.ticker.upper()
     score = 0
     if ticker in set(title_ticker_symbols(item.title)):
         score += 100
-    if any(primary_alias_in_title(item.title, alias) for alias in company_aliases_for_ticker(ticker, config)):
+    if any(primary_match_phrase_in_title(item.title, phrase) for phrase in company_name_match_phrases(holding.company_name)):
         score += 80
     if re.search(rf"\b{re.escape(ticker)}\b", item.title):
         score += 70
+    if item_symbol_matches_holding(item, ticker) and any(
+        primary_match_phrase_in_title(item.title, phrase) for phrase in thesis_entity_phrases(holding)
+    ):
+        score += 65
     if ticker in {symbol.upper() for symbol in item.symbols}:
         score += 50
     score += min(ticker_mention_count(item, ticker), 5)
     return score
 
 
-def primary_alias_in_title(title: str, alias: str) -> bool:
-    if not phrase_in_text(title, alias):
+def primary_match_phrase_in_title(title: str, match_phrase: str) -> bool:
+    if not phrase_in_text(title, match_phrase):
         return False
-    match = re.search(rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])", title, re.IGNORECASE)
+    match = re.search(rf"(?<![A-Za-z0-9]){re.escape(match_phrase)}(?![A-Za-z0-9])", title, re.IGNORECASE)
     if not match:
         return False
     tail = title[match.end() : match.end() + 12].lower()
@@ -2263,7 +2422,7 @@ def main() -> int:
 
     config = load_yaml(ROOT / args.config)
     portfolio = load_portfolio_from_db(args.user_id)
-    watchlist = parse_holdings(load_yaml(ROOT / args.watchlist))
+    watchlist = with_stock_company_names(parse_holdings(load_yaml(ROOT / args.watchlist)))
 
     if args.date == "latest":
         report_date = latest_completed_us_trading_day()
