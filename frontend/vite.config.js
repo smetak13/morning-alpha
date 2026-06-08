@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 
 const apiTarget = process.env.VITE_API_PROXY_TARGET ?? "http://127.0.0.1:8000";
 const root = fileURLToPath(new URL(".", import.meta.url));
+const publicDir = fileURLToPath(new URL("../assets", import.meta.url));
 
 export default defineConfig({
   root,
+  publicDir,
   plugins: [react()],
   build: {
     outDir: "dist",

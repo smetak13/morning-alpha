@@ -75,22 +75,21 @@ button:disabled {
   gap: 10px;
 }
 
-.brand-mark {
-  align-items: center;
-  background: #f4c430;
-  border-radius: 8px;
-  color: #111111;
-  display: inline-flex;
-  font-weight: 800;
-  height: 44px;
-  justify-content: center;
-  letter-spacing: 0;
-  width: 44px;
+.app-icon {
+  display: block;
+  flex: 0 0 auto;
+  height: 48px;
+  object-fit: contain;
+  width: 48px;
 }
 
-.brand-row.compact .brand-mark {
+.topbar-logo {
+  display: block;
   height: 34px;
-  width: 34px;
+  max-width: min(220px, 52vw);
+  object-fit: contain;
+  object-position: left center;
+  width: auto;
 }
 
 .eyebrow {

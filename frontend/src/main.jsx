@@ -94,9 +94,7 @@ function App() {
 function LoadingScreen() {
   return (
     <main className="shell shell-centered">
-      <div className="brand-mark" aria-hidden="true">
-        MA
-      </div>
+      <img className="app-icon" src="/ma-icon.png" alt="" aria-hidden="true" />
       <p className="muted">Checking your session...</p>
     </main>
   );
@@ -167,9 +165,7 @@ function AuthPage({ onAuthenticated }) {
     <main className="auth-layout">
       <section className="auth-panel" aria-labelledby="auth-title">
         <div className="brand-row">
-          <div className="brand-mark" aria-hidden="true">
-            MA
-          </div>
+          <img className="app-icon" src="/ma-icon.png" alt="" aria-hidden="true" />
           <div>
             <p className="eyebrow">Morning Alpha</p>
             <h1 id="auth-title">{title}</h1>
@@ -258,10 +254,7 @@ function MainPage({ user, onLogout }) {
     <main className="app-layout">
       <header className="topbar">
         <div className="brand-row compact">
-          <div className="brand-mark" aria-hidden="true">
-            MA
-          </div>
-          <span>Morning Alpha</span>
+          <img className="topbar-logo" src="/ma-logo.png" alt="Morning Alpha" />
         </div>
         <button className="icon-button" onClick={onLogout} type="button" title="Sign out">
           <LogOut size={18} aria-hidden="true" />
