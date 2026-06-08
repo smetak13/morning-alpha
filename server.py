@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from database import connection
@@ -16,6 +17,8 @@ from neon_auth import load_settings
 
 
 ROOT = Path(__file__).resolve().parent
+FRONTEND_DIST = ROOT / "frontend" / "dist"
+FRONTEND_INDEX = FRONTEND_DIST / "index.html"
 
 try:
     from dotenv import load_dotenv
@@ -113,8 +116,7 @@ def forwarded_headers(request: Request) -> dict[str, str]:
         "content-type": "application/json",
     }
     origin = (
-        request.headers.get("origin")
-        or os.getenv("API_PUBLIC_URL")
+        os.getenv("API_PUBLIC_URL")
         or f"http://{os.getenv('API_HOST', '127.0.0.1')}:{os.getenv('API_PORT', '8000')}"
     )
     headers["origin"] = origin
@@ -387,6 +389,54 @@ def me(request: Request, response: Response) -> dict[str, Any]:
 def logout(request: Request, response: Response) -> dict[str, Any]:
     upstream = post_to_neon_auth("/sign-out", {}, request)
     return upstream_json_response(upstream, response, parse_upstream_json(upstream))
+
+
+def frontend_dist_file(path: str) -> Path | None:
+    try:
+        candidate = (FRONTEND_DIST / path).resolve()
+        candidate.relative_to(FRONTEND_DIST.resolve())
+    except ValueError:
+        return None
+
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def serve_frontend(path: str = "") -> Response:
+    if path:
+        static_file = frontend_dist_file(path)
+        if static_file:
+            return FileResponse(static_file)
+        if "." in Path(path).name:
+            raise HTTPException(status_code=404, detail="Frontend asset not found.")
+
+    if FRONTEND_INDEX.is_file():
+        return FileResponse(FRONTEND_INDEX)
+
+    return HTMLResponse(
+        """
+        <!doctype html>
+        <html lang="en">
+          <head><meta charset="utf-8"><title>Morning Alpha</title></head>
+          <body>
+            <h1>Morning Alpha frontend is not built</h1>
+            <p>Run <code>npm install</code> and <code>npm run build</code> in the <code>frontend</code> directory.</p>
+          </body>
+        </html>
+        """,
+        status_code=503,
+    )
+
+
+@app.get("/", include_in_schema=False, response_model=None)
+def frontend_root() -> Response:
+    return serve_frontend()
+
+
+@app.get("/{path:path}", include_in_schema=False, response_model=None)
+def frontend_fallback(path: str) -> Response:
+    return serve_frontend(path)
 
 
 if __name__ == "__main__":

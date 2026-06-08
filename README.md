@@ -53,6 +53,31 @@ The FastAPI server is separate from `report.py` and proxies auth requests to Neo
 python server.py
 ```
 
+## Web App
+
+The React app lives in `frontend/`. For local frontend development, run the API server and Vite in separate terminals:
+
+```powershell
+python server.py
+cd frontend
+npm install
+npm run dev
+```
+
+Vite proxies `/register`, `/login`, `/me`, `/logout`, and `/health` to `http://127.0.0.1:8000`.
+
+For production-style serving from FastAPI, build the React app first:
+
+```powershell
+cd frontend
+npm install
+npm run build
+cd ..
+python server.py
+```
+
+After `frontend/dist` exists, FastAPI serves the React app at `/` and falls back to `index.html` for client-side routes.
+
 Available auth endpoints:
 
 - `POST /register` with `email`, `password`, and optional `name`
@@ -63,7 +88,7 @@ Available auth endpoints:
 - `GET /me` to read the current Neon Auth session and local `public.users` row
 - `POST /logout`
 
-By default the server listens on port `8000` and runs `alembic upgrade head` on startup. Set `API_RUN_MIGRATIONS_ON_STARTUP=false` to disable automatic migrations. `API_PUBLIC_URL` is sent as the fallback `Origin` header when CLI clients such as curl do not provide one.
+By default the server listens on port `8000` and runs `alembic upgrade head` on startup. Set `API_RUN_MIGRATIONS_ON_STARTUP=false` to disable automatic migrations. `API_PUBLIC_URL` is sent as the `Origin` header for upstream Neon Auth requests; if it is not set, the server uses `API_HOST` and `API_PORT`.
 
 On successful register, the server forwards Neon Auth session cookies to the client and creates `public.users.id` from Neon Auth's `user.id` if it does not already exist. Existing local user rows are not updated by register/login; login and `GET /me` only read the local row.
 
