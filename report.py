@@ -2272,8 +2272,6 @@ def render_email(report: dict[str, Any], subject: str) -> str:
         subject=subject,
         generated_at=dt.datetime.now(tz=PRAGUE_TZ).date().isoformat(),
         logo_src=email_asset_src("ma-logo.png"),
-        badge_src=email_asset_src("ma-badge.png"),
-        icon_src=email_asset_src("ma-icon.png"),
     )
 
 

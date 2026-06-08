@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import datetime as dt
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -144,6 +145,11 @@ class WatchlistItemUpdateRequest(BaseModel):
     action_triggers: list[str] | None = None
 
 
+class UserSettingsUpdateRequest(BaseModel):
+    report_scheduled_at: str | None = None
+    timezone: str | None = None
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Morning Alpha API", lifespan=lifespan)
 
@@ -238,6 +244,30 @@ def normalize_timezone(value: str | None) -> str:
     except ZoneInfoNotFoundError:
         return DEFAULT_TIMEZONE
     return timezone
+
+
+def validate_timezone(value: str | None) -> str:
+    timezone = (value or "").strip()
+    if not timezone:
+        raise HTTPException(status_code=422, detail="Timezone is required.")
+    try:
+        ZoneInfo(timezone)
+    except ZoneInfoNotFoundError:
+        raise HTTPException(status_code=422, detail="Invalid timezone.")
+    return timezone
+
+
+def parse_report_scheduled_at(value: str | None) -> dt.time:
+    scheduled_at = (value or "").strip()
+    if not scheduled_at:
+        raise HTTPException(status_code=422, detail="Report time is required.")
+    try:
+        parsed = dt.time.fromisoformat(scheduled_at)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Report time must use HH:MM format.")
+    if parsed.tzinfo is not None:
+        raise HTTPException(status_code=422, detail="Report time must not include a timezone.")
+    return dt.time(hour=parsed.hour, minute=parsed.minute)
 
 
 def get_user_profile(user_id: Any) -> dict[str, Any] | None:
@@ -468,6 +498,54 @@ def me(request: Request, response: Response) -> dict[str, Any]:
     response.status_code = upstream.status_code
     copy_set_cookie_headers(upstream, response)
     return {"auth": auth_payload, "user": profile}
+
+
+@app.put("/api/user/settings")
+def update_user_settings(payload: UserSettingsUpdateRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    updates = payload.model_dump(exclude_unset=True)
+    set_clauses: list[str] = []
+    params: dict[str, Any] = {"id": user_id}
+
+    if "report_scheduled_at" in updates and updates["report_scheduled_at"] is not None:
+        params["report_scheduled_at"] = parse_report_scheduled_at(updates["report_scheduled_at"])
+        set_clauses.append("report_scheduled_at = %(report_scheduled_at)s")
+    if "timezone" in updates and updates["timezone"] is not None:
+        params["timezone"] = validate_timezone(updates["timezone"])
+        set_clauses.append("timezone = %(timezone)s")
+
+    if not set_clauses:
+        profile = get_user_profile(user_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail="User profile not found.")
+        return {"user": profile}
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""
+                update public.users
+                set {", ".join(set_clauses)}
+                where id = %(id)s
+                returning
+                    id,
+                    email,
+                    display_name,
+                    timezone,
+                    locale,
+                    report_scheduled_at,
+                    created_at,
+                    updated_at
+                """,
+                params,
+            )
+            row = cursor.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="User profile not found.")
+    return {"user": dict(row)}
 
 
 @app.post("/logout")

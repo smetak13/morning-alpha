@@ -1,6 +1,20 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Check, LogOut, Mail, Pencil, Plus, Search, Sparkles, Trash2, UserPlus, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Clock,
+  Globe2,
+  LogOut,
+  Mail,
+  Pencil,
+  Plus,
+  Search,
+  Sparkles,
+  Trash2,
+  UserPlus,
+  X,
+} from "lucide-react";
 import "./styles.css";
 
 async function requestJson(path, options = {}) {
@@ -56,6 +70,93 @@ function displayName(user) {
 
 function browserTimezone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+}
+
+const FALLBACK_TIMEZONES = [
+  "Europe/Prague",
+  "Europe/London",
+  "Europe/Berlin",
+  "Europe/Paris",
+  "Europe/Warsaw",
+  "Europe/Bratislava",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "Asia/Tokyo",
+  "Asia/Singapore",
+  "Australia/Sydney",
+];
+
+function supportedTimezones() {
+  if (typeof Intl.supportedValuesOf !== "function") {
+    return FALLBACK_TIMEZONES;
+  }
+  try {
+    return Intl.supportedValuesOf("timeZone");
+  } catch {
+    return FALLBACK_TIMEZONES;
+  }
+}
+
+function timezoneOptions(currentTimezone) {
+  return [...new Set([...(supportedTimezones() ?? []), currentTimezone].filter(Boolean))].sort();
+}
+
+function reportTimeOptions() {
+  return Array.from({ length: 96 }, (_, index) => {
+    const hours = Math.floor(index / 4);
+    const minutes = (index % 4) * 15;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  });
+}
+
+function normalizeTimezoneSearch(value) {
+  return String(value || "").trim().toLowerCase().replaceAll("_", " ");
+}
+
+function resolveTimezoneInput(value, timezones) {
+  const search = normalizeTimezoneSearch(value);
+  if (!search) {
+    return "";
+  }
+  const normalizedOptions = timezones.map((timezone) => ({
+    timezone,
+    normalized: normalizeTimezoneSearch(timezone),
+    city: normalizeTimezoneSearch(timezone.split("/").at(-1)),
+  }));
+  return (
+    normalizedOptions.find((option) => option.normalized === search)?.timezone ??
+    normalizedOptions.find((option) => option.city === search)?.timezone ??
+    normalizedOptions.find((option) => option.normalized.includes(search))?.timezone ??
+    ""
+  );
+}
+
+function timeInputValue(value) {
+  const match = String(value || "").match(/^(\d{2}):(\d{2})/);
+  return match ? `${match[1]}:${match[2]}` : "08:00";
+}
+
+function resolveTimeInput(value) {
+  const trimmed = String(value || "").trim();
+  const match = trimmed.match(/^(\d{1,2})(?::?(\d{2}))?$/);
+  if (!match) {
+    return "";
+  }
+  const hours = Number(match[1]);
+  const minutes = Number(match[2] ?? "0");
+  if (hours > 23 || minutes > 59) {
+    return "";
+  }
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function userSettingsFromProfile(user) {
+  return {
+    report_scheduled_at: timeInputValue(user?.report_scheduled_at),
+    timezone: user?.timezone || browserTimezone() || "Europe/Prague",
+  };
 }
 
 const THESIS_SECTIONS = {
@@ -312,6 +413,8 @@ function MainPage({ user, onLogout }) {
   const [watchlist, setWatchlist] = useState([]);
   const [itemsStatus, setItemsStatus] = useState("loading");
   const [itemsError, setItemsError] = useState("");
+  const [settings, setSettings] = useState(() => userSettingsFromProfile(user));
+  const [settingsError, setSettingsError] = useState("");
   const [modal, setModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
@@ -340,6 +443,24 @@ function MainPage({ user, onLogout }) {
   useEffect(() => {
     loadItems();
   }, [loadItems]);
+
+  useEffect(() => {
+    setSettings(userSettingsFromProfile(user));
+  }, [user]);
+
+  const updateUserSettings = async (patch) => {
+    setSettings((current) => ({ ...current, ...patch }));
+    setSettingsError("");
+    try {
+      const payload = await requestJson("/api/user/settings", {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      });
+      setSettings(userSettingsFromProfile(payload.user));
+    } catch (err) {
+      setSettingsError(err instanceof Error ? err.message : "Unable to update report schedule.");
+    }
+  };
 
   const openAddModal = (itemType) => {
     const remaining = itemType === "portfolio" ? Math.max(0, 100 - portfolioTotal) : 100;
@@ -449,6 +570,12 @@ function MainPage({ user, onLogout }) {
         {itemsError ? <p className="error">{itemsError}</p> : null}
         {itemsStatus === "loading" ? <p className="muted">Loading holdings...</p> : null}
 
+        <ReportSchedulePanel
+          error={settingsError}
+          onChange={updateUserSettings}
+          settings={settings}
+        />
+
         <HoldingsSection
           actionLabel="Add holding"
           emptyText="No portfolio holdings yet."
@@ -497,6 +624,236 @@ function MainPage({ user, onLogout }) {
         />
       ) : null}
     </main>
+  );
+}
+
+function ReportSchedulePanel({ error, onChange, settings }) {
+  const timezones = useMemo(() => timezoneOptions(settings.timezone), [settings.timezone]);
+  return (
+    <section className="schedule-panel">
+      <div className="schedule-copy">
+        <p className="eyebrow">Report delivery</p>
+        <h2>Daily report schedule</h2>
+      </div>
+      <div className="schedule-controls">
+        <ReportTimePicker value={settings.report_scheduled_at} onChange={(value) => onChange({ report_scheduled_at: value })} />
+        <TimezoneCombobox
+          options={timezones}
+          value={settings.timezone}
+          onChange={(value) => onChange({ timezone: value })}
+        />
+      </div>
+      {error ? <p className="error schedule-error">{error}</p> : null}
+    </section>
+  );
+}
+
+function ReportTimePicker({ value, onChange }) {
+  const options = useMemo(reportTimeOptions, []);
+  const [draft, setDraft] = useState(value);
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef(null);
+  const optionsRef = useRef(null);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const activeOption = optionsRef.current?.querySelector("[data-active='true']");
+    activeOption?.scrollIntoView({ block: "center" });
+  }, [open, value]);
+
+  const commit = (nextValue) => {
+    const resolved = resolveTimeInput(nextValue);
+    if (!resolved) {
+      setDraft(value);
+      setOpen(false);
+      return;
+    }
+    setDraft(resolved);
+    setOpen(false);
+    if (resolved !== value) {
+      onChange(resolved);
+    }
+  };
+
+  return (
+    <div className="schedule-field time-field">
+      <span className="schedule-label">
+        <Clock size={16} aria-hidden="true" />
+        Time
+      </span>
+      <div className="custom-combobox">
+        <input
+          autoComplete="off"
+          inputMode="numeric"
+          onBlur={() => window.setTimeout(() => commit(draft), 120)}
+          onChange={(event) => setDraft(event.target.value)}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              commit(event.currentTarget.value);
+            }
+            if (event.key === "Escape") {
+              setDraft(value);
+              setOpen(false);
+            }
+          }}
+          placeholder="08:00"
+          ref={inputRef}
+          value={draft}
+        />
+        <button
+          className="combo-icon-button"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            setOpen((current) => !current);
+            inputRef.current?.focus();
+          }}
+          title="Choose time"
+          type="button"
+        >
+          <Clock size={16} aria-hidden="true" />
+        </button>
+        {open ? (
+          <div className="custom-options time-options" ref={optionsRef}>
+            {options.map((option) => (
+              <button
+                className={option === value ? "custom-option active" : "custom-option"}
+                data-active={option === value ? "true" : undefined}
+                key={option}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  commit(option);
+                }}
+                type="button"
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function TimezoneCombobox({ options, value, onChange }) {
+  const [draft, setDraft] = useState(value);
+  const [open, setOpen] = useState(false);
+  const [filtering, setFiltering] = useState(false);
+  const inputRef = useRef(null);
+  const optionsRef = useRef(null);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (!open || filtering) {
+      return;
+    }
+    const activeOption = optionsRef.current?.querySelector("[data-active='true']");
+    activeOption?.scrollIntoView({ block: "center" });
+  }, [filtering, open, value]);
+
+  const filteredOptions = useMemo(() => {
+    if (!filtering) {
+      return options;
+    }
+    const search = normalizeTimezoneSearch(draft);
+    if (!search) {
+      return options;
+    }
+    return options.filter((timezone) => normalizeTimezoneSearch(timezone).includes(search));
+  }, [draft, filtering, options, value]);
+
+  const commit = (nextValue) => {
+    const resolved = resolveTimezoneInput(nextValue, options);
+    if (!resolved) {
+      setDraft(value);
+      setOpen(false);
+      setFiltering(false);
+      return;
+    }
+    setDraft(resolved);
+    setOpen(false);
+    setFiltering(false);
+    if (resolved !== value) {
+      onChange(resolved);
+    }
+  };
+
+  return (
+    <div className="schedule-field timezone-field">
+      <span className="schedule-label">
+        <Globe2 size={16} aria-hidden="true" />
+        Timezone
+      </span>
+      <div className="custom-combobox">
+        <input
+          autoComplete="off"
+          onBlur={() => window.setTimeout(() => commit(draft), 120)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setFiltering(true);
+            setOpen(true);
+          }}
+          onFocus={() => {
+            setOpen(true);
+            setFiltering(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              commit(event.currentTarget.value);
+            }
+            if (event.key === "Escape") {
+              setDraft(value);
+              setOpen(false);
+              setFiltering(false);
+            }
+          }}
+          ref={inputRef}
+          value={draft}
+        />
+        <button
+          className="combo-icon-button"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            setFiltering(false);
+            setOpen((current) => !current);
+            inputRef.current?.focus();
+          }}
+          title="Choose timezone"
+          type="button"
+        >
+          <ChevronDown size={17} aria-hidden="true" />
+        </button>
+        {open ? (
+          <div className="custom-options timezone-options" ref={optionsRef}>
+            {filteredOptions.map((timezone) => (
+              <button
+                className={timezone === value ? "custom-option active" : "custom-option"}
+                data-active={timezone === value ? "true" : undefined}
+                key={timezone}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  commit(timezone);
+                }}
+                type="button"
+              >
+                {timezone}
+              </button>
+            ))}
+            {!filteredOptions.length ? <div className="custom-option empty">No matching timezone</div> : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
