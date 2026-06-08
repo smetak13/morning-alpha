@@ -420,6 +420,7 @@ def load_portfolio_from_db(user_id: str) -> dict[str, Holding]:
                 from public.portfolio_items
                 join public.stocks on stocks.id = portfolio_items.stock_id
                 where portfolio_items.user_id = %s
+                  and portfolio_items.include_in_report = true
                 order by portfolio_items.position_size_pct desc nulls last, stocks.symbol
                 """,
                 (user_id,),
@@ -474,6 +475,7 @@ def load_watchlist_from_db(user_id: str) -> dict[str, Holding]:
                 from public.watchlist_items
                 join public.stocks on stocks.id = watchlist_items.stock_id
                 where watchlist_items.user_id = %s
+                  and watchlist_items.include_in_report = true
                 order by stocks.symbol
                 """,
                 (user_id,),

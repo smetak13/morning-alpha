@@ -361,20 +361,24 @@ input::placeholder {
 
 .holdings-table {
   border-collapse: collapse;
-  min-width: 760px;
+  min-width: 840px;
   width: 100%;
 }
 
 .company-col {
-  width: 42%;
+  width: 37%;
 }
 
 .position-col {
-  width: 28%;
+  width: 25%;
 }
 
 .thesis-col {
-  width: 16%;
+  width: 13%;
+}
+
+.report-col {
+  width: 11%;
 }
 
 .actions-col {
@@ -448,6 +452,52 @@ input::placeholder {
 
 .actions-cell .icon-button {
   margin-left: 8px;
+}
+
+.report-switch {
+  align-items: center;
+  background: #242424;
+  border: 1px solid #3a3a3a;
+  border-radius: 999px;
+  box-shadow: none;
+  display: inline-flex;
+  height: 28px;
+  justify-content: flex-start;
+  padding: 3px;
+  width: 50px;
+}
+
+.report-switch:hover {
+  border-color: #f4c430;
+}
+
+.report-switch.is-on {
+  background: #f4c430;
+  border-color: #f4c430;
+  justify-content: flex-end;
+}
+
+.report-switch-knob {
+  background: #ffffff;
+  border-radius: 50%;
+  display: block;
+  height: 20px;
+  width: 20px;
+}
+
+.report-switch.is-on .report-switch-knob {
+  background: #080808;
+}
+
+.sr-only {
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .icon-button.danger {

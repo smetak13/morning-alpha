@@ -102,6 +102,7 @@ class PortfolioItemCreateRequest(BaseModel):
     symbol: str
     company_name: str
     position_size_pct: float = 10
+    include_in_report: bool = True
     why_i_own_it: list[str] = Field(default_factory=list)
     bull_case: list[str] = Field(default_factory=list)
     bear_case: list[str] = Field(default_factory=list)
@@ -112,6 +113,7 @@ class PortfolioItemCreateRequest(BaseModel):
 
 class PortfolioItemUpdateRequest(BaseModel):
     position_size_pct: float | None = None
+    include_in_report: bool | None = None
     why_i_own_it: list[str] | None = None
     bull_case: list[str] | None = None
     bear_case: list[str] | None = None
@@ -123,6 +125,7 @@ class PortfolioItemUpdateRequest(BaseModel):
 class WatchlistItemCreateRequest(BaseModel):
     symbol: str
     company_name: str
+    include_in_report: bool = True
     why_i_watch_it: list[str] = Field(default_factory=list)
     bull_case: list[str] = Field(default_factory=list)
     bear_case: list[str] = Field(default_factory=list)
@@ -132,6 +135,7 @@ class WatchlistItemCreateRequest(BaseModel):
 
 
 class WatchlistItemUpdateRequest(BaseModel):
+    include_in_report: bool | None = None
     why_i_watch_it: list[str] | None = None
     bull_case: list[str] | None = None
     bear_case: list[str] | None = None
@@ -723,6 +727,7 @@ def serialize_portfolio_row(row: dict[str, Any]) -> dict[str, Any]:
         "company_name": row["company_name"],
         "logo_url": stock_logo_url(symbol),
         "position_size_pct": float(row["position_size_pct"] or 0),
+        "include_in_report": bool(row["include_in_report"]),
         "why_i_own_it": row["why_i_own_it"] or [],
         "bull_case": row["bull_case"] or [],
         "bear_case": row["bear_case"] or [],
@@ -740,6 +745,7 @@ def serialize_watchlist_row(row: dict[str, Any]) -> dict[str, Any]:
         "symbol": symbol,
         "company_name": row["company_name"],
         "logo_url": stock_logo_url(symbol),
+        "include_in_report": bool(row["include_in_report"]),
         "why_i_watch_it": row["why_i_watch_it"] or [],
         "bull_case": row["bull_case"] or [],
         "bear_case": row["bear_case"] or [],
@@ -756,6 +762,7 @@ PORTFOLIO_SELECT = """
         stocks.symbol,
         stocks.company_name,
         portfolio_items.position_size_pct,
+        portfolio_items.include_in_report,
         portfolio_items.why_i_own_it,
         portfolio_items.bull_case,
         portfolio_items.bear_case,
@@ -773,6 +780,7 @@ WATCHLIST_SELECT = """
         watchlist_items.stock_id::text as stock_id,
         stocks.symbol,
         stocks.company_name,
+        watchlist_items.include_in_report,
         watchlist_items.why_i_watch_it,
         watchlist_items.bull_case,
         watchlist_items.bear_case,
@@ -822,6 +830,7 @@ def create_portfolio_item(payload: PortfolioItemCreateRequest, request: Request)
                     user_id,
                     stock_id,
                     position_size_pct,
+                    include_in_report,
                     why_i_own_it,
                     bull_case,
                     bear_case,
@@ -833,6 +842,7 @@ def create_portfolio_item(payload: PortfolioItemCreateRequest, request: Request)
                     %(user_id)s,
                     %(stock_id)s,
                     %(position_size_pct)s,
+                    %(include_in_report)s,
                     %(why_i_own_it)s,
                     %(bull_case)s,
                     %(bear_case)s,
@@ -847,6 +857,7 @@ def create_portfolio_item(payload: PortfolioItemCreateRequest, request: Request)
                     "user_id": user_id,
                     "stock_id": stock_id,
                     "position_size_pct": position,
+                    "include_in_report": payload.include_in_report,
                     "why_i_own_it": clean_bullets(payload.why_i_own_it),
                     "bull_case": clean_bullets(payload.bull_case),
                     "bear_case": clean_bullets(payload.bear_case),
@@ -883,10 +894,14 @@ def update_portfolio_item(item_id: str, payload: PortfolioItemUpdateRequest, req
                     updates["position_size_pct"],
                     portfolio_total_pct(cursor, user_id, exclude_item_id=item_id),
                 )
+            include_in_report = current_dict["include_in_report"]
+            if "include_in_report" in updates and updates["include_in_report"] is not None:
+                include_in_report = updates["include_in_report"]
             params = {
                 "id": item_id,
                 "user_id": user_id,
                 "position_size_pct": position,
+                "include_in_report": include_in_report,
                 "why_i_own_it": clean_bullets(updates.get("why_i_own_it", current_dict["why_i_own_it"])),
                 "bull_case": clean_bullets(updates.get("bull_case", current_dict["bull_case"])),
                 "bear_case": clean_bullets(updates.get("bear_case", current_dict["bear_case"])),
@@ -899,6 +914,7 @@ def update_portfolio_item(item_id: str, payload: PortfolioItemUpdateRequest, req
                 update public.portfolio_items
                 set
                     position_size_pct = %(position_size_pct)s,
+                    include_in_report = %(include_in_report)s,
                     why_i_own_it = %(why_i_own_it)s,
                     bull_case = %(bull_case)s,
                     bear_case = %(bear_case)s,
@@ -964,6 +980,7 @@ def create_watchlist_item(payload: WatchlistItemCreateRequest, request: Request)
                 insert into public.watchlist_items (
                     user_id,
                     stock_id,
+                    include_in_report,
                     why_i_watch_it,
                     bull_case,
                     bear_case,
@@ -974,6 +991,7 @@ def create_watchlist_item(payload: WatchlistItemCreateRequest, request: Request)
                 values (
                     %(user_id)s,
                     %(stock_id)s,
+                    %(include_in_report)s,
                     %(why_i_watch_it)s,
                     %(bull_case)s,
                     %(bear_case)s,
@@ -987,6 +1005,7 @@ def create_watchlist_item(payload: WatchlistItemCreateRequest, request: Request)
                 {
                     "user_id": user_id,
                     "stock_id": stock_id,
+                    "include_in_report": payload.include_in_report,
                     "why_i_watch_it": clean_bullets(payload.why_i_watch_it),
                     "bull_case": clean_bullets(payload.bull_case),
                     "bear_case": clean_bullets(payload.bear_case),
@@ -1017,9 +1036,13 @@ def update_watchlist_item(item_id: str, payload: WatchlistItemUpdateRequest, req
             if not current:
                 raise HTTPException(status_code=404, detail="Watchlist item not found.")
             current_dict = dict(current)
+            include_in_report = current_dict["include_in_report"]
+            if "include_in_report" in updates and updates["include_in_report"] is not None:
+                include_in_report = updates["include_in_report"]
             params = {
                 "id": item_id,
                 "user_id": user_id,
+                "include_in_report": include_in_report,
                 "why_i_watch_it": clean_bullets(updates.get("why_i_watch_it", current_dict["why_i_watch_it"])),
                 "bull_case": clean_bullets(updates.get("bull_case", current_dict["bull_case"])),
                 "bear_case": clean_bullets(updates.get("bear_case", current_dict["bear_case"])),
@@ -1031,6 +1054,7 @@ def update_watchlist_item(item_id: str, payload: WatchlistItemUpdateRequest, req
                 """
                 update public.watchlist_items
                 set
+                    include_in_report = %(include_in_report)s,
                     why_i_watch_it = %(why_i_watch_it)s,
                     bull_case = %(bull_case)s,
                     bear_case = %(bear_case)s,

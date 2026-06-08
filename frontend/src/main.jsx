@@ -370,6 +370,10 @@ function MainPage({ user, onLogout }) {
     setPortfolio((current) => current.map((item) => (item.id === itemId ? updater(item) : item)));
   };
 
+  const replaceWatchlistItem = (itemId, updater) => {
+    setWatchlist((current) => current.map((item) => (item.id === itemId ? updater(item) : item)));
+  };
+
   const savePortfolioPosition = async (item) => {
     try {
       const payload = await requestJson(`/api/portfolio-items/${item.id}`, {
@@ -387,6 +391,24 @@ function MainPage({ user, onLogout }) {
     const max = Math.max(0, 100 - portfolioTotal + Number(item.position_size_pct || 0));
     const next = clampPosition(value, max);
     replacePortfolioItem(item.id, (current) => ({ ...current, position_size_pct: next }));
+  };
+
+  const updateReportInclusion = async (itemType, item, nextValue) => {
+    const path =
+      itemType === "portfolio" ? `/api/portfolio-items/${item.id}` : `/api/watchlist-items/${item.id}`;
+    const replaceItem = itemType === "portfolio" ? replacePortfolioItem : replaceWatchlistItem;
+    setItemsError("");
+    replaceItem(item.id, (current) => ({ ...current, include_in_report: nextValue }));
+    try {
+      const payload = await requestJson(path, {
+        method: "PUT",
+        body: JSON.stringify({ include_in_report: nextValue }),
+      });
+      replaceItem(item.id, () => payload.item);
+    } catch (err) {
+      setItemsError(err instanceof Error ? err.message : "Unable to update report setting.");
+      await loadItems();
+    }
   };
 
   const handleDelete = async () => {
@@ -435,6 +457,7 @@ function MainPage({ user, onLogout }) {
           onAdd={() => openAddModal("portfolio")}
           onDelete={(item) => setDeleteTarget({ itemType: "portfolio", item })}
           onEdit={(item) => openEditModal("portfolio", item)}
+          onReportToggle={(item, nextValue) => updateReportInclusion("portfolio", item, nextValue)}
           onSort={() => setPortfolio((current) => sortPortfolioItems(current))}
           onPositionChange={updatePortfolioPosition}
           onPositionCommit={savePortfolioPosition}
@@ -450,6 +473,7 @@ function MainPage({ user, onLogout }) {
           onAdd={() => openAddModal("watchlist")}
           onDelete={(item) => setDeleteTarget({ itemType: "watchlist", item })}
           onEdit={(item) => openEditModal("watchlist", item)}
+          onReportToggle={(item, nextValue) => updateReportInclusion("watchlist", item, nextValue)}
           title="Watchlist"
         />
       </section>
@@ -486,6 +510,7 @@ function HoldingsSection({
   onEdit,
   onPositionChange,
   onPositionCommit,
+  onReportToggle,
   onSort,
   portfolioTotal = 0,
   title,
@@ -512,6 +537,7 @@ function HoldingsSection({
             <col className="company-col" />
             <col className="position-col" />
             <col className="thesis-col" />
+            <col className="report-col" />
             <col className="actions-col" />
           </colgroup>
           <thead>
@@ -519,6 +545,7 @@ function HoldingsSection({
               <th>Company</th>
               <th>{itemType === "portfolio" ? "Position" : ""}</th>
               <th>Thesis</th>
+              <th>In report</th>
               <th className="actions-cell">Actions</th>
             </tr>
           </thead>
@@ -548,6 +575,9 @@ function HoldingsSection({
                   <td>
                     <span className="status-pill">{thesisPointCount(item, itemType)} points</span>
                   </td>
+                  <td>
+                    <ReportToggle checked={item.include_in_report !== false} onChange={(next) => onReportToggle(item, next)} />
+                  </td>
                   <td className="actions-cell">
                     <button className="icon-button" onClick={() => onEdit(item)} title="Edit thesis" type="button">
                       <Pencil size={17} aria-hidden="true" />
@@ -560,7 +590,7 @@ function HoldingsSection({
               ))
             ) : (
               <tr>
-                <td className="empty-table" colSpan={4}>
+                <td className="empty-table" colSpan={5}>
                   {emptyText}
                 </td>
               </tr>
@@ -569,6 +599,21 @@ function HoldingsSection({
         </table>
       </div>
     </section>
+  );
+}
+
+function ReportToggle({ checked, onChange }) {
+  return (
+    <button
+      aria-pressed={checked}
+      className={`report-switch${checked ? " is-on" : ""}`}
+      onClick={() => onChange(!checked)}
+      title={checked ? "Included in report" : "Excluded from report"}
+      type="button"
+    >
+      <span className="report-switch-knob" aria-hidden="true" />
+      <span className="sr-only">{checked ? "Included in report" : "Excluded from report"}</span>
+    </button>
   );
 }
 
