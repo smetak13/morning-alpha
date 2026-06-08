@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -12,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from database import connection
 from neon_auth import load_settings
@@ -82,6 +83,61 @@ class GoogleIdTokenRequest(BaseModel):
     id_token: str
     access_token: str | None = None
     timezone: str | None = None
+
+
+class StockSearchResult(BaseModel):
+    symbol: str
+    company_name: str
+    exchange: str | None = None
+    logo_url: str | None = None
+
+
+class DraftThesisRequest(BaseModel):
+    item_type: Literal["portfolio", "watchlist"]
+    symbol: str
+    company_name: str
+
+
+class PortfolioItemCreateRequest(BaseModel):
+    symbol: str
+    company_name: str
+    position_size_pct: float = 10
+    why_i_own_it: list[str] = Field(default_factory=list)
+    bull_case: list[str] = Field(default_factory=list)
+    bear_case: list[str] = Field(default_factory=list)
+    key_metrics: list[str] = Field(default_factory=list)
+    red_flags: list[str] = Field(default_factory=list)
+    action_triggers: list[str] = Field(default_factory=list)
+
+
+class PortfolioItemUpdateRequest(BaseModel):
+    position_size_pct: float | None = None
+    why_i_own_it: list[str] | None = None
+    bull_case: list[str] | None = None
+    bear_case: list[str] | None = None
+    key_metrics: list[str] | None = None
+    red_flags: list[str] | None = None
+    action_triggers: list[str] | None = None
+
+
+class WatchlistItemCreateRequest(BaseModel):
+    symbol: str
+    company_name: str
+    why_i_watch_it: list[str] = Field(default_factory=list)
+    bull_case: list[str] = Field(default_factory=list)
+    bear_case: list[str] = Field(default_factory=list)
+    key_metrics: list[str] = Field(default_factory=list)
+    red_flags: list[str] = Field(default_factory=list)
+    action_triggers: list[str] = Field(default_factory=list)
+
+
+class WatchlistItemUpdateRequest(BaseModel):
+    why_i_watch_it: list[str] | None = None
+    bull_case: list[str] | None = None
+    bear_case: list[str] | None = None
+    key_metrics: list[str] | None = None
+    red_flags: list[str] | None = None
+    action_triggers: list[str] | None = None
 
 
 def create_app() -> FastAPI:
@@ -414,6 +470,595 @@ def me(request: Request, response: Response) -> dict[str, Any]:
 def logout(request: Request, response: Response) -> dict[str, Any]:
     upstream = post_to_neon_auth("/sign-out", {}, request)
     return upstream_json_response(upstream, response, parse_upstream_json(upstream))
+
+
+def current_auth_user(request: Request) -> dict[str, Any]:
+    timeout = float(os.getenv("NEON_AUTH_TIMEOUT_SECONDS", "15"))
+    with httpx.Client(timeout=timeout, follow_redirects=False) as client:
+        upstream = client.get(neon_auth_url("/get-session"), headers=forwarded_headers(request))
+
+    auth_payload = parse_upstream_json(upstream)
+    if upstream.status_code >= 400:
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+
+    user = extract_user(auth_payload)
+    if not user or not user.get("id"):
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+    return user
+
+
+def current_user_id(request: Request) -> str:
+    return str(current_auth_user(request)["id"])
+
+
+def stock_logo_url(symbol: str) -> str:
+    return f"https://financialmodelingprep.com/image-stock/{symbol.upper()}.png"
+
+
+def clean_symbol(value: str) -> str:
+    symbol = value.upper().strip()
+    symbol = "".join(char for char in symbol if char.isalnum() or char in {".", "-"})
+    if not symbol:
+        raise HTTPException(status_code=422, detail="Stock symbol is required.")
+    return symbol
+
+
+def clean_bullets(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+    return [str(value).strip() for value in values if str(value).strip()]
+
+
+def fmp_client_from_env() -> Any:
+    from report import FmpClient, load_yaml
+
+    api_key = os.getenv("FMP_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="FMP_API_KEY is not configured.")
+
+    config = load_yaml(ROOT / "config.yaml")
+    fmp_config = config.get("fmp", {})
+    return FmpClient(
+        api_key=api_key,
+        base_url=fmp_config.get("base_url", "https://financialmodelingprep.com/stable"),
+        timeout_seconds=int(fmp_config.get("request_timeout_seconds", 20)),
+    )
+
+
+def normalize_stock_search_item(item: dict[str, Any]) -> StockSearchResult | None:
+    symbol = str(item.get("symbol") or item.get("ticker") or "").upper().strip()
+    company_name = str(
+        item.get("name") or item.get("companyName") or item.get("company_name") or item.get("securityName") or ""
+    ).strip()
+    if not symbol or not company_name:
+        return None
+    exchange = str(
+        item.get("exchangeShortName") or item.get("exchange") or item.get("stockExchange") or ""
+    ).strip() or None
+    return StockSearchResult(
+        symbol=symbol,
+        company_name=company_name,
+        exchange=exchange,
+        logo_url=stock_logo_url(symbol),
+    )
+
+
+@app.get("/api/stocks/search")
+def search_stocks(q: str, request: Request) -> dict[str, Any]:
+    current_user_id(request)
+    query = q.strip()
+    if len(query) < 1:
+        return {"results": []}
+
+    client = fmp_client_from_env()
+    results_by_symbol: dict[str, StockSearchResult] = {}
+    for endpoint in ("search-symbol", "search-name"):
+        try:
+            data = client.get(endpoint, {"query": query, "limit": 8})
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"FMP search failed: {exc}") from exc
+        if not isinstance(data, list):
+            continue
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            result = normalize_stock_search_item(item)
+            if result:
+                results_by_symbol.setdefault(result.symbol, result)
+
+    return {"results": [result.model_dump() for result in list(results_by_symbol.values())[:12]]}
+
+
+def draft_thesis_schema(item_type: str) -> dict[str, Any]:
+    first_field = "why_i_own_it" if item_type == "portfolio" else "why_i_watch_it"
+    return {
+        first_field: ["string"],
+        "bull_case": ["string"],
+        "bear_case": ["string"],
+        "key_metrics": ["string"],
+        "red_flags": ["string"],
+        "action_triggers": ["string"],
+    }
+
+
+def normalize_draft_thesis(payload: dict[str, Any], item_type: str) -> dict[str, list[str]]:
+    schema = draft_thesis_schema(item_type)
+    normalized: dict[str, list[str]] = {}
+    for key in schema:
+        value = payload.get(key)
+        if isinstance(value, str):
+            normalized[key] = clean_bullets([value])
+        elif isinstance(value, list):
+            normalized[key] = clean_bullets([str(item) for item in value])
+        else:
+            normalized[key] = []
+    return normalized
+
+
+@app.post("/api/thesis/draft")
+def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any]:
+    current_user_id(request)
+    if not os.getenv("OPENAI_API_KEY"):
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
+
+    from openai import OpenAI
+    from report import load_yaml, parse_model_json
+
+    symbol = clean_symbol(payload.symbol)
+    company_name = payload.company_name.strip() or symbol
+    config = load_yaml(ROOT / "config.yaml")
+    model = config.get("openai", {}).get("model", "gpt-4.1-mini")
+    schema = draft_thesis_schema(payload.item_type)
+    first_label = "why_i_own_it" if payload.item_type == "portfolio" else "why_i_watch_it"
+    first_guidance = (
+        "possible reasons a long-term investor might own this company"
+        if payload.item_type == "portfolio"
+        else "possible reasons a long-term investor might watch this company"
+    )
+
+    prompt = {
+        "task": "Generate a neutral draft investment thesis for a user to review and edit.",
+        "company": {"symbol": symbol, "company_name": company_name},
+        "item_type": payload.item_type,
+        "required_json_schema": schema,
+        "field_guidance": {
+            first_label: first_guidance,
+            "bull_case": "3 concise bullets for what could go right",
+            "bear_case": "3 concise bullets for what could go wrong",
+            "key_metrics": "3 concise metrics or signals to monitor",
+            "red_flags": "3 concise warning signs",
+            "action_triggers": "3 concise events or evidence that would justify reviewing the thesis",
+        },
+        "constraints": [
+            "Return valid JSON only.",
+            "Each field must be an array of 2 to 4 short bullets.",
+            "Do not recommend buying, selling, holding, position sizing, or trading.",
+            "Use cautious language because this is only an AI draft.",
+            "Do not claim to know the user's personal reason; phrase personal-looking fields as possible reasons.",
+        ],
+    }
+    try:
+        response = OpenAI().responses.create(
+            model=model,
+            input=[
+                {"role": "system", "content": "You generate concise, neutral investment thesis drafts as JSON only."},
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+            ],
+        )
+        draft = parse_model_json(response.output_text)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Thesis generation failed: {exc}") from exc
+
+    return {
+        "stock": {
+            "symbol": symbol,
+            "company_name": company_name,
+            "logo_url": stock_logo_url(symbol),
+        },
+        "item_type": payload.item_type,
+        "thesis": normalize_draft_thesis(draft, payload.item_type),
+    }
+
+
+def get_or_create_stock(cursor: Any, symbol: str, company_name: str) -> str:
+    cursor.execute(
+        """
+        insert into public.stocks (symbol, company_name, is_actively_trading)
+        values (%(symbol)s, %(company_name)s, true)
+        on conflict (symbol) do update
+        set company_name = excluded.company_name,
+            is_actively_trading = true
+        returning id::text
+        """,
+        {"symbol": symbol, "company_name": company_name},
+    )
+    return str(cursor.fetchone()["id"])
+
+
+def portfolio_total_pct(cursor: Any, user_id: str, exclude_item_id: str | None = None) -> float:
+    if exclude_item_id:
+        cursor.execute(
+            """
+            select coalesce(sum(position_size_pct), 0) as total
+            from public.portfolio_items
+            where user_id = %(user_id)s
+              and id::text <> %(exclude_item_id)s
+            """,
+            {"user_id": user_id, "exclude_item_id": exclude_item_id},
+        )
+    else:
+        cursor.execute(
+            """
+            select coalesce(sum(position_size_pct), 0) as total
+            from public.portfolio_items
+            where user_id = %(user_id)s
+            """,
+            {"user_id": user_id},
+        )
+    return float(cursor.fetchone()["total"] or 0)
+
+
+def validate_position_size(value: float, existing_total: float) -> float:
+    try:
+        position = float(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="position_size_pct must be a number.")
+    if position < 0 or position > 100:
+        raise HTTPException(status_code=422, detail="position_size_pct must be between 0 and 100.")
+    if existing_total + position > 100.00001:
+        remaining = max(0, 100 - existing_total)
+        raise HTTPException(
+            status_code=422,
+            detail=f"Portfolio positions cannot exceed 100%. Remaining allocation is {remaining:.2f}%.",
+        )
+    return position
+
+
+def serialize_portfolio_row(row: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(row["symbol"]).upper()
+    return {
+        "id": str(row["id"]),
+        "stock_id": str(row["stock_id"]),
+        "symbol": symbol,
+        "company_name": row["company_name"],
+        "logo_url": stock_logo_url(symbol),
+        "position_size_pct": float(row["position_size_pct"] or 0),
+        "why_i_own_it": row["why_i_own_it"] or [],
+        "bull_case": row["bull_case"] or [],
+        "bear_case": row["bear_case"] or [],
+        "key_metrics": row["key_metrics"] or [],
+        "red_flags": row["red_flags"] or [],
+        "action_triggers": row["action_triggers"] or [],
+    }
+
+
+def serialize_watchlist_row(row: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(row["symbol"]).upper()
+    return {
+        "id": str(row["id"]),
+        "stock_id": str(row["stock_id"]),
+        "symbol": symbol,
+        "company_name": row["company_name"],
+        "logo_url": stock_logo_url(symbol),
+        "why_i_watch_it": row["why_i_watch_it"] or [],
+        "bull_case": row["bull_case"] or [],
+        "bear_case": row["bear_case"] or [],
+        "key_metrics": row["key_metrics"] or [],
+        "red_flags": row["red_flags"] or [],
+        "action_triggers": row["action_triggers"] or [],
+    }
+
+
+PORTFOLIO_SELECT = """
+    select
+        portfolio_items.id::text as id,
+        portfolio_items.stock_id::text as stock_id,
+        stocks.symbol,
+        stocks.company_name,
+        portfolio_items.position_size_pct,
+        portfolio_items.why_i_own_it,
+        portfolio_items.bull_case,
+        portfolio_items.bear_case,
+        portfolio_items.key_metrics,
+        portfolio_items.red_flags,
+        portfolio_items.action_triggers
+    from public.portfolio_items
+    join public.stocks on stocks.id = portfolio_items.stock_id
+"""
+
+
+WATCHLIST_SELECT = """
+    select
+        watchlist_items.id::text as id,
+        watchlist_items.stock_id::text as stock_id,
+        stocks.symbol,
+        stocks.company_name,
+        watchlist_items.why_i_watch_it,
+        watchlist_items.bull_case,
+        watchlist_items.bear_case,
+        watchlist_items.key_metrics,
+        watchlist_items.red_flags,
+        watchlist_items.action_triggers
+    from public.watchlist_items
+    join public.stocks on stocks.id = watchlist_items.stock_id
+"""
+
+
+@app.get("/api/portfolio-items")
+def list_portfolio_items(request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                PORTFOLIO_SELECT
+                + """
+                where portfolio_items.user_id = %(user_id)s
+                order by portfolio_items.position_size_pct desc nulls last, stocks.symbol
+                """,
+                {"user_id": user_id},
+            )
+            rows = cursor.fetchall()
+
+    items = [serialize_portfolio_row(dict(row)) for row in rows]
+    return {"items": items, "total_position_size_pct": sum(item["position_size_pct"] for item in items)}
+
+
+@app.post("/api/portfolio-items")
+def create_portfolio_item(payload: PortfolioItemCreateRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    symbol = clean_symbol(payload.symbol)
+    company_name = payload.company_name.strip() or symbol
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            position = validate_position_size(payload.position_size_pct, portfolio_total_pct(cursor, user_id))
+            stock_id = get_or_create_stock(cursor, symbol, company_name)
+            cursor.execute(
+                """
+                insert into public.portfolio_items (
+                    user_id,
+                    stock_id,
+                    position_size_pct,
+                    why_i_own_it,
+                    bull_case,
+                    bear_case,
+                    key_metrics,
+                    red_flags,
+                    action_triggers
+                )
+                values (
+                    %(user_id)s,
+                    %(stock_id)s,
+                    %(position_size_pct)s,
+                    %(why_i_own_it)s,
+                    %(bull_case)s,
+                    %(bear_case)s,
+                    %(key_metrics)s,
+                    %(red_flags)s,
+                    %(action_triggers)s
+                )
+                on conflict (user_id, stock_id) do nothing
+                returning id::text
+                """,
+                {
+                    "user_id": user_id,
+                    "stock_id": stock_id,
+                    "position_size_pct": position,
+                    "why_i_own_it": clean_bullets(payload.why_i_own_it),
+                    "bull_case": clean_bullets(payload.bull_case),
+                    "bear_case": clean_bullets(payload.bear_case),
+                    "key_metrics": clean_bullets(payload.key_metrics),
+                    "red_flags": clean_bullets(payload.red_flags),
+                    "action_triggers": clean_bullets(payload.action_triggers),
+                },
+            )
+            inserted = cursor.fetchone()
+            if not inserted:
+                raise HTTPException(status_code=409, detail=f"{symbol} is already in the portfolio.")
+            cursor.execute(PORTFOLIO_SELECT + " where portfolio_items.id = %(id)s", {"id": inserted["id"]})
+            row = cursor.fetchone()
+
+    return {"item": serialize_portfolio_row(dict(row))}
+
+
+@app.put("/api/portfolio-items/{item_id}")
+def update_portfolio_item(item_id: str, payload: PortfolioItemUpdateRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    updates = payload.model_dump(exclude_unset=True)
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(PORTFOLIO_SELECT + " where portfolio_items.id::text = %(id)s and portfolio_items.user_id = %(user_id)s", {"id": item_id, "user_id": user_id})
+            current = cursor.fetchone()
+            if not current:
+                raise HTTPException(status_code=404, detail="Portfolio item not found.")
+            current_dict = dict(current)
+            position = float(current_dict["position_size_pct"] or 0)
+            if "position_size_pct" in updates and updates["position_size_pct"] is not None:
+                position = validate_position_size(
+                    updates["position_size_pct"],
+                    portfolio_total_pct(cursor, user_id, exclude_item_id=item_id),
+                )
+            params = {
+                "id": item_id,
+                "user_id": user_id,
+                "position_size_pct": position,
+                "why_i_own_it": clean_bullets(updates.get("why_i_own_it", current_dict["why_i_own_it"])),
+                "bull_case": clean_bullets(updates.get("bull_case", current_dict["bull_case"])),
+                "bear_case": clean_bullets(updates.get("bear_case", current_dict["bear_case"])),
+                "key_metrics": clean_bullets(updates.get("key_metrics", current_dict["key_metrics"])),
+                "red_flags": clean_bullets(updates.get("red_flags", current_dict["red_flags"])),
+                "action_triggers": clean_bullets(updates.get("action_triggers", current_dict["action_triggers"])),
+            }
+            cursor.execute(
+                """
+                update public.portfolio_items
+                set
+                    position_size_pct = %(position_size_pct)s,
+                    why_i_own_it = %(why_i_own_it)s,
+                    bull_case = %(bull_case)s,
+                    bear_case = %(bear_case)s,
+                    key_metrics = %(key_metrics)s,
+                    red_flags = %(red_flags)s,
+                    action_triggers = %(action_triggers)s
+                where id::text = %(id)s and user_id = %(user_id)s
+                """,
+                params,
+            )
+            cursor.execute(PORTFOLIO_SELECT + " where portfolio_items.id::text = %(id)s", {"id": item_id})
+            row = cursor.fetchone()
+
+    return {"item": serialize_portfolio_row(dict(row))}
+
+
+@app.delete("/api/portfolio-items/{item_id}")
+def delete_portfolio_item(item_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "delete from public.portfolio_items where id::text = %s and user_id = %s",
+                (item_id, user_id),
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Portfolio item not found.")
+    return {"deleted": True}
+
+
+@app.get("/api/watchlist-items")
+def list_watchlist_items(request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                WATCHLIST_SELECT
+                + """
+                where watchlist_items.user_id = %(user_id)s
+                order by stocks.symbol
+                """,
+                {"user_id": user_id},
+            )
+            rows = cursor.fetchall()
+
+    return {"items": [serialize_watchlist_row(dict(row)) for row in rows]}
+
+
+@app.post("/api/watchlist-items")
+def create_watchlist_item(payload: WatchlistItemCreateRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    symbol = clean_symbol(payload.symbol)
+    company_name = payload.company_name.strip() or symbol
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            stock_id = get_or_create_stock(cursor, symbol, company_name)
+            cursor.execute(
+                """
+                insert into public.watchlist_items (
+                    user_id,
+                    stock_id,
+                    why_i_watch_it,
+                    bull_case,
+                    bear_case,
+                    key_metrics,
+                    red_flags,
+                    action_triggers
+                )
+                values (
+                    %(user_id)s,
+                    %(stock_id)s,
+                    %(why_i_watch_it)s,
+                    %(bull_case)s,
+                    %(bear_case)s,
+                    %(key_metrics)s,
+                    %(red_flags)s,
+                    %(action_triggers)s
+                )
+                on conflict (user_id, stock_id) do nothing
+                returning id::text
+                """,
+                {
+                    "user_id": user_id,
+                    "stock_id": stock_id,
+                    "why_i_watch_it": clean_bullets(payload.why_i_watch_it),
+                    "bull_case": clean_bullets(payload.bull_case),
+                    "bear_case": clean_bullets(payload.bear_case),
+                    "key_metrics": clean_bullets(payload.key_metrics),
+                    "red_flags": clean_bullets(payload.red_flags),
+                    "action_triggers": clean_bullets(payload.action_triggers),
+                },
+            )
+            inserted = cursor.fetchone()
+            if not inserted:
+                raise HTTPException(status_code=409, detail=f"{symbol} is already in the watchlist.")
+            cursor.execute(WATCHLIST_SELECT + " where watchlist_items.id = %(id)s", {"id": inserted["id"]})
+            row = cursor.fetchone()
+
+    return {"item": serialize_watchlist_row(dict(row))}
+
+
+@app.put("/api/watchlist-items/{item_id}")
+def update_watchlist_item(item_id: str, payload: WatchlistItemUpdateRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    updates = payload.model_dump(exclude_unset=True)
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(WATCHLIST_SELECT + " where watchlist_items.id::text = %(id)s and watchlist_items.user_id = %(user_id)s", {"id": item_id, "user_id": user_id})
+            current = cursor.fetchone()
+            if not current:
+                raise HTTPException(status_code=404, detail="Watchlist item not found.")
+            current_dict = dict(current)
+            params = {
+                "id": item_id,
+                "user_id": user_id,
+                "why_i_watch_it": clean_bullets(updates.get("why_i_watch_it", current_dict["why_i_watch_it"])),
+                "bull_case": clean_bullets(updates.get("bull_case", current_dict["bull_case"])),
+                "bear_case": clean_bullets(updates.get("bear_case", current_dict["bear_case"])),
+                "key_metrics": clean_bullets(updates.get("key_metrics", current_dict["key_metrics"])),
+                "red_flags": clean_bullets(updates.get("red_flags", current_dict["red_flags"])),
+                "action_triggers": clean_bullets(updates.get("action_triggers", current_dict["action_triggers"])),
+            }
+            cursor.execute(
+                """
+                update public.watchlist_items
+                set
+                    why_i_watch_it = %(why_i_watch_it)s,
+                    bull_case = %(bull_case)s,
+                    bear_case = %(bear_case)s,
+                    key_metrics = %(key_metrics)s,
+                    red_flags = %(red_flags)s,
+                    action_triggers = %(action_triggers)s
+                where id::text = %(id)s and user_id = %(user_id)s
+                """,
+                params,
+            )
+            cursor.execute(WATCHLIST_SELECT + " where watchlist_items.id::text = %(id)s", {"id": item_id})
+            row = cursor.fetchone()
+
+    return {"item": serialize_watchlist_row(dict(row))}
+
+
+@app.delete("/api/watchlist-items/{item_id}")
+def delete_watchlist_item(item_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "delete from public.watchlist_items where id::text = %s and user_id = %s",
+                (item_id, user_id),
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Watchlist item not found.")
+    return {"deleted": True}
 
 
 def frontend_dist_file(path: str) -> Path | None:
