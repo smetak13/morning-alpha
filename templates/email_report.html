@@ -5,171 +5,218 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ subject }}</title>
     <style>
-      body { margin: 0; padding: 0; background: #f6f7f9; color: #14171f; font-family: Arial, Helvetica, sans-serif; }
-      .container { max-width: 760px; margin: 0 auto; padding: 24px; background: #ffffff; }
-      h1 { font-size: 24px; margin: 0 0 6px; }
-      h2 { font-size: 19px; margin: 28px 0 10px; border-bottom: 1px solid #d9dde5; padding-bottom: 6px; }
-      h3 { font-size: 17px; margin: 18px 0 6px; }
-      h4 { font-size: 15px; margin: 18px 0 6px; }
-      p, li { font-size: 14px; line-height: 1.45; }
-      ul { padding-left: 20px; }
-      .meta { color: #616978; font-size: 12px; margin-bottom: 22px; }
-      .item { border-left: 3px solid #2f6fed; padding-left: 12px; margin: 14px 0; }
-      .thesis-item { border-left: 3px solid #2f6fed; padding-left: 12px; margin: 25px 0; }
-      .sector-article { border-top: 1px solid #e6e9ef; margin-top: 12px; padding-top: 10px; }
-      .flag { display: inline-block; padding: 2px 7px; border-radius: 4px; background: #eef2ff; color: #1d3f92; font-size: 12px; font-weight: bold; }
-      .source { color: #4b5565; font-size: 12px; }
-      a { color: #1b5fd1; text-decoration: none; }
-      .disclaimer { margin-top: 28px; padding-top: 14px; border-top: 1px solid #d9dde5; color: #616978; font-size: 12px; }
+      body { margin: 0; padding: 0; background: #080808; color: #f4f4f0; font-family: Arial, Helvetica, sans-serif; }
+      .page { background: #080808; padding: 28px 12px; }
+      .container { max-width: 760px; margin: 0 auto; background: #111111; border: 1px solid #2a2a2a; border-radius: 8px; overflow: hidden; }
+      .header { background: #151515; border-bottom: 1px solid #2a2a2a; padding: 26px 28px 22px; }
+      .brand { margin-bottom: 26px; }
+      .logo { border: 0; display: block; height: auto; line-height: 0; max-width: 270px; width: 270px; }
+      .hero { display: table; width: 100%; }
+      .hero-copy { display: table-cell; vertical-align: middle; }
+      .hero-badge { display: table-cell; text-align: right; vertical-align: middle; width: 96px; }
+      .badge-img { border: 0; display: inline-block; height: auto; line-height: 0; max-width: 82px; width: 82px; }
+      .body { padding: 24px 28px 28px; }
+      h1 { color: #ffffff; font-size: 28px; line-height: 1.12; margin: 0 0 10px; }
+      h2 { border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px; }
+      h3 { color: #ffffff; font-size: 16px; margin: 18px 0 8px; }
+      h4 { color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 8px; }
+      p, li { color: #d7d7d0; font-size: 14px; line-height: 1.55; }
+      p { margin: 8px 0; }
+      ul { margin: 10px 0 0; padding-left: 20px; }
+      li { margin: 6px 0; }
+      a { color: #f4c430; text-decoration: none; }
+      strong { color: #ffffff; }
+      .meta { color: #a7a7a0; font-size: 12px; line-height: 1.5; margin: 0; }
+      .card { background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 14px 0; padding: 16px; }
+      .thesis-card { margin: 18px 0; }
+      .sector-article { border-top: 1px solid #303030; margin-top: 14px; padding-top: 12px; }
+      .flag { background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase; }
+      .source { color: #a7a7a0; font-size: 12px; }
+      .empty { color: #a7a7a0; }
+      .disclaimer { border-top: 1px solid #343434; color: #a7a7a0; font-size: 12px; margin-top: 30px; padding-top: 16px; }
+      @media (max-width: 560px) {
+        .page { padding: 0; }
+        .container { border-left: 0; border-right: 0; border-radius: 0; }
+        .header, .body { padding-left: 18px; padding-right: 18px; }
+        .hero, .hero-copy, .hero-badge { display: block; width: 100%; }
+        .hero-badge { margin-top: 16px; text-align: left; }
+        .logo { max-width: 230px; width: 230px; }
+      }
     </style>
   </head>
-  <body>
-    <div class="container">
-      <h1>{{ subject }}</h1>
-      <div class="meta">Report date: {{ report.report_date }} | Generated: {{ generated_at }}</div>
-
-      <h2>Executive Summary</h2>
-      <ul>
-        {% for item in report.executive_summary %}
-          <li>{{ item }}</li>
-        {% endfor %}
-      </ul>
-
-      <h2>Portfolio News</h2>
-      {% for item in report.portfolio_news %}
-        <div class="item">
-          <h4>{{ item.ticker }}: {{ item.headline }}</h4>
-          <p>{{ item.why_it_matters }}</p>
-          {% if item.article_summary %}
-            <ul>
-              {% for point in item.article_summary %}
-                <li>{{ point }}</li>
-              {% endfor %}
-            </ul>
-          {% endif %}
-          <p>
-            <span class="flag">{{ item.attention_label }}</span>
-            {% if item.source_url %}
-              <span class="source"> | <a href="{{ item.source_url }}">Full article{% if item.source %} - {{ item.source }}{% endif %}</a></span>
-            {% endif %}
-          </p>
-        </div>
-      {% else %}
-        <p>No material portfolio-specific news found in the selected window.</p>
-      {% endfor %}
-
-      <h2>Thesis Impact</h2>
-      {% for item in report.thesis_impact %}
-        <div class="thesis-item">
-          <h4>{{ item.ticker }}: {{ item.impact }}</h4>
-          <p>{{ item.rationale }}</p>
-          {% if item.portfolio_relevance %}
-            <p><strong>Portfolio relevance:</strong> {{ item.portfolio_relevance }}</p>
-          {% endif %}
-          {% if item.thesis_points_affected %}
-            <p><strong>Thesis points affected:</strong></p>
-            <ul>
-              {% for point in item.thesis_points_affected %}
-                <li>{{ point }}</li>
-              {% endfor %}
-            </ul>
-          {% endif %}
-          {% if item.possible_positive_readthrough %}
-            <p><strong>Possible positive read-through:</strong> {{ item.possible_positive_readthrough }}</p>
-          {% endif %}
-          {% if item.possible_negative_readthrough %}
-            <p><strong>Possible negative read-through:</strong> {{ item.possible_negative_readthrough }}</p>
-          {% endif %}
-          <p><strong>Monitor next:</strong> {{ item.monitor_next }}</p>
-        </div>
-      {% else %}
-        <p>No thesis-impacting items were identified.</p>
-      {% endfor %}
-
-      <h2>Watchlist News</h2>
-      {% for item in report.watchlist_news %}
-        <div class="item">
-          <h4>{{ item.ticker }}: {{ item.headline }}</h4>
-          <p>{{ item.why_it_matters }}</p>
-          {% if item.article_summary %}
-            <ul>
-              {% for point in item.article_summary %}
-                <li>{{ point }}</li>
-              {% endfor %}
-            </ul>
-          {% endif %}
-          <p>
-            <span class="flag">{{ item.attention_label }}</span>
-            {% if item.source_url %}
-              <span class="source"> | <a href="{{ item.source_url }}">Full article{% if item.source %} - {{ item.source }}{% endif %}</a></span>
-            {% endif %}
-          </p>
-        </div>
-      {% else %}
-        <p>No material watchlist-specific news found in the selected window.</p>
-      {% endfor %}
-
-      {% if report.top_market_themes %}
-        <h2>Market Interests</h2>
-        {% for item in report.top_market_themes %}
-          <div class="item">
-            <h3>{{ item.theme }}</h3>
-            {% if item.why_you_see_this %}
-              <p><strong>Why you see this:</strong> {{ item.why_you_see_this }}</p>
-            {% endif %}
-            {% if item.today_signals %}
-              <p><strong>Today's signals:</strong></p>
-              <ul>
-                {% for signal in item.today_signals %}
-                  <li>{{ signal }}</li>
-                {% endfor %}
-              </ul>
-            {% endif %}
-            {% if item.read_through %}
-              <p><strong>Read-through:</strong> {{ item.read_through }}</p>
-            {% endif %}
-            {% if item.articles %}
-              {% for article in item.articles[:3] %}
-                <div class="sector-article">
-                  <h4>{{ article.headline }}</h4>
-                  {% if article.summary %}
-                    <p>{{ article.summary }}</p>
-                  {% endif %}
-                  <p class="source"><a href="{{ article.source_url }}">Full article{% if article.source %} - {{ article.source }}{% endif %}</a></p>
-                </div>
-              {% endfor %}
-            {% elif item.source_articles %}
-              {% for article in item.source_articles[:3] %}
-                <div class="sector-article">
-                  <h4>{{ article.title }}</h4>
-                  <p class="source"><a href="{{ article.url }}">Full article{% if article.source %} - {{ article.source }}{% endif %}</a></p>
-                </div>
-              {% endfor %}
+  <body style="margin: 0; padding: 0; background: #080808; color: #f4f4f0; font-family: Arial, Helvetica, sans-serif;">
+    <div class="page" style="background: #080808; padding: 28px 12px;">
+      <div class="container" style="max-width: 760px; margin: 0 auto; background: #111111; border: 1px solid #2a2a2a; border-radius: 8px; overflow: hidden;">
+        <div class="header" style="background: #151515; border-bottom: 1px solid #2a2a2a; padding: 26px 28px 22px;">
+          <div class="brand" style="margin-bottom: 26px;">
+            {% if logo_src %}
+              <img class="logo" src="{{ logo_src }}" width="270" height="50" alt="Morning Alpha">
+            {% else %}
+              <strong>Morning Alpha</strong>
             {% endif %}
           </div>
-        {% endfor %}
-      {% endif %}
-
-      <h2>Attention Flags</h2>
-      {% for item in report.attention_flags %}
-        <div class="item">
-          <h4>{{ item.ticker }} <span class="flag">{{ item.label }}</span></h4>
-          <p>{{ item.reason }}</p>
+          <div class="hero" style="display: table; width: 100%;">
+            <div class="hero-copy" style="display: table-cell; vertical-align: middle;">
+              <h1 style="color: #ffffff; font-size: 28px; line-height: 1.12; margin: 0 0 20px;">{{ subject }}</h1>
+              <p class="meta" style="color: #a7a7a0; font-size: 12px; line-height: 1.5; margin: 0;">Report date: {{ report.report_date }}<br>Generated: {{ generated_at }}</p>
+            </div>
+            {% if badge_src %}
+              <div class="hero-badge" style="display: table-cell; text-align: right; vertical-align: middle; width: 96px;">
+                <img class="badge-img" src="{{ badge_src }}" width="82" height="83" alt="">
+              </div>
+            {% elif icon_src %}
+              <div class="hero-badge" style="display: table-cell; text-align: right; vertical-align: middle; width: 96px;">
+                <img class="badge-img" src="{{ icon_src }}" width="82" height="84" alt="">
+              </div>
+            {% endif %}
+          </div>
         </div>
-      {% else %}
-        <p>No attention flags.</p>
-      {% endfor %}
 
-      <h2>Sources</h2>
-      <ul>
-        {% for source in report.sources %}
-          <li class="source"><a href="{{ source.url }}">{{ source.title }}</a> - {{ source.source }}</li>
-        {% endfor %}
-      </ul>
+        <div class="body" style="padding: 24px 28px 28px;">
+          <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Executive Summary</h2>
+          <ul>
+            {% for item in report.executive_summary %}
+              <li>{{ item }}</li>
+            {% endfor %}
+          </ul>
 
-      <p class="disclaimer">
-        This report is informational only. It flags relevance and topics for further review; it does not provide buy, sell, or hold recommendations.
-      </p>
+          <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Portfolio News</h2>
+          {% for item in report.portfolio_news %}
+            <div class="card" style="background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 14px 0; padding: 16px;">
+              <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 8px;">{{ item.ticker }}: {{ item.headline }}</h4>
+              <p>{{ item.why_it_matters }}</p>
+              {% if item.article_summary %}
+                <ul>
+                  {% for point in item.article_summary %}
+                    <li>{{ point }}</li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+              <p>
+                <span class="flag" style="background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase;">{{ item.attention_label }}</span>
+                {% if item.source_url %}
+                  <span class="source"> | <a href="{{ item.source_url }}" style="color: #f4c430; text-decoration: none;">Full article{% if item.source %} - {{ item.source }}{% endif %}</a></span>
+                {% endif %}
+              </p>
+            </div>
+          {% else %}
+            <p class="empty">No material portfolio-specific news found in the selected window.</p>
+          {% endfor %}
+
+          <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Thesis Impact</h2>
+          {% for item in report.thesis_impact %}
+            <div class="card thesis-card" style="background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 18px 0 22px; padding: 16px;">
+                <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 12px; display: flex; align-items: center">{{ item.ticker }} <span class="flag" style="background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase; margin-left: 8px;">{{ item.impact }}</span></h4>
+              <p>{{ item.rationale }}</p>
+              {% if item.portfolio_relevance %}
+                <p><strong>Portfolio relevance:</strong> {{ item.portfolio_relevance }}</p>
+              {% endif %}
+              {% if item.thesis_points_affected %}
+                <p><strong>Thesis points affected:</strong></p>
+                <ul>
+                  {% for point in item.thesis_points_affected %}
+                    <li>{{ point }}</li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+              {% if item.possible_positive_readthrough %}
+                <p><strong>Possible positive read-through:</strong> {{ item.possible_positive_readthrough }}</p>
+              {% endif %}
+              {% if item.possible_negative_readthrough %}
+                <p><strong>Possible negative read-through:</strong> {{ item.possible_negative_readthrough }}</p>
+              {% endif %}
+              <p><strong>Monitor next:</strong> {{ item.monitor_next }}</p>
+            </div>
+          {% else %}
+            <p class="empty">No thesis-impacting items were identified.</p>
+          {% endfor %}
+
+          <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Watchlist News</h2>
+          {% for item in report.watchlist_news %}
+            <div class="card" style="background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 14px 0; padding: 16px;">
+              <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 8px;">{{ item.ticker }}: {{ item.headline }}</h4>
+              <p>{{ item.why_it_matters }}</p>
+              {% if item.article_summary %}
+                <ul>
+                  {% for point in item.article_summary %}
+                    <li>{{ point }}</li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+              <p>
+                <span class="flag" style="background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase;">{{ item.attention_label }}</span>
+                {% if item.source_url %}
+                  <span class="source"> | <a href="{{ item.source_url }}" style="color: #f4c430; text-decoration: none;">Full article{% if item.source %} - {{ item.source }}{% endif %}</a></span>
+                {% endif %}
+              </p>
+            </div>
+          {% else %}
+            <p class="empty">No material watchlist-specific news found in the selected window.</p>
+          {% endfor %}
+
+          {% if report.top_market_themes %}
+            <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Market Interests</h2>
+            {% for item in report.top_market_themes %}
+              <div class="card" style="background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 14px 0; padding: 16px;">
+                <h3 style="color: #ffffff; font-size: 16px; margin: 18px 0 8px;">{{ item.theme }}</h3>
+                {% if item.why_you_see_this %}
+                  <p><strong>Why you see this:</strong> {{ item.why_you_see_this }}</p>
+                {% endif %}
+                {% if item.today_signals %}
+                  <p><strong>Today's signals:</strong></p>
+                  <ul>
+                    {% for signal in item.today_signals %}
+                      <li>{{ signal }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+                {% if item.read_through %}
+                  <p><strong>Read-through:</strong> {{ item.read_through }}</p>
+                {% endif %}
+                {% if item.articles %}
+                  {% for article in item.articles[:3] %}
+                    <div class="sector-article">
+                      <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 8px;">{{ article.headline }}</h4>
+                      {% if article.summary %}
+                        <p>{{ article.summary }}</p>
+                      {% endif %}
+                      <p class="source"><a href="{{ article.source_url }}" style="color: #f4c430; text-decoration: none;">Full article{% if article.source %} - {{ article.source }}{% endif %}</a></p>
+                    </div>
+                  {% endfor %}
+                {% elif item.source_articles %}
+                  {% for article in item.source_articles[:3] %}
+                    <div class="sector-article">
+                      <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 8px;">{{ article.title }}</h4>
+                      <p class="source"><a href="{{ article.url }}" style="color: #f4c430; text-decoration: none;">Full article{% if article.source %} - {{ article.source }}{% endif %}</a></p>
+                    </div>
+                  {% endfor %}
+                {% endif %}
+              </div>
+            {% endfor %}
+          {% endif %}
+
+          <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Attention Flags</h2>
+          {% for item in report.attention_flags %}
+            <div class="card" style="background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 14px 0; padding: 16px;">
+              <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 12px; display: flex; align-items: center">{{ item.ticker }} <span class="flag" style="background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase; margin-left: 8px">{{ item.label }}</span></h4>
+              <p>{{ item.reason }}</p>
+            </div>
+          {% else %}
+            <p class="empty">No attention flags.</p>
+          {% endfor %}
+
+          <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Sources</h2>
+          <ul>
+            {% for source in report.sources %}
+              <li class="source"><a href="{{ source.url }}" style="color: #f4c430; text-decoration: none;">{{ source.title }}</a> - {{ source.source }}</li>
+            {% endfor %}
+          </ul>
+
+          <p class="disclaimer">
+            This report is informational only. It flags relevance and topics for further review; it does not provide buy, sell, or hold recommendations.
+          </p>
+        </div>
+      </div>
     </div>
   </body>
 </html>

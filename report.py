@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import html
 import json
@@ -2262,8 +2263,23 @@ def render_email(report: dict[str, Any], subject: str) -> str:
     return template.render(
         report=report,
         subject=subject,
-        generated_at=dt.datetime.now(tz=PRAGUE_TZ).isoformat(timespec="minutes"),
+        generated_at=dt.datetime.now(tz=PRAGUE_TZ).date().isoformat(),
+        logo_src=email_asset_src("ma-logo.png"),
+        badge_src=email_asset_src("ma-badge.png"),
+        icon_src=email_asset_src("ma-icon.png"),
     )
+
+
+def email_asset_src(filename: str) -> str | None:
+    base_url = os.getenv("EMAIL_ASSET_BASE_URL")
+    if base_url:
+        return f"{base_url.rstrip('/')}/{filename}"
+
+    path = ROOT / "assets" / filename
+    if not path.is_file():
+        return None
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
 
 
 def send_email(subject: str, html: str) -> None:
@@ -2340,7 +2356,7 @@ def fetch_and_rank_news(
 
 def build_subject(config: dict[str, Any], report_date: dt.date) -> str:
     prefix = config.get("email", {}).get("subject_prefix", "Investment morning report")
-    return f"{prefix} - {report_date.isoformat()}"
+    return prefix
 
 
 def parse_args() -> argparse.Namespace:

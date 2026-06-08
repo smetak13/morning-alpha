@@ -20,6 +20,7 @@ Fill `.env`:
 - `DATABASE_URL` from Neon Console > Connect
 - `NEON_AUTH_BASE_URL` from Neon Console after enabling Auth
 - `RESEND_API_KEY`, `RESEND_FROM`, `RESEND_TO`
+- Optional `EMAIL_ASSET_BASE_URL` for email logo assets hosted at a public URL, for example `https://example.com/assets`
 
 Edit:
 
@@ -44,6 +45,8 @@ python report.py --user-id e909f631-669f-465c-b9bb-5849f075ba11 --date latest --
 ```
 
 Outputs are written to `out/context.json`, `out/report.json`, `out/usage.json`, and `out/report.html`. `out/usage.json` includes OpenAI input/output token counts and an estimated per-report cost from the pricing configured in `config.yaml`.
+
+Email images are embedded from `assets/` by default. If your email client clips or partially renders embedded images, host `ma-logo.png`, `ma-badge.png`, and `ma-icon.png` publicly and set `EMAIL_ASSET_BASE_URL` to that directory URL.
 
 ## API Server
 
