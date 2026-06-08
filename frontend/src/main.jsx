@@ -1111,10 +1111,20 @@ function StockThesisModal({ modal, onClose, onSaved }) {
             </label>
             <div className="search-results">
               {results.map((result) => (
-                <button key={result.symbol} className="search-result" onClick={() => selectStock(result)} type="button">
+                <button
+                  key={`${result.symbol}-${result.exchange || ""}`}
+                  className="search-result"
+                  onClick={() => selectStock(result)}
+                  type="button"
+                >
                   <img className="stock-logo" {...stockLogoProps(result.logo_url)} alt="" />
-                  <strong>{result.symbol}</strong>
-                  <span>{result.company_name}</span>
+                  <div className="stock-search-copy">
+                    <div className="stock-title-row">
+                      <strong>{result.symbol}</strong>
+                      {result.exchange ? <span className="exchange-badge">{result.exchange}</span> : null}
+                    </div>
+                    <span>{result.company_name}</span>
+                  </div>
                 </button>
               ))}
             </div>
@@ -1133,7 +1143,10 @@ function StockThesisModal({ modal, onClose, onSaved }) {
             <div className="selected-stock">
               <img className="stock-logo large" {...stockLogoProps(stock.logo_url)} alt="" />
               <div>
-                <strong>{stock.symbol}</strong>
+                <div className="stock-title-row">
+                  <strong>{stock.symbol}</strong>
+                  {stock.exchange ? <span className="exchange-badge">{stock.exchange}</span> : null}
+                </div>
                 <span>{stock.company_name}</span>
               </div>
             </div>

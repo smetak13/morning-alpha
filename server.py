@@ -633,7 +633,7 @@ def search_stocks(q: str, request: Request) -> dict[str, Any]:
         return {"results": []}
 
     client = fmp_client_from_env()
-    results_by_symbol: dict[str, StockSearchResult] = {}
+    results_by_listing: dict[str, StockSearchResult] = {}
     for endpoint in ("search-symbol", "search-name"):
         try:
             data = client.get(endpoint, {"query": query, "limit": 8})
@@ -646,9 +646,10 @@ def search_stocks(q: str, request: Request) -> dict[str, Any]:
                 continue
             result = normalize_stock_search_item(item)
             if result:
-                results_by_symbol.setdefault(result.symbol, result)
+                listing_key = f"{result.symbol}:{result.exchange or ''}"
+                results_by_listing.setdefault(listing_key, result)
 
-    return {"results": [result.model_dump() for result in list(results_by_symbol.values())[:12]]}
+    return {"results": [result.model_dump() for result in list(results_by_listing.values())[:12]]}
 
 
 def draft_thesis_schema(item_type: str) -> dict[str, Any]:

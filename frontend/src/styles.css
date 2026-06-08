@@ -561,11 +561,34 @@ input::placeholder {
   gap: 12px;
 }
 
+.stock-search-copy {
+  min-width: 0;
+}
+
+.stock-title-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .stock-cell strong,
 .selected-stock strong,
 .search-result strong {
   color: #ffffff;
   display: block;
+}
+
+.exchange-badge {
+  background: #0d0d0d;
+  border: 1px solid #343434;
+  border-radius: 999px;
+  color: #f4c430;
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 750;
+  line-height: 1;
+  padding: 4px 7px;
 }
 
 .stock-cell span,
@@ -574,6 +597,12 @@ input::placeholder {
   color: #a7a7a0;
   display: block;
   margin-top: 2px;
+}
+
+.stock-title-row .exchange-badge {
+  color: #f4c430;
+  display: inline-flex;
+  margin-top: 0;
 }
 
 .stock-logo {
