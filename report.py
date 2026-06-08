@@ -2282,15 +2282,19 @@ def email_asset_src(filename: str) -> str | None:
     return f"data:image/png;base64,{encoded}"
 
 
-def send_email(subject: str, html: str) -> None:
+def send_email(subject: str, html: str, recipient_email: str | None = None) -> None:
     resend = require_dependency("resend")
 
     api_key = os.getenv("RESEND_API_KEY")
     from_address = os.getenv("RESEND_FROM", "onboarding@resend.dev")
-    recipients_raw = os.getenv("RESEND_TO") or ""
-    to_addresses = [item.strip() for item in recipients_raw.split(",") if item.strip()]
+    if recipient_email:
+        recipient = recipient_email.strip()
+        to_addresses = [recipient] if recipient else []
+    else:
+        recipients_raw = os.getenv("RESEND_TO") or ""
+        to_addresses = [item.strip() for item in recipients_raw.split(",") if item.strip()]
     if not api_key or not from_address or not to_addresses:
-        raise SystemExit("RESEND_API_KEY, RESEND_FROM, and RESEND_TO must be set to send email.")
+        raise SystemExit("RESEND_API_KEY, RESEND_FROM, and a recipient email must be set to send email.")
 
     resend.api_key = api_key
     resend.Emails.send(
@@ -2301,6 +2305,30 @@ def send_email(subject: str, html: str) -> None:
             "html": html,
         }
     )
+
+
+def get_user_email(user_id: str) -> str | None:
+    try:
+        from psycopg.rows import dict_row
+    except ImportError as exc:
+        raise RuntimeError("Missing dependency 'psycopg'. Install dependencies with: pip install -r requirements.txt") from exc
+
+    from database import connection
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select email
+                from public.users
+                where id = %(id)s
+                """,
+                {"id": user_id},
+            )
+            row = cursor.fetchone()
+
+    email = str(row["email"]).strip() if row and row.get("email") else ""
+    return email or None
 
 
 def fetch_and_rank_news(
@@ -2359,6 +2387,127 @@ def build_subject(config: dict[str, Any], report_date: dt.date) -> str:
     return prefix
 
 
+def resolve_report_date(date_arg: str) -> dt.date:
+    if date_arg == "latest":
+        return latest_completed_us_trading_day()
+
+    report_date = dt.date.fromisoformat(date_arg)
+    if not is_us_trading_day(report_date):
+        raise SystemExit(f"{report_date} is not a regular US trading day.")
+    return report_date
+
+
+def write_report_outputs(
+    *,
+    context: dict[str, Any],
+    report: dict[str, Any],
+    usage: dict[str, Any],
+    html: str,
+    context_json: str | Path,
+    output_json: str | Path,
+    usage_json: str | Path,
+    output_html: str | Path,
+) -> None:
+    for output_path, payload, is_json in (
+        (Path(context_json), context, True),
+        (Path(output_json), report, True),
+        (Path(usage_json), usage, True),
+        (Path(output_html), html, False),
+    ):
+        path = output_path if output_path.is_absolute() else ROOT / output_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if is_json:
+            path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        else:
+            path.write_text(str(payload), encoding="utf-8")
+
+
+def run_report_for_user(
+    *,
+    user_id: str,
+    recipient_email: str | None = None,
+    date_arg: str = "latest",
+    config_path: str | Path = "config.yaml",
+    send_email_report: bool = False,
+    skip_openai: bool = False,
+    output_html: str | Path = "out/report.html",
+    output_json: str | Path = "out/report.json",
+    context_json: str | Path = "out/context.json",
+    usage_json: str | Path = "out/usage.json",
+) -> dict[str, Any]:
+    config_file = Path(config_path)
+    config = load_yaml(config_file if config_file.is_absolute() else ROOT / config_file)
+    portfolio = load_portfolio_from_db(user_id)
+    watchlist = load_watchlist_from_db(user_id)
+
+    report_date = resolve_report_date(date_arg)
+
+    now_prague = dt.datetime.now(tz=ZoneInfo(config.get("timezone", "Europe/Prague")))
+    window_start = dt.datetime.combine(report_date, dt.time.min, tzinfo=NY_TZ)
+    window_end = now_prague
+
+    fmp_api_key = os.getenv("FMP_API_KEY")
+    if not fmp_api_key:
+        raise SystemExit("FMP_API_KEY is required. Add it to .env or the environment.")
+
+    fmp_config = config.get("fmp", {})
+    client = FmpClient(
+        api_key=fmp_api_key,
+        base_url=fmp_config.get("base_url", "https://financialmodelingprep.com/stable"),
+        timeout_seconds=int(fmp_config.get("request_timeout_seconds", 20)),
+    )
+
+    ranked_news = fetch_and_rank_news(client, portfolio, watchlist, config, report_date, window_start, window_end)
+    context = compact_context(
+        report_date=report_date,
+        window_start=window_start,
+        window_end=window_end,
+        portfolio=portfolio,
+        watchlist=watchlist,
+        items=ranked_news,
+        max_items=int(config.get("openai", {}).get("max_input_items", 35)),
+        config=config,
+    )
+
+    if skip_openai:
+        report = validate_report(default_report(context), context)
+        usage = skipped_openai_usage(config)
+    else:
+        if not os.getenv("OPENAI_API_KEY"):
+            raise SystemExit("OPENAI_API_KEY is required unless --skip-openai is used.")
+        report, usage = generate_report_with_openai(context, config)
+
+    subject = build_subject(config, report_date)
+    html = render_email(report, subject)
+
+    write_report_outputs(
+        context=context,
+        report=report,
+        usage=usage,
+        html=html,
+        context_json=context_json,
+        output_json=output_json,
+        usage_json=usage_json,
+        output_html=output_html,
+    )
+
+    if send_email_report:
+        recipient_email = recipient_email or get_user_email(user_id)
+        if not recipient_email:
+            raise SystemExit(f"User {user_id} does not have an email address.")
+        send_email(subject, html, recipient_email=recipient_email)
+
+    return {
+        "subject": subject,
+        "report_date": report_date.isoformat(),
+        "usage": usage,
+        "output_html": str(output_html),
+        "output_json": str(output_json),
+        "context_json": str(context_json),
+        "usage_json": str(usage_json),
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a personalized investment morning report.")
     parser.add_argument("--date", default="latest", help="'latest' or an explicit YYYY-MM-DD US trading date.")
@@ -2371,6 +2520,7 @@ def parse_args() -> argparse.Namespace:
         help="Verify Neon Auth environment configuration and exit.",
     )
     parser.add_argument("--send-email", action="store_true", help="Send the generated report through Resend.")
+    parser.add_argument("--recipient-email", help="Send the report to this email instead of the user's DB email.")
     parser.add_argument("--skip-openai", action="store_true", help="Use deterministic fallback report generation.")
     parser.add_argument("--output-html", default="out/report.html", help="Where to write the rendered HTML report.")
     parser.add_argument("--output-json", default="out/report.json", help="Where to write the structured report JSON.")
@@ -2421,70 +2571,22 @@ def main() -> int:
     if not args.user_id:
         raise SystemExit("--user-id is required when generating a report.")
 
-    config = load_yaml(ROOT / args.config)
-    portfolio = load_portfolio_from_db(args.user_id)
-    watchlist = load_watchlist_from_db(args.user_id)
-
-    if args.date == "latest":
-        report_date = latest_completed_us_trading_day()
-    else:
-        report_date = dt.date.fromisoformat(args.date)
-        if not is_us_trading_day(report_date):
-            raise SystemExit(f"{report_date} is not a regular US trading day.")
-
-    now_prague = dt.datetime.now(tz=ZoneInfo(config.get("timezone", "Europe/Prague")))
-    window_start = dt.datetime.combine(report_date, dt.time.min, tzinfo=NY_TZ)
-    window_end = now_prague
-
-    fmp_api_key = os.getenv("FMP_API_KEY")
-    if not fmp_api_key:
-        raise SystemExit("FMP_API_KEY is required. Add it to .env or the environment.")
-
-    fmp_config = config.get("fmp", {})
-    client = FmpClient(
-        api_key=fmp_api_key,
-        base_url=fmp_config.get("base_url", "https://financialmodelingprep.com/stable"),
-        timeout_seconds=int(fmp_config.get("request_timeout_seconds", 20)),
+    result = run_report_for_user(
+        user_id=args.user_id,
+        recipient_email=args.recipient_email,
+        date_arg=args.date,
+        config_path=args.config,
+        send_email_report=args.send_email,
+        skip_openai=args.skip_openai,
+        output_html=args.output_html,
+        output_json=args.output_json,
+        context_json=args.context_json,
+        usage_json=args.usage_json,
     )
-
-    ranked_news = fetch_and_rank_news(client, portfolio, watchlist, config, report_date, window_start, window_end)
-    context = compact_context(
-        report_date=report_date,
-        window_start=window_start,
-        window_end=window_end,
-        portfolio=portfolio,
-        watchlist=watchlist,
-        items=ranked_news,
-        max_items=int(config.get("openai", {}).get("max_input_items", 35)),
-        config=config,
-    )
-
-    if args.skip_openai:
-        report = validate_report(default_report(context), context)
-        usage = skipped_openai_usage(config)
-    else:
-        if not os.getenv("OPENAI_API_KEY"):
-            raise SystemExit("OPENAI_API_KEY is required unless --skip-openai is used.")
-        report, usage = generate_report_with_openai(context, config)
-
-    subject = build_subject(config, report_date)
-    html = render_email(report, subject)
-
-    for output_path, payload, is_json in (
-        (Path(args.context_json), context, True),
-        (Path(args.output_json), report, True),
-        (Path(args.usage_json), usage, True),
-        (Path(args.output_html), html, False),
-    ):
-        path = output_path if output_path.is_absolute() else ROOT / output_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if is_json:
-            path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        else:
-            path.write_text(str(payload), encoding="utf-8")
+    subject = str(result["subject"])
+    usage = result["usage"]
 
     if args.send_email:
-        send_email(subject, html)
         print(f"Sent report email: {subject}")
     else:
         print(f"Generated report: {subject}")

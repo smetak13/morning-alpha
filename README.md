@@ -44,6 +44,12 @@ Use deterministic fallback output without OpenAI:
 python report.py --user-id e909f631-669f-465c-b9bb-5849f075ba11 --date latest --skip-openai
 ```
 
+Send to an explicit recipient instead of the user's DB email:
+
+```powershell
+python report.py --user-id e909f631-669f-465c-b9bb-5849f075ba11 --date latest --send-email --recipient-email user@example.com
+```
+
 Outputs are written to `out/context.json`, `out/report.json`, `out/usage.json`, and `out/report.html`. `out/usage.json` includes OpenAI input/output token counts and an estimated per-report cost from the pricing configured in `config.yaml`.
 
 Email images are embedded from `assets/` by default. If your email client clips or partially renders embedded images, host `ma-logo.png`, `ma-badge.png`, and `ma-icon.png` publicly and set `EMAIL_ASSET_BASE_URL` to that directory URL.
@@ -97,7 +103,37 @@ On successful register, the server forwards Neon Auth session cookies to the cli
 
 ## Cron
 
-Run on a VPS/VM with timezone set explicitly:
+Scheduled reports use `public.users.timezone`, `public.users.report_scheduled_at`, and the user's `email`. The scheduler checks every hour for users whose local scheduled time was in the previous hour, queues those users, and processes the queue sequentially. For each user it runs the same report flow as:
+
+```powershell
+python report.py --date latest --send-email --user-id <user_id> --recipient-email <user_email>
+```
+
+Run one scheduler cycle, useful for system cron:
+
+```powershell
+python report_scheduler.py --once
+```
+
+Run the built-in hourly scheduler loop:
+
+```powershell
+python report_scheduler.py
+```
+
+With Docker Compose, the API server and scheduler start together:
+
+```powershell
+docker compose up --build
+```
+
+To watch scheduler logs:
+
+```powershell
+docker compose logs -f report-scheduler
+```
+
+Legacy direct cron example on a VPS/VM with timezone set explicitly:
 
 ```cron
 TZ=Europe/Prague

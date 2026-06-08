@@ -12,3 +12,16 @@ services:
     ports:
       - "8000:8000"
     restart: unless-stopped
+
+  report-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:8000}
+    command: ["python", "report_scheduler.py"]
+    restart: unless-stopped
