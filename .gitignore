@@ -214,6 +214,9 @@ logs/
 node_modules/
 frontend/dist/
 
+# Local Docker CLI metadata
+.docker/
+
 # PyPI configuration file
 .pypirc
 

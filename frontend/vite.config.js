@@ -11,6 +11,7 @@ export default defineConfig({
   publicDir,
   plugins: [react()],
   build: {
+    assetsDir: "static",
     outDir: "dist",
     emptyOutDir: true,
   },

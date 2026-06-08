@@ -85,7 +85,7 @@ button:disabled {
 
 .topbar-logo {
   display: block;
-  height: 34px;
+  height: 48px;
   max-width: min(220px, 52vw);
   object-fit: contain;
   object-position: left center;

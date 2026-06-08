@@ -10,6 +10,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from database import connection
@@ -17,6 +18,7 @@ from neon_auth import load_settings
 
 
 ROOT = Path(__file__).resolve().parent
+ASSETS_DIR = ROOT / "assets"
 FRONTEND_DIST = ROOT / "frontend" / "dist"
 FRONTEND_INDEX = FRONTEND_DIST / "index.html"
 
@@ -90,6 +92,9 @@ def create_app() -> FastAPI:
             allow_methods=["*"],
             allow_headers=["*"],
         )
+
+    if ASSETS_DIR.is_dir():
+        app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
     return app
 
