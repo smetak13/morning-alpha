@@ -1871,6 +1871,10 @@ def validate_label(value: str | None) -> str:
     return "monitor"
 
 
+def human_label(value: Any) -> str:
+    return str(value or "").replace("_", " ").strip().upper()
+
+
 def normalize_match_text(value: str | None) -> set[str]:
     if not value:
         return set()
@@ -2259,6 +2263,7 @@ def render_email(report: dict[str, Any], subject: str) -> str:
         loader=jinja2.FileSystemLoader(ROOT / "templates"),
         autoescape=True,
     )
+    env.filters["human_label"] = human_label
     template = env.get_template("email_report.html")
     return template.render(
         report=report,
