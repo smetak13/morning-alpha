@@ -398,7 +398,7 @@ function AuthPage({ onAuthenticated }) {
 
           {error ? <p className="error">{error}</p> : null}
 
-          <button className="primary-button" disabled={submitting} type="submit">
+          <button className="primary-button" disabled={submitting} type="submit" style={{marginTop: "12px"}}>
             {mode === "login" ? <Mail size={18} aria-hidden="true" /> : <UserPlus size={18} aria-hidden="true" />}
             {submitting ? "Submitting..." : buttonLabel}
           </button>
