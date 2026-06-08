@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -21,6 +22,7 @@ ROOT = Path(__file__).resolve().parent
 ASSETS_DIR = ROOT / "assets"
 FRONTEND_DIST = ROOT / "frontend" / "dist"
 FRONTEND_INDEX = FRONTEND_DIST / "index.html"
+DEFAULT_TIMEZONE = "Europe/Prague"
 
 try:
     from dotenv import load_dotenv
@@ -62,6 +64,7 @@ class RegisterRequest(BaseModel):
     password: str | None = None
     name: str | None = None
     display_name: str | None = None
+    timezone: str | None = None
     id_token: str | None = None
     access_token: str | None = None
 
@@ -78,6 +81,7 @@ class LoginRequest(BaseModel):
 class GoogleIdTokenRequest(BaseModel):
     id_token: str
     access_token: str | None = None
+    timezone: str | None = None
 
 
 def create_app() -> FastAPI:
@@ -165,6 +169,17 @@ def user_display_name(user: dict[str, Any]) -> str | None:
     return str(value) if value else None
 
 
+def normalize_timezone(value: str | None) -> str:
+    timezone = (value or "").strip()
+    if not timezone:
+        return DEFAULT_TIMEZONE
+    try:
+        ZoneInfo(timezone)
+    except ZoneInfoNotFoundError:
+        return DEFAULT_TIMEZONE
+    return timezone
+
+
 def get_user_profile(user_id: Any) -> dict[str, Any] | None:
     try:
         from psycopg.rows import dict_row
@@ -181,7 +196,7 @@ def get_user_profile(user_id: Any) -> dict[str, Any] | None:
                     display_name,
                     timezone,
                     locale,
-                    onboarding_completed_at,
+                    report_scheduled_at,
                     created_at,
                     updated_at
                 from public.users
@@ -194,7 +209,7 @@ def get_user_profile(user_id: Any) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def create_user_profile_if_missing(user: dict[str, Any]) -> dict[str, Any] | None:
+def create_user_profile_if_missing(user: dict[str, Any], timezone: str | None = None) -> dict[str, Any] | None:
     user_id = user.get("id")
     if not user_id:
         raise RuntimeError("Neon Auth response does not contain user.id.")
@@ -208,14 +223,15 @@ def create_user_profile_if_missing(user: dict[str, Any]) -> dict[str, Any] | Non
         "id": str(user_id),
         "email": str(user["email"]) if user.get("email") else None,
         "display_name": user_display_name(user),
+        "timezone": normalize_timezone(timezone),
     }
 
     with connection(row_factory=dict_row) as conn:
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                insert into public.users (id, email, display_name)
-                values (%(id)s, %(email)s, %(display_name)s)
+                insert into public.users (id, email, display_name, timezone)
+                values (%(id)s, %(email)s, %(display_name)s, %(timezone)s)
                 on conflict (id) do nothing
                 returning
                     id,
@@ -223,7 +239,7 @@ def create_user_profile_if_missing(user: dict[str, Any]) -> dict[str, Any] | Non
                     display_name,
                     timezone,
                     locale,
-                    onboarding_completed_at,
+                    report_scheduled_at,
                     created_at,
                     updated_at
                 """,
@@ -260,7 +276,11 @@ def register(payload: RegisterRequest, request: Request, response: Response) -> 
         if not payload.id_token:
             raise HTTPException(status_code=422, detail="id_token is required for Google auth.")
         return authenticate_google_id_token(
-            GoogleIdTokenRequest(id_token=payload.id_token, access_token=payload.access_token),
+            GoogleIdTokenRequest(
+                id_token=payload.id_token,
+                access_token=payload.access_token,
+                timezone=payload.timezone,
+            ),
             request,
             response,
             create_profile=True,
@@ -285,7 +305,7 @@ def register(payload: RegisterRequest, request: Request, response: Response) -> 
         return upstream_json_response(upstream, response, auth_payload)
 
     user = extract_user(auth_payload)
-    profile = create_user_profile_if_missing(user) if user else None
+    profile = create_user_profile_if_missing(user, timezone=payload.timezone) if user else None
     response.status_code = upstream.status_code
     copy_set_cookie_headers(upstream, response)
     return {"auth": auth_payload, "user": profile}
@@ -362,7 +382,7 @@ def authenticate_google_id_token(
 
     user = extract_user(auth_payload)
     if create_profile and user:
-        profile = create_user_profile_if_missing(user)
+        profile = create_user_profile_if_missing(user, timezone=payload.timezone)
     elif user and user.get("id"):
         profile = get_user_profile(user["id"])
     else:

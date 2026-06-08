@@ -54,6 +54,10 @@ function displayName(user) {
   return user?.display_name || user?.displayName || user?.name || user?.email || "user";
 }
 
+function browserTimezone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+}
+
 function App() {
   const [session, setSession] = useState({ status: "checking", user: null });
 
@@ -138,6 +142,7 @@ function AuthPage({ onAuthenticated }) {
             email: form.email.trim(),
             password: form.password,
             name: form.name.trim() || undefined,
+            timezone: browserTimezone(),
           };
 
     try {
