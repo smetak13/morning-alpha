@@ -2,9 +2,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import {
   Check,
+  Calendar,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
+  FileText,
   Globe2,
+  Eye,
   Info,
   LogOut,
   Mail,
@@ -158,6 +163,73 @@ function userSettingsFromProfile(user) {
     report_scheduled_at: timeInputValue(user?.report_scheduled_at),
     timezone: user?.timezone || browserTimezone() || "Europe/Prague",
   };
+}
+
+function dateInputValue(date) {
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return offsetDate.toISOString().slice(0, 10);
+}
+
+function defaultReportFilters() {
+  const today = new Date();
+  const weekAgo = new Date(today);
+  weekAgo.setDate(today.getDate() - 6);
+  return {
+    date_from: dateInputValue(weekAgo),
+    date_to: dateInputValue(today),
+  };
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return "";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function parseIsoDate(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return new Date();
+  }
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function daysInMonth(year, month) {
+  return new Date(year, month + 1, 0).getDate();
+}
+
+function calendarDays(monthDate) {
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysBefore = (firstDay + 6) % 7;
+  const totalDays = daysInMonth(year, month);
+  return [
+    ...Array.from({ length: daysBefore }, () => null),
+    ...Array.from({ length: totalDays }, (_, index) => new Date(year, month, index + 1)),
+  ];
+}
+
+function enhanceReportHtml(html) {
+  const enhancement = `
+    <base target="_blank">
+    <style>
+      * { scrollbar-color: #3a3a3a #111111; scrollbar-width: thin; }
+      *::-webkit-scrollbar { height: 10px; width: 10px; }
+      *::-webkit-scrollbar-track { background: #111111; }
+      *::-webkit-scrollbar-thumb { background: #3a3a3a; border: 2px solid #111111; border-radius: 999px; }
+      *::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
+    </style>
+  `;
+  const withTargets = String(html || "").replace(/<a\s+(?![^>]*\btarget=)/g, '<a target="_blank" rel="noopener noreferrer" ');
+  if (withTargets.includes("<head>")) {
+    return withTargets.replace("<head>", `<head>${enhancement}`);
+  }
+  return `${enhancement}${withTargets}`;
 }
 
 const THESIS_SECTIONS = {
@@ -458,6 +530,7 @@ function AuthPage({ onAuthenticated }) {
 }
 
 function MainPage({ user, onLogout }) {
+  const [activeView, setActiveView] = useState("portfolio");
   const [portfolio, setPortfolio] = useState([]);
   const [watchlist, setWatchlist] = useState([]);
   const [itemsStatus, setItemsStatus] = useState("loading");
@@ -611,47 +684,70 @@ function MainPage({ user, onLogout }) {
       <section className="main-content">
         <div className="page-heading">
           <div>
-            <h1>Portfolio workspace</h1>
+            <h1>{activeView === "portfolio" ? "Portfolio workspace" : "Reports"}</h1>
           </div>
-          <div className="allocation-pill">{portfolioTotal.toFixed(1)}% allocated</div>
+          {activeView === "portfolio" ? <div className="allocation-pill">{portfolioTotal.toFixed(1)}% allocated</div> : null}
         </div>
 
-        {itemsError ? <p className="error">{itemsError}</p> : null}
-        {itemsStatus === "loading" ? <p className="muted">Loading holdings...</p> : null}
+        <div className="view-tabs">
+          <button
+            className={activeView === "portfolio" ? "view-tab active" : "view-tab"}
+            onClick={() => setActiveView("portfolio")}
+            type="button"
+          >
+            Portfolio
+          </button>
+          <button
+            className={activeView === "reports" ? "view-tab active" : "view-tab"}
+            onClick={() => setActiveView("reports")}
+            type="button"
+          >
+            Reports
+          </button>
+        </div>
 
-        <ReportSchedulePanel
-          error={settingsError}
-          onChange={updateUserSettings}
-          settings={settings}
-        />
+        {activeView === "portfolio" ? (
+          <>
+            {itemsError ? <p className="error">{itemsError}</p> : null}
+            {itemsStatus === "loading" ? <p className="muted">Loading holdings...</p> : null}
 
-        <HoldingsSection
-          actionLabel="Add holding"
-          emptyText="No portfolio holdings yet."
-          itemType="portfolio"
-          items={portfolio}
-          onAdd={() => openAddModal("portfolio")}
-          onDelete={(item) => setDeleteTarget({ itemType: "portfolio", item })}
-          onEdit={(item) => openEditModal("portfolio", item)}
-          onReportToggle={(item, nextValue) => updateReportInclusion("portfolio", item, nextValue)}
-          onSort={() => setPortfolio((current) => sortPortfolioItems(current))}
-          onPositionChange={updatePortfolioPosition}
-          onPositionCommit={savePortfolioPosition}
-          portfolioTotal={portfolioTotal}
-          title="Portfolio"
-        />
+            <ReportSchedulePanel
+              error={settingsError}
+              onChange={updateUserSettings}
+              settings={settings}
+            />
 
-        <HoldingsSection
-          actionLabel="Add watchlist item"
-          emptyText="No watchlist items yet."
-          itemType="watchlist"
-          items={watchlist}
-          onAdd={() => openAddModal("watchlist")}
-          onDelete={(item) => setDeleteTarget({ itemType: "watchlist", item })}
-          onEdit={(item) => openEditModal("watchlist", item)}
-          onReportToggle={(item, nextValue) => updateReportInclusion("watchlist", item, nextValue)}
-          title="Watchlist"
-        />
+            <HoldingsSection
+              actionLabel="Add holding"
+              emptyText="No portfolio holdings yet."
+              itemType="portfolio"
+              items={portfolio}
+              onAdd={() => openAddModal("portfolio")}
+              onDelete={(item) => setDeleteTarget({ itemType: "portfolio", item })}
+              onEdit={(item) => openEditModal("portfolio", item)}
+              onReportToggle={(item, nextValue) => updateReportInclusion("portfolio", item, nextValue)}
+              onSort={() => setPortfolio((current) => sortPortfolioItems(current))}
+              onPositionChange={updatePortfolioPosition}
+              onPositionCommit={savePortfolioPosition}
+              portfolioTotal={portfolioTotal}
+              title="Portfolio"
+            />
+
+            <HoldingsSection
+              actionLabel="Add watchlist item"
+              emptyText="No watchlist items yet."
+              itemType="watchlist"
+              items={watchlist}
+              onAdd={() => openAddModal("watchlist")}
+              onDelete={(item) => setDeleteTarget({ itemType: "watchlist", item })}
+              onEdit={(item) => openEditModal("watchlist", item)}
+              onReportToggle={(item, nextValue) => updateReportInclusion("watchlist", item, nextValue)}
+              title="Watchlist"
+            />
+          </>
+        ) : (
+          <ReportsView />
+        )}
       </section>
 
       {modal ? (
@@ -673,6 +769,251 @@ function MainPage({ user, onLogout }) {
         />
       ) : null}
     </main>
+  );
+}
+
+function ReportsView() {
+  const [filters, setFilters] = useState(defaultReportFilters);
+  const [page, setPage] = useState(1);
+  const [payload, setPayload] = useState({ items: [], total: 0, page_size: 10 });
+  const [selectedReport, setSelectedReport] = useState(null);
+  const [status, setStatus] = useState("loading");
+  const [error, setError] = useState("");
+
+  const totalPages = Math.max(1, Math.ceil((payload.total || 0) / (payload.page_size || 10)));
+
+  const loadReports = useCallback(async () => {
+    setStatus("loading");
+    setError("");
+    try {
+      const query = new URLSearchParams({
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        page: String(page),
+        page_size: "10",
+      });
+      const nextPayload = await requestJson(`/api/reports?${query.toString()}`, { method: "GET" });
+      setPayload(nextPayload);
+      setStatus("ready");
+    } catch (err) {
+      setStatus("error");
+      setError(err instanceof Error ? err.message : "Unable to load reports.");
+    }
+  }, [filters.date_from, filters.date_to, page]);
+
+  useEffect(() => {
+    loadReports();
+  }, [loadReports]);
+
+  const openReport = async (report) => {
+    setError("");
+    try {
+      const detail = await requestJson(`/api/reports/${report.id}`, { method: "GET" });
+      setSelectedReport(detail.report);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load report detail.");
+    }
+  };
+
+  const updateFilter = (key, value) => {
+    setFilters((current) => ({ ...current, [key]: value }));
+    setSelectedReport(null);
+    setPage(1);
+  };
+
+  return (
+    <section className="reports-view">
+      <div className="reports-toolbar">
+        <div>
+          <p className="eyebrow">Report archive</p>
+          <h2>Saved reports</h2>
+        </div>
+        <div className="report-filters">
+          <ReportDateField label="From" value={filters.date_from} onChange={(value) => updateFilter("date_from", value)} />
+          <ReportDateField label="To" value={filters.date_to} onChange={(value) => updateFilter("date_to", value)} />
+        </div>
+      </div>
+
+      {error ? <p className="error">{error}</p> : null}
+
+      <div className="reports-layout">
+        <div className="reports-list-panel">
+          <div className="table-shell">
+            <table className="reports-table">
+              <thead>
+                <tr>
+                  <th>Report date</th>
+                  <th>Created at</th>
+                  <th className="actions-cell">Open</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payload.items.length ? (
+                  payload.items.map((report) => (
+                    <tr
+                      className={selectedReport?.id === report.id ? "selected-row" : ""}
+                      key={report.id}
+                      onClick={() => openReport(report)}
+                    >
+                      <td>
+                        <div className="report-date-cell">
+                          <FileText size={17} aria-hidden="true" />
+                          <strong>{report.report_date}</strong>
+                        </div>
+                      </td>
+                      <td>{formatDateTime(report.created_at)}</td>
+                      <td className="actions-cell">
+                        <button className="icon-button" onClick={(event) => { event.stopPropagation(); openReport(report); }} title="Open report" type="button">
+                          <Eye size={17} aria-hidden="true" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td className="empty-table" colSpan={3}>
+                      {status === "loading" ? "Loading reports..." : "No reports found for this date range."}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="pagination-row">
+            <button className="secondary-button compact-button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">
+              <ChevronLeft size={16} aria-hidden="true" />
+              Previous
+            </button>
+            <span>Page {page} of {totalPages}</span>
+            <button className="secondary-button compact-button" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)} type="button">
+              Next
+              <ChevronRight size={16} aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {selectedReport?.html ? (
+        <ReportPreviewModal report={selectedReport} onClose={() => setSelectedReport(null)} />
+      ) : null}
+    </section>
+  );
+}
+
+function ReportDateField({ label, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [visibleMonth, setVisibleMonth] = useState(() => parseIsoDate(value));
+  const shellRef = useRef(null);
+  const selectedDate = parseIsoDate(value);
+  const days = calendarDays(visibleMonth);
+  const monthLabel = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(visibleMonth);
+
+  useEffect(() => {
+    setVisibleMonth(parseIsoDate(value));
+  }, [value]);
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+    const closeOnOutsideClick = (event) => {
+      if (!shellRef.current?.contains(event.target)) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", closeOnOutsideClick);
+    return () => window.removeEventListener("mousedown", closeOnOutsideClick);
+  }, [open]);
+
+  const moveMonth = (offset) => {
+    setVisibleMonth((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
+  };
+
+  const selectDate = (date) => {
+    onChange(dateInputValue(date));
+    setOpen(false);
+  };
+
+  return (
+    <label className="report-date-field">
+      {label}
+      <div className="date-input-shell" ref={shellRef}>
+        <input readOnly value={value} onClick={() => setOpen(true)} />
+        <button
+          className="combo-icon-button"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            setOpen((current) => !current);
+          }}
+          title={`Choose ${label.toLowerCase()} date`}
+          type="button"
+        >
+          <Calendar size={16} aria-hidden="true" />
+        </button>
+        {open ? (
+          <div className="date-picker-popover">
+            <div className="date-picker-header">
+              <button className="mini-icon-button neutral" onMouseDown={(event) => { event.preventDefault(); moveMonth(-1); }} type="button">
+                <ChevronLeft size={15} aria-hidden="true" />
+              </button>
+              <strong>{monthLabel}</strong>
+              <button className="mini-icon-button neutral" onMouseDown={(event) => { event.preventDefault(); moveMonth(1); }} type="button">
+                <ChevronRight size={15} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="date-picker-weekdays">
+              {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day) => (
+                <span key={day}>{day}</span>
+              ))}
+            </div>
+            <div className="date-picker-grid">
+              {days.map((date, index) =>
+                date ? (
+                  <button
+                    className={dateInputValue(date) === dateInputValue(selectedDate) ? "date-picker-day selected" : "date-picker-day"}
+                    key={date.toISOString()}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      selectDate(date);
+                    }}
+                    type="button"
+                  >
+                    {date.getDate()}
+                  </button>
+                ) : (
+                  <span className="date-picker-empty" key={`empty-${index}`} />
+                ),
+              )}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </label>
+  );
+}
+
+function ReportPreviewModal({ report, onClose }) {
+  const reportHtml = useMemo(() => enhanceReportHtml(report.html), [report.html]);
+  return (
+    <div className="modal-backdrop report-preview-backdrop">
+      <section className="report-modal-panel" aria-modal="true" role="dialog">
+        <div className="report-modal-header">
+          <div>
+            <p className="eyebrow">Saved report</p>
+            <h2>{report.report_date}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Close report" type="button">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <iframe
+          className="report-frame"
+          sandbox="allow-popups allow-popups-to-escape-sandbox"
+          srcDoc={reportHtml}
+          title={`Report ${report.report_date}`}
+        />
+      </section>
+    </div>
   );
 }
 

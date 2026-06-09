@@ -1168,6 +1168,121 @@ def delete_watchlist_item(item_id: str, request: Request) -> dict[str, Any]:
     return {"deleted": True}
 
 
+def parse_report_date_filter(value: str | None, field_name: str) -> dt.date | None:
+    if not value:
+        return None
+    try:
+        return dt.date.fromisoformat(value)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"{field_name} must use YYYY-MM-DD format.")
+
+
+def serialize_report_row(row: dict[str, Any], include_html: bool = False) -> dict[str, Any]:
+    payload = {
+        "id": str(row["id"]),
+        "report_date": row["report_date"].isoformat() if hasattr(row["report_date"], "isoformat") else row["report_date"],
+        "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
+        "usage_id": str(row["usage_id"]) if row.get("usage_id") else None,
+    }
+    if include_html:
+        payload["html"] = row["html"]
+    return payload
+
+
+@app.get("/api/reports")
+def list_reports(
+    request: Request,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    page: int = 1,
+    page_size: int = 10,
+) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    today = dt.date.today()
+    parsed_date_from = parse_report_date_filter(date_from, "date_from") or (today - dt.timedelta(days=6))
+    parsed_date_to = parse_report_date_filter(date_to, "date_to") or today
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 50)
+    offset = (page - 1) * page_size
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select count(*) as total
+                from public.reports
+                where user_id = %(user_id)s
+                  and report_date >= %(date_from)s
+                  and report_date <= %(date_to)s
+                """,
+                {"user_id": user_id, "date_from": parsed_date_from, "date_to": parsed_date_to},
+            )
+            total = int(cursor.fetchone()["total"] or 0)
+            cursor.execute(
+                """
+                select
+                    id::text as id,
+                    usage_id::text as usage_id,
+                    report_date,
+                    created_at
+                from public.reports
+                where user_id = %(user_id)s
+                  and report_date >= %(date_from)s
+                  and report_date <= %(date_to)s
+                order by report_date desc, created_at desc
+                limit %(page_size)s
+                offset %(offset)s
+                """,
+                {
+                    "user_id": user_id,
+                    "date_from": parsed_date_from,
+                    "date_to": parsed_date_to,
+                    "page_size": page_size,
+                    "offset": offset,
+                },
+            )
+            rows = cursor.fetchall()
+
+    return {
+        "items": [serialize_report_row(dict(row)) for row in rows],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "date_from": parsed_date_from.isoformat(),
+        "date_to": parsed_date_to.isoformat(),
+    }
+
+
+@app.get("/api/reports/{report_id}")
+def get_report(report_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select
+                    id::text as id,
+                    usage_id::text as usage_id,
+                    report_date,
+                    created_at,
+                    html
+                from public.reports
+                where id::text = %(id)s
+                  and user_id = %(user_id)s
+                """,
+                {"id": report_id, "user_id": user_id},
+            )
+            row = cursor.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Report not found.")
+    return {"report": serialize_report_row(dict(row), include_html=True)}
+
+
 def frontend_dist_file(path: str) -> Path | None:
     try:
         candidate = (FRONTEND_DIST / path).resolve()

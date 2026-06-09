@@ -33,6 +33,23 @@ ATTENTION_LABELS = {
     "no_material_change",
 }
 
+LABEL_DESCRIPTIONS = {
+    "no_action": "No meaningful follow-up needed from this report item.",
+    "monitor": "Relevant item to keep watching, but not enough to change the thesis.",
+    "review_thesis": "This may affect the original reason you own the company.",
+    "review_valuation": "This may change the price-versus-expectations setup without necessarily changing the business thesis.",
+    "deeper_analysis_needed": "The item is important or ambiguous enough to justify a closer review.",
+    "positive_signal": "For watchlist items, this supports at least one entry condition.",
+    "negative_signal": "For watchlist items, this conflicts with an entry condition or raises a red flag.",
+    "mixed_signal": "For watchlist items, one point improved while another important concern remains.",
+    "needs_more_evidence": "For watchlist items, the news is relevant but not enough to change the view.",
+    "no_material_change": "For watchlist items, the news is mostly noise relative to the entry conditions.",
+    "supports": "The news appears to support part of the portfolio thesis.",
+    "challenges": "The news appears to challenge part of the portfolio thesis.",
+    "mixed": "The news has both supportive and challenging read-throughs.",
+    "unclear": "The impact on the thesis is not clear from this item alone.",
+}
+
 EVENT_KEYWORDS = {
     "earnings": ("earnings", "results", "quarter", "eps", "revenue", "profit", "margin"),
     "guidance": ("guidance", "forecast", "outlook", "raises forecast", "cuts forecast"),
@@ -1657,11 +1674,11 @@ def openai_usage_summary(response: Any, model: str, config: dict[str, Any]) -> d
     }
 
 
-def log_openai_usage(user_id: str, task: str, usage: dict[str, Any]) -> None:
+def log_openai_usage(user_id: str, task: str, usage: dict[str, Any]) -> str | None:
     from database import connection
 
     if usage.get("skipped"):
-        return
+        return None
     cost_usd = usage.get("cost_usd") if isinstance(usage.get("cost_usd"), dict) else {}
     with connection() as conn:
         with conn.cursor() as cursor:
@@ -1676,6 +1693,7 @@ def log_openai_usage(user_id: str, task: str, usage: dict[str, Any]) -> None:
                     total_cost
                 )
                 values (%s, %s, %s, %s, %s, %s)
+                returning id::text
                 """,
                 (
                     user_id,
@@ -1686,6 +1704,36 @@ def log_openai_usage(user_id: str, task: str, usage: dict[str, Any]) -> None:
                     float(cost_usd.get("total", 0) or 0),
                 ),
             )
+            row = cursor.fetchone()
+    return str(row[0]) if row else None
+
+
+def save_report_record(
+    *,
+    user_id: str,
+    usage_id: str | None,
+    html: str,
+    report_date: dt.date,
+) -> str:
+    from database import connection
+
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                insert into public.reports (
+                    user_id,
+                    usage_id,
+                    html,
+                    report_date
+                )
+                values (%s, %s, %s, %s)
+                returning id::text
+                """,
+                (user_id, usage_id, html, report_date),
+            )
+            row = cursor.fetchone()
+    return str(row[0])
 
 
 def default_report(context: dict[str, Any]) -> dict[str, Any]:
@@ -1890,7 +1938,9 @@ def generate_report_with_openai(
     )
     usage = openai_usage_summary(response, model, config)
     if user_id:
-        log_openai_usage(user_id, task, usage)
+        usage_id = log_openai_usage(user_id, task, usage)
+        if usage_id:
+            usage["usage_id"] = usage_id
     report = parse_model_json(response.output_text)
     report.setdefault("report_date", context["report_date"])
     return validate_report(report, context), usage
@@ -1925,6 +1975,10 @@ def validate_label(value: str | None) -> str:
 
 def human_label(value: Any) -> str:
     return str(value or "").replace("_", " ").strip().upper()
+
+
+def label_description(value: Any) -> str:
+    return LABEL_DESCRIPTIONS.get(str(value or "").strip(), "Report signal generated from the supplied news and thesis context.")
 
 
 def normalize_match_text(value: str | None) -> set[str]:
@@ -2316,6 +2370,7 @@ def render_email(report: dict[str, Any], subject: str) -> str:
         autoescape=True,
     )
     env.filters["human_label"] = human_label
+    env.filters["label_description"] = label_description
     template = env.get_template("email_report.html")
     return template.render(
         report=report,
@@ -2534,6 +2589,12 @@ def run_report_for_user(
 
     subject = build_subject(config, report_date)
     html = render_email(report, subject)
+    report_id = save_report_record(
+        user_id=user_id,
+        usage_id=usage.get("usage_id"),
+        html=html,
+        report_date=report_date,
+    )
 
     write_report_outputs(
         context=context,
@@ -2555,6 +2616,7 @@ def run_report_for_user(
     return {
         "subject": subject,
         "report_date": report_date.isoformat(),
+        "report_id": report_id,
         "usage": usage,
         "output_html": str(output_html),
         "output_json": str(output_json),
