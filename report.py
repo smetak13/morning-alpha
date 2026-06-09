@@ -1652,6 +1652,37 @@ def openai_usage_summary(response: Any, model: str, config: dict[str, Any]) -> d
     }
 
 
+def log_openai_usage(user_id: str, task: str, usage: dict[str, Any]) -> None:
+    from database import connection
+
+    if usage.get("skipped"):
+        return
+    cost_usd = usage.get("cost_usd") if isinstance(usage.get("cost_usd"), dict) else {}
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                insert into public.usages (
+                    user_id,
+                    task,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
+                    total_cost
+                )
+                values (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    user_id,
+                    task,
+                    int(usage.get("input_tokens", 0) or 0),
+                    int(usage.get("output_tokens", 0) or 0),
+                    int(usage.get("total_tokens", 0) or 0),
+                    float(cost_usd.get("total", 0) or 0),
+                ),
+            )
+
+
 def default_report(context: dict[str, Any]) -> dict[str, Any]:
     items = context.get("ranked_news", [])
     portfolio_tickers = {item["ticker"] for item in context.get("portfolio", [])}
@@ -1705,7 +1736,13 @@ def default_report(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def generate_report_with_openai(context: dict[str, Any], config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def generate_report_with_openai(
+    context: dict[str, Any],
+    config: dict[str, Any],
+    *,
+    user_id: str | None = None,
+    task: str = "report_gen",
+) -> tuple[dict[str, Any], dict[str, Any]]:
     from openai import OpenAI
 
     model = config.get("openai", {}).get("model", "gpt-4.1-mini")
@@ -1841,9 +1878,12 @@ def generate_report_with_openai(context: dict[str, Any], config: dict[str, Any])
             {"role": "user", "content": json.dumps(user, ensure_ascii=False)},
         ],
     )
+    usage = openai_usage_summary(response, model, config)
+    if user_id:
+        log_openai_usage(user_id, task, usage)
     report = parse_model_json(response.output_text)
     report.setdefault("report_date", context["report_date"])
-    return validate_report(report, context), openai_usage_summary(response, model, config)
+    return validate_report(report, context), usage
 
 
 def skipped_openai_usage(config: dict[str, Any]) -> dict[str, Any]:
@@ -2480,7 +2520,7 @@ def run_report_for_user(
     else:
         if not os.getenv("OPENAI_API_KEY"):
             raise SystemExit("OPENAI_API_KEY is required unless --skip-openai is used.")
-        report, usage = generate_report_with_openai(context, config)
+        report, usage = generate_report_with_openai(context, config, user_id=user_id, task="report_gen")
 
     subject = build_subject(config, report_date)
     html = render_email(report, subject)

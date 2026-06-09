@@ -680,12 +680,12 @@ def normalize_draft_thesis(payload: dict[str, Any], item_type: str) -> dict[str,
 
 @app.post("/api/thesis/draft")
 def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any]:
-    current_user_id(request)
+    user_id = current_user_id(request)
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
 
     from openai import OpenAI
-    from report import load_yaml, parse_model_json
+    from report import load_yaml, log_openai_usage, openai_usage_summary, parse_model_json
 
     symbol = clean_symbol(payload.symbol)
     company_name = payload.company_name.strip() or symbol
@@ -728,6 +728,8 @@ def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any
                 {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
             ],
         )
+        usage = openai_usage_summary(response, model, config)
+        log_openai_usage(user_id, f"{payload.item_type}_draft", usage)
         draft = parse_model_json(response.output_text)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Thesis generation failed: {exc}") from exc
