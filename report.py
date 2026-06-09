@@ -26,6 +26,11 @@ ATTENTION_LABELS = {
     "review_thesis",
     "review_valuation",
     "deeper_analysis_needed",
+    "positive_signal",
+    "negative_signal",
+    "mixed_signal",
+    "needs_more_evidence",
+    "no_material_change",
 }
 
 EVENT_KEYWORDS = {
@@ -471,7 +476,7 @@ def load_watchlist_from_db(user_id: str) -> dict[str, Holding]:
                     watchlist_items.bear_case,
                     watchlist_items.key_metrics,
                     watchlist_items.red_flags,
-                    watchlist_items.action_triggers
+                    watchlist_items.entry_conditions
                 from public.watchlist_items
                 join public.stocks on stocks.id = watchlist_items.stock_id
                 where watchlist_items.user_id = %s
@@ -497,7 +502,7 @@ def load_watchlist_from_db(user_id: str) -> dict[str, Holding]:
                 "bear_case": normalize_text_array(row["bear_case"]),
                 "key_metrics": normalize_text_array(row["key_metrics"]),
                 "red_flags": normalize_text_array(row["red_flags"]),
-                "action_triggers": normalize_text_array(row["action_triggers"]),
+                "entry_conditions": normalize_text_array(row["entry_conditions"]),
             },
         )
     return holdings
@@ -1705,12 +1710,13 @@ def default_report(context: dict[str, Any]) -> dict[str, Any]:
         if item.get("ticker") in portfolio_tickers:
             portfolio_news.append(entry)
         elif item.get("ticker") in watchlist_tickers:
+            entry["attention_label"] = "needs_more_evidence"
             watchlist_news.append(entry)
         if item.get("score_reasons"):
             flags.append(
                 {
                     "ticker": item.get("ticker") or "MARKET",
-                    "label": "monitor",
+                    "label": "needs_more_evidence" if item.get("ticker") in watchlist_tickers else "monitor",
                     "reason": ", ".join(item.get("score_reasons", [])[:4]),
                 }
             )
@@ -1766,6 +1772,10 @@ def generate_report_with_openai(
             "For portfolio_news and watchlist_news, keep why_it_matters short, then add article_summary with 3-5 factual bullet points based only on the supplied snippet/title/source metadata.",
             "For portfolio_news and watchlist_news, include only articles whose context.ranked_news ticker exactly matches that section item ticker.",
             "Never include portfolio tickers in watchlist_news.",
+            "For watchlist_news, judge whether the news is a good or bad signal for eventually owning the company by comparing it to the watchlist thesis entry_conditions, red_flags, key_metrics, bull_case, and bear_case.",
+            "For watchlist_news, use attention_label only from positive_signal, negative_signal, mixed_signal, needs_more_evidence, no_material_change.",
+            "For watchlist_news, positive_signal means the news supports at least one entry condition; negative_signal means it conflicts with an entry condition or raises a red flag; mixed_signal means one important point improved while another remains a problem; needs_more_evidence means the news is relevant but not enough to change the view; no_material_change means the news is mostly noise for the user's stated entry conditions.",
+            "For watchlist_news why_it_matters, explicitly mention which entry condition, red flag, or key metric the article relates to. Do not say the user should buy the stock.",
             "For thesis_impact, explain how the news could affect the user's stated thesis, key metrics, red flags, and action triggers.",
             "Only include portfolio holdings in thesis_impact; do not include watchlist-only companies there.",
             "Use top_market_themes as notable market reads outside the user's portfolio and watchlist.",
@@ -1819,11 +1829,11 @@ def generate_report_with_openai(
                 {
                     "ticker": "string",
                     "headline": "string",
-                    "why_it_matters": "string",
+                    "why_it_matters": "explain whether this is a positive, negative, mixed, insufficient, or immaterial signal relative to the user's watchlist entry_conditions",
                     "article_summary": [
                         "bullet point with the most important facts from the article, written for a beginner investor"
                     ],
-                    "attention_label": "no_action|monitor|review_thesis|review_valuation|deeper_analysis_needed",
+                    "attention_label": "positive_signal|negative_signal|mixed_signal|needs_more_evidence|no_material_change",
                     "source": "string",
                     "source_url": "string",
                 }
@@ -1980,9 +1990,9 @@ def default_news_entry_from_context_item(item: dict[str, Any]) -> dict[str, Any]
     return {
         "ticker": item.get("ticker") or "MARKET",
         "headline": item.get("title", ""),
-        "why_it_matters": "This article directly mentions a company on the watchlist and may be relevant to monitor.",
+        "why_it_matters": "This article directly mentions a company on the watchlist, but more evidence is needed to judge the entry conditions.",
         "article_summary": [item.get("snippet") or "No article summary available."],
-        "attention_label": validate_label("monitor"),
+        "attention_label": validate_label("needs_more_evidence"),
         "source": item.get("source", ""),
         "source_url": item.get("url", ""),
     }

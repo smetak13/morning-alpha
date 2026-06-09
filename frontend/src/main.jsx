@@ -220,9 +220,9 @@ const THESIS_SECTIONS = {
       description: "Warning signs that would make you lose interest or require deeper analysis before taking the company seriously.",
     },
     {
-      key: "action_triggers",
-      title: "Action triggers",
-      description: "Specific events that should make you revisit the watchlist item, such as earnings, guidance, filings, or major product news.",
+      key: "entry_conditions",
+      title: "Entry conditions",
+      description: "The evidence you would need to see before considering this company as a portfolio candidate.",
     },
   ],
 };

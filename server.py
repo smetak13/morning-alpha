@@ -132,7 +132,7 @@ class WatchlistItemCreateRequest(BaseModel):
     bear_case: list[str] = Field(default_factory=list)
     key_metrics: list[str] = Field(default_factory=list)
     red_flags: list[str] = Field(default_factory=list)
-    action_triggers: list[str] = Field(default_factory=list)
+    entry_conditions: list[str] = Field(default_factory=list)
 
 
 class WatchlistItemUpdateRequest(BaseModel):
@@ -142,7 +142,7 @@ class WatchlistItemUpdateRequest(BaseModel):
     bear_case: list[str] | None = None
     key_metrics: list[str] | None = None
     red_flags: list[str] | None = None
-    action_triggers: list[str] | None = None
+    entry_conditions: list[str] | None = None
 
 
 class UserSettingsUpdateRequest(BaseModel):
@@ -654,14 +654,15 @@ def search_stocks(q: str, request: Request) -> dict[str, Any]:
 
 def draft_thesis_schema(item_type: str) -> dict[str, Any]:
     first_field = "why_i_own_it" if item_type == "portfolio" else "why_i_watch_it"
-    return {
+    schema = {
         first_field: ["string"],
         "bull_case": ["string"],
         "bear_case": ["string"],
         "key_metrics": ["string"],
         "red_flags": ["string"],
-        "action_triggers": ["string"],
     }
+    schema["action_triggers" if item_type == "portfolio" else "entry_conditions"] = ["string"]
+    return schema
 
 
 def normalize_draft_thesis(payload: dict[str, Any], item_type: str) -> dict[str, list[str]]:
@@ -711,6 +712,7 @@ def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any
             "key_metrics": "3 concise metrics or signals to monitor",
             "red_flags": "3 concise warning signs",
             "action_triggers": "3 concise events or evidence that would justify reviewing the thesis",
+            "entry_conditions": "3 concise pieces of evidence that would make this watchlist company more attractive as a portfolio candidate",
         },
         "constraints": [
             "Return valid JSON only.",
@@ -832,7 +834,7 @@ def serialize_watchlist_row(row: dict[str, Any]) -> dict[str, Any]:
         "bear_case": row["bear_case"] or [],
         "key_metrics": row["key_metrics"] or [],
         "red_flags": row["red_flags"] or [],
-        "action_triggers": row["action_triggers"] or [],
+        "entry_conditions": row["entry_conditions"] or [],
     }
 
 
@@ -867,7 +869,7 @@ WATCHLIST_SELECT = """
         watchlist_items.bear_case,
         watchlist_items.key_metrics,
         watchlist_items.red_flags,
-        watchlist_items.action_triggers
+        watchlist_items.entry_conditions
     from public.watchlist_items
     join public.stocks on stocks.id = watchlist_items.stock_id
 """
@@ -1067,7 +1069,7 @@ def create_watchlist_item(payload: WatchlistItemCreateRequest, request: Request)
                     bear_case,
                     key_metrics,
                     red_flags,
-                    action_triggers
+                    entry_conditions
                 )
                 values (
                     %(user_id)s,
@@ -1078,7 +1080,7 @@ def create_watchlist_item(payload: WatchlistItemCreateRequest, request: Request)
                     %(bear_case)s,
                     %(key_metrics)s,
                     %(red_flags)s,
-                    %(action_triggers)s
+                    %(entry_conditions)s
                 )
                 on conflict (user_id, stock_id) do nothing
                 returning id::text
@@ -1092,7 +1094,7 @@ def create_watchlist_item(payload: WatchlistItemCreateRequest, request: Request)
                     "bear_case": clean_bullets(payload.bear_case),
                     "key_metrics": clean_bullets(payload.key_metrics),
                     "red_flags": clean_bullets(payload.red_flags),
-                    "action_triggers": clean_bullets(payload.action_triggers),
+                    "entry_conditions": clean_bullets(payload.entry_conditions),
                 },
             )
             inserted = cursor.fetchone()
@@ -1129,7 +1131,7 @@ def update_watchlist_item(item_id: str, payload: WatchlistItemUpdateRequest, req
                 "bear_case": clean_bullets(updates.get("bear_case", current_dict["bear_case"])),
                 "key_metrics": clean_bullets(updates.get("key_metrics", current_dict["key_metrics"])),
                 "red_flags": clean_bullets(updates.get("red_flags", current_dict["red_flags"])),
-                "action_triggers": clean_bullets(updates.get("action_triggers", current_dict["action_triggers"])),
+                "entry_conditions": clean_bullets(updates.get("entry_conditions", current_dict["entry_conditions"])),
             }
             cursor.execute(
                 """
@@ -1141,7 +1143,7 @@ def update_watchlist_item(item_id: str, payload: WatchlistItemUpdateRequest, req
                     bear_case = %(bear_case)s,
                     key_metrics = %(key_metrics)s,
                     red_flags = %(red_flags)s,
-                    action_triggers = %(action_triggers)s
+                    entry_conditions = %(entry_conditions)s
                 where id::text = %(id)s and user_id = %(user_id)s
                 """,
                 params,
