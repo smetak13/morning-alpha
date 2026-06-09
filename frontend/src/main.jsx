@@ -1567,8 +1567,8 @@ function NotesView() {
     <section className="reports-view">
       <div className="reports-toolbar notes-toolbar">
         <div>
-          <p className="eyebrow">Investment memory</p>
-          <h2>Notes</h2>
+          <p className="eyebrow">Research notes</p>
+          <h2>Saved notes</h2>
         </div>
         <div className="notes-toolbar-side">
           <div className="report-filters notes-filters">
