@@ -1402,7 +1402,7 @@ function ReportNotesModal({ mode, report, revision = 0, onAddNote, onChanged, on
   );
 }
 
-function NoteCard({ editable, note, onDelete, onSave }) {
+function NoteCard({ editable, largeEditor = false, note, onDelete, onSave }) {
   const [body, setBody] = useState(note.body);
   const [isResolved, setIsResolved] = useState(note.is_resolved);
   const hasChanges = body !== note.body || isResolved !== note.is_resolved;
@@ -1426,7 +1426,7 @@ function NoteCard({ editable, note, onDelete, onSave }) {
       </div>
       {editable ? (
         <>
-          <textarea onChange={(event) => setBody(event.target.value)} rows={4} value={body} />
+          <textarea onChange={(event) => setBody(event.target.value)} rows={largeEditor ? 9 : 4} value={body} />
           <div className="note-card-actions">
             <label className="checkbox-row note-checkbox">
               <input checked={isResolved} onChange={(event) => setIsResolved(event.target.checked)} type="checkbox" />
@@ -1763,7 +1763,7 @@ function SingleNoteModal({ note, onClose, onDelete, onSave }) {
             <X size={18} aria-hidden="true" />
           </button>
         </div>
-        <NoteCard editable note={note} onDelete={onDelete} onSave={onSave} />
+        <NoteCard editable largeEditor note={note} onDelete={onDelete} onSave={onSave} />
       </section>
     </div>
   );
