@@ -17,10 +17,8 @@
       .header { background: #151515; border-bottom: 1px solid #2a2a2a; padding: 26px 28px 22px; }
       .brand { margin-bottom: 26px; }
       .logo { border: 0; display: block; height: auto; line-height: 0; max-width: 270px; width: 270px; }
-      .hero { display: table; width: 100%; }
-      .hero-copy { display: table-cell; vertical-align: middle; }
-      .hero-badge { display: table-cell; text-align: right; vertical-align: middle; width: 96px; }
-      .badge-img { border: 0; display: inline-block; height: auto; line-height: 0; max-width: 82px; width: 82px; }
+      .open-app-row { margin-top: 22px; }
+      .open-app-button-img { border: 0; display: block; height: 40px; line-height: 0; max-width: 112px; width: 112px; }
       .body { padding: 24px 28px 28px; }
       h1 { color: #ffffff; font-size: 28px; line-height: 1.12; margin: 0 0 10px; }
       h2 { border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px; }
@@ -44,8 +42,6 @@
         .page { padding: 0; }
         .container { border-left: 0; border-right: 0; border-radius: 0; }
         .header, .body { padding-left: 18px; padding-right: 18px; }
-        .hero, .hero-copy, .hero-badge { display: block; width: 100%; }
-        .hero-badge { margin-top: 16px; text-align: left; }
         .logo { max-width: 230px; width: 230px; }
       }
     </style>
@@ -61,21 +57,27 @@
               <strong>Morning Alpha</strong>
             {% endif %}
           </div>
-          <div class="hero" style="display: table; width: 100%;">
-            <div class="hero-copy" style="display: table-cell; vertical-align: middle;">
-              <h1 style="color: #ffffff; font-size: 28px; line-height: 1.12; margin: 0 0 20px;">{{ subject }}</h1>
-              <p class="meta" style="color: #a7a7a0; font-size: 12px; line-height: 1.5; margin: 0;">Report date: {{ report.report_date }}<br>Generated: {{ generated_at }}</p>
+          <h1 style="color: #ffffff; font-size: 28px; line-height: 1.12; margin: 0 0 20px;">{{ subject }}</h1>
+          <p class="meta" style="color: #a7a7a0; font-size: 12px; line-height: 1.5; margin: 0;">Report date: {{ report.report_date }}<br>Generated: {{ generated_at }}</p>
+          {% if open_app_url %}
+            <div class="open-app-row" style="margin-top: 22px;">
+              {% if open_app_button_src %}
+                <a href="{{ open_app_url }}" style="border: 0; display: inline-block; text-decoration: none;">
+                  <img class="open-app-button-img" src="{{ open_app_button_src }}" width="112" height="40" alt="Open in App" style="border: 0; display: block; height: 40px; line-height: 0; max-width: 112px; width: 112px;">
+                </a>
+              {% else %}
+                <table border="0" cellpadding="0" cellspacing="0" role="presentation">
+                  <tr>
+                    <td bgcolor="#f3c42e" style="background: #f3c42e; border-radius: 6px; mso-padding-alt: 11px 16px;">
+                      <a class="open-app-button" href="{{ open_app_url }}" style="background: #f3c42e !important; border-radius: 6px; color: #111111 !important; display: inline-block; font-size: 14px; font-weight: bold; line-height: 18px; padding: 11px 16px; text-decoration: none !important; -webkit-text-fill-color: #111111 !important;">
+                        <span style="color: #111111 !important; mso-style-textfill-fill-color: #111111; -webkit-text-fill-color: #111111 !important; text-decoration: none !important;">Open in App</span>
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+              {% endif %}
             </div>
-            {% if badge_src %}
-              <div class="hero-badge" style="display: table-cell; text-align: right; vertical-align: middle; width: 96px;">
-                <img class="badge-img" src="{{ badge_src }}" width="82" height="83" alt="">
-              </div>
-            {% elif icon_src %}
-              <div class="hero-badge" style="display: table-cell; text-align: right; vertical-align: middle; width: 96px;">
-                <img class="badge-img" src="{{ icon_src }}" width="82" height="84" alt="">
-              </div>
-            {% endif %}
-          </div>
+          {% endif %}
         </div>
 
         <div class="body" style="padding: 24px 28px 28px;">

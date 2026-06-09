@@ -2363,7 +2363,7 @@ def validate_report(report: dict[str, Any], context: dict[str, Any]) -> dict[str
     return report
 
 
-def render_email(report: dict[str, Any], subject: str) -> str:
+def render_email(report: dict[str, Any], subject: str, open_app_url: str | None = None) -> str:
     jinja2 = require_dependency("jinja2", "Jinja2")
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(ROOT / "templates"),
@@ -2377,7 +2377,18 @@ def render_email(report: dict[str, Any], subject: str) -> str:
         subject=subject,
         generated_at=dt.datetime.now(tz=PRAGUE_TZ).date().isoformat(),
         logo_src=email_asset_src("ma-logo.png"),
+        open_app_button_src=email_asset_src("open-in-app-button.png"),
+        open_app_url=open_app_url,
     )
+
+
+def report_app_url(report_id: str | None) -> str | None:
+    if not report_id:
+        return None
+    base_url = (os.getenv("API_PUBLIC_URL") or "").strip()
+    if not base_url:
+        return None
+    return f"{base_url.rstrip('/')}/reports/{report_id}"
 
 
 def email_asset_src(filename: str) -> str | None:
@@ -2596,6 +2607,8 @@ def run_report_for_user(
         report_date=report_date,
     )
 
+    email_html = render_email(report, subject, open_app_url=report_app_url(report_id))
+
     write_report_outputs(
         context=context,
         report=report,
@@ -2611,7 +2624,7 @@ def run_report_for_user(
         recipient_email = recipient_email or get_user_email(user_id)
         if not recipient_email:
             raise SystemExit(f"User {user_id} does not have an email address.")
-        send_email(subject, html, recipient_email=recipient_email)
+        send_email(subject, email_html, recipient_email=recipient_email)
 
     return {
         "subject": subject,

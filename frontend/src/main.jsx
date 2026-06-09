@@ -214,6 +214,27 @@ function calendarDays(monthDate) {
   ];
 }
 
+function currentRoute() {
+  const match = window.location.pathname.match(/^\/reports\/([^/]+)\/?$/);
+  if (match) {
+    return { view: "reports", reportId: decodeURIComponent(match[1]) };
+  }
+  if (window.location.pathname === "/reports") {
+    return { view: "reports", reportId: "" };
+  }
+  return { view: "portfolio", reportId: "" };
+}
+
+function setBrowserRoute(path, replace = false) {
+  const nextPath = path || "/";
+  if (window.location.pathname === nextPath) {
+    return;
+  }
+  const method = replace ? "replaceState" : "pushState";
+  window.history[method]({}, "", nextPath);
+  window.dispatchEvent(new Event("popstate"));
+}
+
 function enhanceReportHtml(html) {
   const enhancement = `
     <base target="_blank">
@@ -335,6 +356,7 @@ function stockLogoProps(src) {
 
 function App() {
   const [session, setSession] = useState({ status: "checking", user: null });
+  const [route, setRoute] = useState(() => currentRoute());
 
   const refreshSession = useCallback(async () => {
     setSession((current) => ({ ...current, status: "checking" }));
@@ -354,6 +376,12 @@ function App() {
     refreshSession();
   }, [refreshSession]);
 
+  useEffect(() => {
+    const syncRoute = () => setRoute(currentRoute());
+    window.addEventListener("popstate", syncRoute);
+    return () => window.removeEventListener("popstate", syncRoute);
+  }, []);
+
   const handleLogout = useCallback(async () => {
     await requestJson("/logout", { method: "POST", body: "{}" }).catch(() => {});
     setSession({ status: "anonymous", user: null });
@@ -367,7 +395,7 @@ function App() {
     return <AuthPage onAuthenticated={refreshSession} />;
   }
 
-  return <MainPage user={session.user} onLogout={handleLogout} />;
+  return <MainPage route={route} user={session.user} onLogout={handleLogout} />;
 }
 
 function LoadingScreen() {
@@ -529,8 +557,8 @@ function AuthPage({ onAuthenticated }) {
   );
 }
 
-function MainPage({ user, onLogout }) {
-  const [activeView, setActiveView] = useState("portfolio");
+function MainPage({ route, user, onLogout }) {
+  const [activeView, setActiveView] = useState(route.view);
   const [portfolio, setPortfolio] = useState([]);
   const [watchlist, setWatchlist] = useState([]);
   const [itemsStatus, setItemsStatus] = useState("loading");
@@ -569,6 +597,20 @@ function MainPage({ user, onLogout }) {
   useEffect(() => {
     setSettings(userSettingsFromProfile(user));
   }, [user]);
+
+  useEffect(() => {
+    setActiveView(route.view);
+  }, [route.view]);
+
+  const showPortfolio = () => {
+    setActiveView("portfolio");
+    setBrowserRoute("/");
+  };
+
+  const showReports = () => {
+    setActiveView("reports");
+    setBrowserRoute("/reports");
+  };
 
   const updateUserSettings = async (patch) => {
     setSettings((current) => ({ ...current, ...patch }));
@@ -692,14 +734,14 @@ function MainPage({ user, onLogout }) {
         <div className="view-tabs">
           <button
             className={activeView === "portfolio" ? "view-tab active" : "view-tab"}
-            onClick={() => setActiveView("portfolio")}
+            onClick={showPortfolio}
             type="button"
           >
             Portfolio
           </button>
           <button
             className={activeView === "reports" ? "view-tab active" : "view-tab"}
-            onClick={() => setActiveView("reports")}
+            onClick={showReports}
             type="button"
           >
             Reports
@@ -746,7 +788,7 @@ function MainPage({ user, onLogout }) {
             />
           </>
         ) : (
-          <ReportsView />
+          <ReportsView routeReportId={route.reportId} />
         )}
       </section>
 
@@ -772,13 +814,14 @@ function MainPage({ user, onLogout }) {
   );
 }
 
-function ReportsView() {
+function ReportsView({ routeReportId = "" }) {
   const [filters, setFilters] = useState(defaultReportFilters);
   const [page, setPage] = useState(1);
   const [payload, setPayload] = useState({ items: [], total: 0, page_size: 10 });
   const [selectedReport, setSelectedReport] = useState(null);
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
+  const openedRouteReportIdRef = useRef("");
 
   const totalPages = Math.max(1, Math.ceil((payload.total || 0) / (payload.page_size || 10)));
 
@@ -805,13 +848,40 @@ function ReportsView() {
     loadReports();
   }, [loadReports]);
 
-  const openReport = async (report) => {
+  const openReport = async (report, options = {}) => {
     setError("");
     try {
       const detail = await requestJson(`/api/reports/${report.id}`, { method: "GET" });
       setSelectedReport(detail.report);
+      if (options.updateRoute !== false) {
+        openedRouteReportIdRef.current = report.id;
+        setBrowserRoute(`/reports/${encodeURIComponent(report.id)}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load report detail.");
+    }
+  };
+
+  useEffect(() => {
+    if (!routeReportId) {
+      if (openedRouteReportIdRef.current) {
+        openedRouteReportIdRef.current = "";
+        setSelectedReport(null);
+      }
+      return;
+    }
+    if (openedRouteReportIdRef.current === routeReportId) {
+      return;
+    }
+    openedRouteReportIdRef.current = routeReportId;
+    openReport({ id: routeReportId }, { updateRoute: false });
+  }, [routeReportId]);
+
+  const closeReport = () => {
+    setSelectedReport(null);
+    if (routeReportId) {
+      openedRouteReportIdRef.current = "";
+      setBrowserRoute("/reports", true);
     }
   };
 
@@ -894,7 +964,7 @@ function ReportsView() {
       </div>
 
       {selectedReport?.html ? (
-        <ReportPreviewModal report={selectedReport} onClose={() => setSelectedReport(null)} />
+        <ReportPreviewModal report={selectedReport} onClose={closeReport} />
       ) : null}
     </section>
   );
