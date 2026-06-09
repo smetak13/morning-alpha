@@ -835,10 +835,78 @@ input[type="range"] {
   padding: 14px;
 }
 
+.thesis-section-heading {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
 .thesis-section h3 {
   color: #ffffff;
   font-size: 0.98rem;
-  margin: 0 0 10px;
+  margin: 0;
+}
+
+.info-tooltip-trigger {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: #f4c430;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 28px;
+  justify-content: center;
+  min-height: 0;
+  padding: 0;
+  position: relative;
+  width: 28px;
+}
+
+.info-tooltip-trigger:hover,
+.info-tooltip-trigger:focus-visible {
+  background: #242424;
+  border-radius: 6px;
+}
+
+.info-tooltip {
+  background: #0d0d0d;
+  border: 1px solid #343434;
+  border-radius: 8px;
+  bottom: calc(100% + 8px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.48);
+  color: #f4f4f0;
+  display: none;
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1.45;
+  max-width: min(280px, 70vw);
+  padding: 10px 12px;
+  position: absolute;
+  right: 0;
+  text-align: left;
+  width: max-content;
+  z-index: 35;
+}
+
+.info-tooltip::after {
+  background: #0d0d0d;
+  border-bottom: 1px solid #343434;
+  border-right: 1px solid #343434;
+  bottom: -5px;
+  content: "";
+  height: 9px;
+  position: absolute;
+  right: 9px;
+  transform: rotate(45deg);
+  width: 9px;
+}
+
+.info-tooltip-trigger:hover .info-tooltip,
+.info-tooltip-trigger:focus-visible .info-tooltip {
+  display: block;
 }
 
 .bullet-list {

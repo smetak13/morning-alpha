@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Clock,
   Globe2,
+  Info,
   LogOut,
   Mail,
   Pencil,
@@ -161,20 +162,68 @@ function userSettingsFromProfile(user) {
 
 const THESIS_SECTIONS = {
   portfolio: [
-    { key: "why_i_own_it", title: "Why I own it" },
-    { key: "bull_case", title: "Bull case" },
-    { key: "bear_case", title: "Bear case" },
-    { key: "key_metrics", title: "Key metrics" },
-    { key: "red_flags", title: "Red flags" },
-    { key: "action_triggers", title: "Action triggers" },
+    {
+      key: "why_i_own_it",
+      title: "Why I own it",
+      description: "The core reason this company belongs in your portfolio. Focus on the durable thesis, not today's price move.",
+    },
+    {
+      key: "bull_case",
+      title: "Bull case",
+      description: "What could go right. Include the main upside drivers, catalysts, or business improvements you want to monitor.",
+    },
+    {
+      key: "bear_case",
+      title: "Bear case",
+      description: "What could go wrong. Capture the risks that would weaken your thesis or change how you think about the company.",
+    },
+    {
+      key: "key_metrics",
+      title: "Key metrics",
+      description: "The numbers or signals that matter most for tracking the thesis, such as growth, margins, cash flow, users, or debt.",
+    },
+    {
+      key: "red_flags",
+      title: "Red flags",
+      description: "Warning signs that deserve attention. These are early signals that the thesis may be breaking.",
+    },
+    {
+      key: "action_triggers",
+      title: "Action triggers",
+      description: "Specific events that should make you review the position, such as earnings misses, guidance changes, or major news.",
+    },
   ],
   watchlist: [
-    { key: "why_i_watch_it", title: "Why I watch it" },
-    { key: "bull_case", title: "Bull case" },
-    { key: "bear_case", title: "Bear case" },
-    { key: "key_metrics", title: "Key metrics" },
-    { key: "red_flags", title: "Red flags" },
-    { key: "action_triggers", title: "Action triggers" },
+    {
+      key: "why_i_watch_it",
+      title: "Why I watch it",
+      description: "Why this company is worth following even if you do not own it yet. Capture the opportunity or question you are tracking.",
+    },
+    {
+      key: "bull_case",
+      title: "Bull case",
+      description: "What could make the company more attractive. Include potential upside drivers, catalysts, or improving fundamentals.",
+    },
+    {
+      key: "bear_case",
+      title: "Bear case",
+      description: "What could make the company less attractive. Capture the biggest risks or reasons to stay cautious.",
+    },
+    {
+      key: "key_metrics",
+      title: "Key metrics",
+      description: "The numbers or signals that would help you judge progress, such as growth, margins, cash flow, users, or valuation.",
+    },
+    {
+      key: "red_flags",
+      title: "Red flags",
+      description: "Warning signs that would make you lose interest or require deeper analysis before taking the company seriously.",
+    },
+    {
+      key: "action_triggers",
+      title: "Action triggers",
+      description: "Specific events that should make you revisit the watchlist item, such as earnings, guidance, filings, or major product news.",
+    },
   ],
 };
 
@@ -1204,7 +1253,15 @@ function ThesisSectionEditor({ section, value, onChange }) {
   };
   return (
     <section className="thesis-section">
-      <h3>{section.title}</h3>
+      <div className="thesis-section-heading">
+        <h3>{section.title}</h3>
+        <button className="info-tooltip-trigger" type="button" aria-label={`${section.title}: ${section.description}`}>
+          <Info size={15} aria-hidden="true" />
+          <span className="info-tooltip" role="tooltip">
+            {section.description}
+          </span>
+        </button>
+      </div>
       <div className="bullet-list">
         {value.map((point, index) => (
           <div className="bullet-row" key={`${section.key}-${index}`}>
