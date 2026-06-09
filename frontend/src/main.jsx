@@ -222,6 +222,9 @@ function currentRoute() {
   if (window.location.pathname === "/reports") {
     return { view: "reports", reportId: "" };
   }
+  if (window.location.pathname === "/notes") {
+    return { view: "notes", reportId: "" };
+  }
   return { view: "portfolio", reportId: "" };
 }
 
@@ -612,6 +615,13 @@ function MainPage({ route, user, onLogout }) {
     setBrowserRoute("/reports");
   };
 
+  const showNotes = () => {
+    setActiveView("notes");
+    setBrowserRoute("/notes");
+  };
+
+  const pageTitle = activeView === "portfolio" ? "Portfolio workspace" : activeView === "reports" ? "Reports" : "Notes";
+
   const updateUserSettings = async (patch) => {
     setSettings((current) => ({ ...current, ...patch }));
     setSettingsError("");
@@ -726,7 +736,7 @@ function MainPage({ route, user, onLogout }) {
       <section className="main-content">
         <div className="page-heading">
           <div>
-            <h1>{activeView === "portfolio" ? "Portfolio workspace" : "Reports"}</h1>
+            <h1>{pageTitle}</h1>
           </div>
           {activeView === "portfolio" ? <div className="allocation-pill">{portfolioTotal.toFixed(1)}% allocated</div> : null}
         </div>
@@ -745,6 +755,13 @@ function MainPage({ route, user, onLogout }) {
             type="button"
           >
             Reports
+          </button>
+          <button
+            className={activeView === "notes" ? "view-tab active" : "view-tab"}
+            onClick={showNotes}
+            type="button"
+          >
+            Notes
           </button>
         </div>
 
@@ -787,8 +804,10 @@ function MainPage({ route, user, onLogout }) {
               title="Watchlist"
             />
           </>
-        ) : (
+        ) : activeView === "reports" ? (
           <ReportsView routeReportId={route.reportId} />
+        ) : (
+          <NotesView />
         )}
       </section>
 
@@ -819,6 +838,9 @@ function ReportsView({ routeReportId = "" }) {
   const [page, setPage] = useState(1);
   const [payload, setPayload] = useState({ items: [], total: 0, page_size: 10 });
   const [selectedReport, setSelectedReport] = useState(null);
+  const [notesModal, setNotesModal] = useState(null);
+  const [noteFormReport, setNoteFormReport] = useState(null);
+  const [notesRevision, setNotesRevision] = useState(0);
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
   const openedRouteReportIdRef = useRef("");
@@ -909,12 +931,17 @@ function ReportsView({ routeReportId = "" }) {
       <div className="reports-layout">
         <div className="reports-list-panel">
           <div className="table-shell">
-            <table className="reports-table">
+            <table className="reports-table reports-archive-table">
+              <colgroup>
+                <col className="report-date-col" />
+                <col className="report-created-col" />
+                <col className="report-notes-col" />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Report date</th>
                   <th>Created at</th>
-                  <th className="actions-cell">Open</th>
+                  <th className="actions-cell">Notes</th>
                 </tr>
               </thead>
               <tbody>
@@ -933,8 +960,17 @@ function ReportsView({ routeReportId = "" }) {
                       </td>
                       <td>{formatDateTime(report.created_at)}</td>
                       <td className="actions-cell">
-                        <button className="icon-button" onClick={(event) => { event.stopPropagation(); openReport(report); }} title="Open report" type="button">
+                        <span className="notes-count-pill" title={`${report.note_count ?? 0} notes`}>
+                          {report.note_count ?? 0}
+                        </span>
+                        <button className="icon-button" onClick={(event) => { event.stopPropagation(); setNotesModal({ report, mode: "view" }); }} title="View notes" type="button">
                           <Eye size={17} aria-hidden="true" />
+                        </button>
+                        <button className="icon-button" onClick={(event) => { event.stopPropagation(); setNotesModal({ report, mode: "edit" }); }} title="Edit notes" type="button">
+                          <Pencil size={17} aria-hidden="true" />
+                        </button>
+                        <button className="icon-button" onClick={(event) => { event.stopPropagation(); setNoteFormReport(report); }} title="Add note" type="button">
+                          <Plus size={17} aria-hidden="true" />
                         </button>
                       </td>
                     </tr>
@@ -964,7 +1000,28 @@ function ReportsView({ routeReportId = "" }) {
       </div>
 
       {selectedReport?.html ? (
-        <ReportPreviewModal report={selectedReport} onClose={closeReport} />
+        <ReportPreviewModal report={selectedReport} onAddNote={() => setNoteFormReport(selectedReport)} onClose={closeReport} />
+      ) : null}
+      {notesModal ? (
+        <ReportNotesModal
+          mode={notesModal.mode}
+          report={notesModal.report}
+          revision={notesRevision}
+          onChanged={loadReports}
+          onAddNote={() => setNoteFormReport(notesModal.report)}
+          onClose={() => setNotesModal(null)}
+        />
+      ) : null}
+      {noteFormReport ? (
+        <NoteFormModal
+          report={noteFormReport}
+          onClose={() => setNoteFormReport(null)}
+          onSaved={() => {
+            setNoteFormReport(null);
+            setNotesRevision((current) => current + 1);
+            loadReports();
+          }}
+        />
       ) : null}
     </section>
   );
@@ -1062,19 +1119,25 @@ function ReportDateField({ label, value, onChange }) {
   );
 }
 
-function ReportPreviewModal({ report, onClose }) {
+function ReportPreviewModal({ report, onAddNote, onClose }) {
   const reportHtml = useMemo(() => enhanceReportHtml(report.html), [report.html]);
   return (
-    <div className="modal-backdrop report-preview-backdrop">
-      <section className="report-modal-panel" aria-modal="true" role="dialog">
+    <div className="modal-backdrop report-preview-backdrop" onMouseDown={onClose}>
+      <section className="report-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="report-modal-header">
           <div>
             <p className="eyebrow">Saved report</p>
             <h2>{report.report_date}</h2>
           </div>
-          <button className="icon-button" onClick={onClose} title="Close report" type="button">
-            <X size={18} aria-hidden="true" />
-          </button>
+          <div className="modal-header-actions">
+            <button className="primary-button compact-button" onClick={onAddNote} type="button">
+              <Plus size={16} aria-hidden="true" />
+              Add note
+            </button>
+            <button className="icon-button" onClick={onClose} title="Close report" type="button">
+              <X size={18} aria-hidden="true" />
+            </button>
+          </div>
         </div>
         <iframe
           className="report-frame"
@@ -1082,6 +1145,658 @@ function ReportPreviewModal({ report, onClose }) {
           srcDoc={reportHtml}
           title={`Report ${report.report_date}`}
         />
+      </section>
+    </div>
+  );
+}
+
+function useNoteStocks() {
+  const [stocks, setStocks] = useState([]);
+  const [error, setError] = useState("");
+
+  const loadStocks = useCallback(async () => {
+    setError("");
+    try {
+      const payload = await requestJson("/api/notes/stocks", { method: "GET" });
+      setStocks(payload.items ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load companies.");
+    }
+  }, []);
+
+  useEffect(() => {
+    loadStocks();
+  }, [loadStocks]);
+
+  return { error, reload: loadStocks, stocks };
+}
+
+function stockMatchesSearch(stock, search) {
+  const normalized = search.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  return `${stock.symbol} ${stock.company_name}`.toLowerCase().includes(normalized);
+}
+
+function NoteFormModal({ report = null, onClose, onSaved }) {
+  const { error: stocksError, stocks } = useNoteStocks();
+  const [search, setSearch] = useState("");
+  const [selectedStock, setSelectedStock] = useState(null);
+  const [body, setBody] = useState("");
+  const [isResolved, setIsResolved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const filteredStocks = stocks.filter((stock) => stockMatchesSearch(stock, search)).slice(0, 12);
+
+  const save = async () => {
+    if (!selectedStock) {
+      setError("Choose a company first.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await requestJson("/api/notes", {
+        method: "POST",
+        body: JSON.stringify({
+          stock_id: selectedStock.stock_id,
+          report_id: report?.id ?? null,
+          body,
+          is_resolved: isResolved,
+        }),
+      });
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to save note.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section className="modal-panel note-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">{report ? `Report ${report.report_date}` : "Notes"}</p>
+            <h2>Add note</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Close" type="button">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        <div className="note-form-grid">
+          <div className="note-field">
+            <span className="note-field-label">Company</span>
+            {selectedStock ? (
+              <div className="selected-note-stock">
+                <div className="stock-cell">
+                  <img className="stock-logo" {...stockLogoProps(selectedStock.logo_url)} alt="" />
+                  <div>
+                    <strong>{selectedStock.symbol}</strong>
+                    <span>{selectedStock.company_name}</span>
+                  </div>
+                </div>
+                <button className="secondary-button compact-button" onClick={() => { setSelectedStock(null); setSearch(""); }} type="button">
+                  Change
+                </button>
+              </div>
+            ) : (
+              <div className="search-input">
+                <Search size={18} aria-hidden="true" />
+                <input autoFocus onChange={(event) => setSearch(event.target.value)} placeholder="Search portfolio or watchlist" value={search} />
+              </div>
+            )}
+          </div>
+          {!selectedStock ? (
+            <div className="search-results note-stock-results">
+              {filteredStocks.map((stock) => (
+                <button
+                  className="search-result"
+                  key={stock.stock_id}
+                  onClick={() => { setSelectedStock(stock); setSearch(""); }}
+                  type="button"
+                >
+                  <img className="stock-logo" {...stockLogoProps(stock.logo_url)} alt="" />
+                  <div className="stock-search-copy">
+                    <div className="stock-title-row">
+                      <strong>{stock.symbol}</strong>
+                      <span className="exchange-badge">{stock.list_name}</span>
+                    </div>
+                    <span>{stock.company_name}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          <label>
+            Note
+            <textarea onChange={(event) => setBody(event.target.value)} placeholder="Write what you want to follow up on..." rows={5} value={body} />
+          </label>
+          <label className="checkbox-row note-checkbox">
+            <input checked={isResolved} onChange={(event) => setIsResolved(event.target.checked)} type="checkbox" />
+            Resolved
+          </label>
+        </div>
+
+        {stocksError ? <p className="error">{stocksError}</p> : null}
+        {error ? <p className="error">{error}</p> : null}
+
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button className="primary-button" disabled={saving} onClick={save} type="button">
+            <Check size={18} aria-hidden="true" />
+            {saving ? "Saving..." : "Save note"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ReportNotesModal({ mode, report, revision = 0, onAddNote, onChanged, onClose }) {
+  const [notes, setNotes] = useState([]);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [status, setStatus] = useState("loading");
+  const [error, setError] = useState("");
+
+  const loadNotes = useCallback(async () => {
+    setStatus("loading");
+    setError("");
+    try {
+      const payload = await requestJson(`/api/notes?report_id=${encodeURIComponent(report.id)}&page_size=100`, { method: "GET" });
+      setNotes(payload.items ?? []);
+      setStatus("ready");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load notes.");
+      setStatus("error");
+    }
+  }, [report.id]);
+
+  useEffect(() => {
+    loadNotes();
+  }, [loadNotes, revision]);
+
+  const replaceNote = (noteId, nextNote) => {
+    setNotes((current) => current.map((note) => (note.id === noteId ? nextNote : note)));
+  };
+
+  const saveNote = async (note, patch) => {
+    setError("");
+    try {
+      const payload = await requestJson(`/api/notes/${note.id}`, {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      });
+      replaceNote(note.id, payload.note);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update note.");
+    }
+  };
+
+  const deleteNote = async (note) => {
+    setError("");
+    try {
+      await requestJson(`/api/notes/${note.id}`, { method: "DELETE" });
+      setNotes((current) => current.filter((item) => item.id !== note.id));
+      await onChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to delete note.");
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section className="modal-panel note-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Report notes</p>
+            <h2>{report.report_date}</h2>
+          </div>
+          <div className="modal-header-actions">
+            <button className="primary-button compact-button" onClick={onAddNote} type="button">
+              <Plus size={16} aria-hidden="true" />
+              Add note
+            </button>
+            <button className="icon-button" onClick={onClose} title="Close" type="button">
+              <X size={18} aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+
+        {error ? <p className="error">{error}</p> : null}
+        <div className="notes-stack">
+          {notes.length ? (
+            notes.map((note) => (
+              <NoteCard
+                editable={mode === "edit"}
+                key={note.id}
+                note={note}
+                onDelete={() => setDeleteTarget(note)}
+                onSave={(patch) => saveNote(note, patch)}
+              />
+            ))
+          ) : (
+            <p className="empty-table">{status === "loading" ? "Loading notes..." : "No notes for this report yet."}</p>
+          )}
+        </div>
+        {deleteTarget ? (
+          <ConfirmDialog
+            item={deleteTarget}
+            message="This removes the note from this report."
+            onCancel={() => setDeleteTarget(null)}
+            onConfirm={async () => {
+              await deleteNote(deleteTarget);
+              setDeleteTarget(null);
+            }}
+            title={`Delete note for ${deleteTarget.symbol}?`}
+          />
+        ) : null}
+      </section>
+    </div>
+  );
+}
+
+function NoteCard({ editable, note, onDelete, onSave }) {
+  const [body, setBody] = useState(note.body);
+  const [isResolved, setIsResolved] = useState(note.is_resolved);
+  const hasChanges = body !== note.body || isResolved !== note.is_resolved;
+
+  useEffect(() => {
+    setBody(note.body);
+    setIsResolved(note.is_resolved);
+  }, [note.body, note.is_resolved]);
+
+  return (
+    <section className="note-card">
+      <div className="note-card-header">
+        <div className="stock-cell">
+          <img className="stock-logo" {...stockLogoProps(note.logo_url)} alt="" />
+          <div>
+            <strong>{note.symbol}</strong>
+            <span>{note.company_name}</span>
+          </div>
+        </div>
+        <span className={isResolved ? "status-pill resolved-pill" : "status-pill"}>{isResolved ? "Resolved" : "Open"}</span>
+      </div>
+      {editable ? (
+        <>
+          <textarea onChange={(event) => setBody(event.target.value)} rows={4} value={body} />
+          <div className="note-card-actions">
+            <label className="checkbox-row note-checkbox">
+              <input checked={isResolved} onChange={(event) => setIsResolved(event.target.checked)} type="checkbox" />
+              Resolved
+            </label>
+            <div className="toolbar-actions">
+              <button className="primary-button compact-button" disabled={!hasChanges} onClick={() => onSave({ body, is_resolved: isResolved })} type="button">
+                <Check size={16} aria-hidden="true" />
+                Save changes
+              </button>
+              <button className="icon-button danger" onClick={onDelete} title="Delete note" type="button">
+                <Trash2 size={17} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        </>
+      ) : (
+        <p>{note.body}</p>
+      )}
+      <p className="note-meta">
+        {note.report_date ? `Report ${note.report_date} - ` : ""}Created {formatDateTime(note.created_at)}
+      </p>
+    </section>
+  );
+}
+
+function NotesView() {
+  const { error: stocksError, stocks } = useNoteStocks();
+  const [filters, setFilters] = useState(defaultReportFilters);
+  const [stockSearch, setStockSearch] = useState("");
+  const [selectedStock, setSelectedStock] = useState(null);
+  const [resolvedFilter, setResolvedFilter] = useState("all");
+  const [notes, setNotes] = useState([]);
+  const [payload, setPayload] = useState({ total: 0, page_size: 10 });
+  const [page, setPage] = useState(1);
+  const [selectedNote, setSelectedNote] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [showAddNote, setShowAddNote] = useState(false);
+  const [showGrouped, setShowGrouped] = useState(false);
+  const [status, setStatus] = useState("loading");
+  const [error, setError] = useState("");
+  const filteredStocks = stocks.filter((stock) => stockMatchesSearch(stock, stockSearch)).slice(0, 8);
+  const totalPages = Math.max(1, Math.ceil((payload.total || 0) / (payload.page_size || 10)));
+
+  const loadNotes = useCallback(async () => {
+    setStatus("loading");
+    setError("");
+    try {
+      const query = new URLSearchParams({
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        page: String(page),
+        page_size: "10",
+      });
+      if (selectedStock?.stock_id) {
+        query.set("stock_id", selectedStock.stock_id);
+      }
+      if (resolvedFilter !== "all") {
+        query.set("is_resolved", resolvedFilter === "resolved" ? "true" : "false");
+      }
+      const payload = await requestJson(`/api/notes?${query.toString()}`, { method: "GET" });
+      setNotes(payload.items ?? []);
+      setPayload(payload);
+      setStatus("ready");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load notes.");
+      setStatus("error");
+    }
+  }, [filters.date_from, filters.date_to, page, resolvedFilter, selectedStock?.stock_id]);
+
+  useEffect(() => {
+    loadNotes();
+  }, [loadNotes]);
+
+  const updateFilter = (key, value) => {
+    setFilters((current) => ({ ...current, [key]: value }));
+    setPage(1);
+  };
+
+  const updateNote = async (note, patch) => {
+    setError("");
+    const optimisticNote = { ...note, ...patch };
+    setNotes((current) => current.map((item) => (item.id === note.id ? optimisticNote : item)));
+    setSelectedNote((current) => (current?.id === note.id ? optimisticNote : current));
+    try {
+      const payload = await requestJson(`/api/notes/${note.id}`, {
+        method: "PUT",
+        body: JSON.stringify(patch),
+      });
+      const serverVisible =
+        resolvedFilter === "all" ||
+        (resolvedFilter === "resolved" && payload.note.is_resolved) ||
+        (resolvedFilter === "open" && !payload.note.is_resolved);
+      setNotes((current) =>
+        serverVisible
+          ? current.some((item) => item.id === note.id)
+            ? current.map((item) => (item.id === note.id ? payload.note : item))
+            : [payload.note, ...current]
+          : current.filter((item) => item.id !== note.id),
+      );
+      setSelectedNote((current) => (current?.id === note.id ? payload.note : current));
+      return true;
+    } catch (err) {
+      const originalVisible =
+        resolvedFilter === "all" ||
+        (resolvedFilter === "resolved" && note.is_resolved) ||
+        (resolvedFilter === "open" && !note.is_resolved);
+      setNotes((current) =>
+        originalVisible
+          ? current.some((item) => item.id === note.id)
+            ? current.map((item) => (item.id === note.id ? note : item))
+            : [note, ...current]
+          : current.filter((item) => item.id !== note.id),
+      );
+      setSelectedNote((current) => (current?.id === note.id ? note : current));
+      setError(err instanceof Error ? err.message : "Unable to update note.");
+      return false;
+    }
+  };
+
+  const deleteNote = async (note) => {
+    setError("");
+    try {
+      await requestJson(`/api/notes/${note.id}`, { method: "DELETE" });
+      setNotes((current) => current.filter((item) => item.id !== note.id));
+      setSelectedNote(null);
+      if (notes.length <= 1 && page > 1) {
+        setPage((current) => Math.max(1, current - 1));
+      } else {
+        await loadNotes();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to delete note.");
+    }
+  };
+
+  return (
+    <section className="reports-view">
+      <div className="reports-toolbar notes-toolbar">
+        <div>
+          <p className="eyebrow">Investment memory</p>
+          <h2>Notes</h2>
+        </div>
+        <div className="notes-toolbar-side">
+          <div className="report-filters notes-filters">
+            <div className="company-filter">
+              <label className="report-date-field">
+                Company
+                <div className="date-input-shell">
+                  <input onChange={(event) => setStockSearch(event.target.value)} placeholder={selectedStock ? selectedStock.symbol : "All companies"} value={stockSearch} />
+                  {selectedStock ? (
+                    <button className="combo-icon-button" onClick={() => { setSelectedStock(null); setStockSearch(""); setPage(1); }} title="Clear company" type="button">
+                      <X size={16} aria-hidden="true" />
+                    </button>
+                  ) : null}
+                </div>
+              </label>
+              {stockSearch.trim() ? (
+                <div className="company-filter-menu">
+                  {filteredStocks.map((stock) => (
+                    <button key={stock.stock_id} onClick={() => { setSelectedStock(stock); setStockSearch(""); setPage(1); }} type="button">
+                      <img className="stock-logo" {...stockLogoProps(stock.logo_url)} alt="" />
+                      <span>{stock.symbol}</span>
+                      <small>{stock.company_name}</small>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <ReportDateField label="From" value={filters.date_from} onChange={(value) => updateFilter("date_from", value)} />
+            <ReportDateField label="To" value={filters.date_to} onChange={(value) => updateFilter("date_to", value)} />
+          </div>
+          <div className="notes-top-actions">
+            <button className="primary-button compact-button grouped-view-button" onClick={() => setShowAddNote(true)} type="button">
+              <Plus size={15} aria-hidden="true" />
+              Add note
+            </button>
+            <button className="secondary-button compact-button grouped-view-button" disabled={!notes.length} onClick={() => setShowGrouped(true)} type="button">
+              <FileText size={15} aria-hidden="true" />
+              Grouped view
+            </button>
+            <div className="resolved-filter" aria-label="Resolved filter">
+              {[
+                ["all", "All"],
+                ["open", "Open"],
+                ["resolved", "Resolved"],
+              ].map(([value, label]) => (
+                <button
+                  className={resolvedFilter === value ? "resolved-filter-button active" : "resolved-filter-button"}
+                  key={value}
+                  onClick={() => { setResolvedFilter(value); setPage(1); }}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {stocksError ? <p className="error">{stocksError}</p> : null}
+      {error ? <p className="error">{error}</p> : null}
+
+      <div className="reports-list-panel">
+        <div className="table-shell">
+          <table className="reports-table notes-table">
+            <colgroup>
+              <col className="notes-company-col" />
+              <col className="notes-body-col" />
+              <col className="notes-created-col" />
+              <col className="notes-resolved-col" />
+              <col className="notes-actions-col" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Company</th>
+                <th>Note</th>
+                <th>Created at</th>
+                <th>Resolved</th>
+                <th className="actions-cell">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {notes.length ? (
+                notes.map((note) => (
+                  <tr key={note.id} onClick={() => setSelectedNote(note)}>
+                    <td>
+                      <div className="stock-cell">
+                        <img className="stock-logo" {...stockLogoProps(note.logo_url)} alt="" />
+                        <div>
+                          <strong>{note.symbol}</strong>
+                          <span>{note.company_name}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="note-preview-cell">{note.body}</td>
+                    <td>{formatDateTime(note.created_at)}</td>
+                    <td>
+                      <ReportToggle
+                        checked={note.is_resolved}
+                        offLabel="Open"
+                        onChange={(next) => updateNote(note, { is_resolved: next })}
+                        onLabel="Resolved"
+                      />
+                    </td>
+                    <td className="actions-cell">
+                      <button className="icon-button" onClick={(event) => { event.stopPropagation(); setSelectedNote(note); }} title="Edit note" type="button">
+                        <Pencil size={17} aria-hidden="true" />
+                      </button>
+                      <button className="icon-button danger" onClick={(event) => { event.stopPropagation(); setDeleteTarget(note); }} title="Delete note" type="button">
+                        <Trash2 size={17} aria-hidden="true" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td className="empty-table" colSpan={5}>
+                    {status === "loading" ? "Loading notes..." : "No notes found for this filter."}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="pagination-row">
+          <button className="secondary-button compact-button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">
+            <ChevronLeft size={16} aria-hidden="true" />
+            Previous
+          </button>
+          <span>Page {page} of {totalPages}</span>
+          <button className="secondary-button compact-button" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)} type="button">
+            Next
+            <ChevronRight size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+
+      {selectedNote ? (
+        <SingleNoteModal
+          note={selectedNote}
+          onClose={() => setSelectedNote(null)}
+          onDelete={() => setDeleteTarget(selectedNote)}
+          onSave={async (patch) => {
+            const saved = await updateNote(selectedNote, patch);
+            if (saved) {
+              setSelectedNote(null);
+            }
+          }}
+        />
+      ) : null}
+      {deleteTarget ? (
+        <ConfirmDialog
+          item={deleteTarget}
+          message="This removes the note from your notes."
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={async () => {
+            await deleteNote(deleteTarget);
+            setDeleteTarget(null);
+          }}
+          title={`Delete note for ${deleteTarget.symbol}?`}
+        />
+      ) : null}
+      {showAddNote ? (
+        <NoteFormModal
+          onClose={() => setShowAddNote(false)}
+          onSaved={() => {
+            setShowAddNote(false);
+            if (page === 1) {
+              loadNotes();
+            } else {
+              setPage(1);
+            }
+          }}
+        />
+      ) : null}
+      {showGrouped ? <GroupedNotesModal notes={notes} onClose={() => setShowGrouped(false)} /> : null}
+    </section>
+  );
+}
+
+function SingleNoteModal({ note, onClose, onDelete, onSave }) {
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section className="modal-panel note-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Note</p>
+            <h2>{note.symbol}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Close" type="button">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <NoteCard editable note={note} onDelete={onDelete} onSave={onSave} />
+      </section>
+    </div>
+  );
+}
+
+function GroupedNotesModal({ notes, onClose }) {
+  const grouped = notes.reduce((groups, note) => {
+    const key = note.report_date || String(note.created_at).slice(0, 10);
+    return { ...groups, [key]: [...(groups[key] ?? []), note] };
+  }, {});
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section className="modal-panel note-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Grouped view</p>
+            <h2>Notes by date</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Close" type="button">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="notes-stack grouped-notes-stack">
+          {Object.entries(grouped).map(([date, items]) => (
+            <section className="note-group" key={date}>
+              <h3>{date}</h3>
+              {items.map((note) => (
+                <NoteCard editable={false} key={note.id} note={note} />
+              ))}
+            </section>
+          ))}
+        </div>
       </section>
     </div>
   );
@@ -1419,17 +2134,20 @@ function HoldingsSection({
   );
 }
 
-function ReportToggle({ checked, onChange }) {
+function ReportToggle({ checked, onChange, onLabel = "Included in report", offLabel = "Excluded from report" }) {
   return (
     <button
       aria-pressed={checked}
       className={`report-switch${checked ? " is-on" : ""}`}
-      onClick={() => onChange(!checked)}
-      title={checked ? "Included in report" : "Excluded from report"}
+      onClick={(event) => {
+        event.stopPropagation();
+        onChange(!checked);
+      }}
+      title={checked ? onLabel : offLabel}
       type="button"
     >
       <span className="report-switch-knob" aria-hidden="true" />
-      <span className="sr-only">{checked ? "Included in report" : "Excluded from report"}</span>
+      <span className="sr-only">{checked ? onLabel : offLabel}</span>
     </button>
   );
 }
@@ -1548,8 +2266,8 @@ function StockThesisModal({ modal, onClose, onSaved }) {
   };
 
   return (
-    <div className="modal-backdrop">
-      <section className="modal-panel" aria-modal="true" role="dialog">
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section className="modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="modal-header">
           <div>
             <p className="eyebrow">{modal.itemType === "portfolio" ? "Portfolio" : "Watchlist"}</p>
@@ -1692,12 +2410,12 @@ function ThesisSectionEditor({ section, value, onChange }) {
   );
 }
 
-function ConfirmDialog({ item, onCancel, onConfirm }) {
+function ConfirmDialog({ item, message = "This removes the stock and its thesis from this list.", onCancel, onConfirm, title }) {
   return (
-    <div className="modal-backdrop">
-      <section className="confirm-panel" aria-modal="true" role="dialog">
-        <h2>Delete {item.symbol}?</h2>
-        <p className="muted">This removes the stock and its thesis from this list.</p>
+    <div className="modal-backdrop" onMouseDown={onCancel}>
+      <section className="confirm-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <h2>{title ?? `Delete ${item.symbol}?`}</h2>
+        <p className="muted">{message}</p>
         <div className="modal-actions">
           <button className="secondary-button" onClick={onCancel} type="button">
             Cancel

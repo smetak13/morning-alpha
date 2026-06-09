@@ -150,6 +150,18 @@ class UserSettingsUpdateRequest(BaseModel):
     timezone: str | None = None
 
 
+class NoteCreateRequest(BaseModel):
+    stock_id: str
+    report_id: str | None = None
+    body: str
+    is_resolved: bool = False
+
+
+class NoteUpdateRequest(BaseModel):
+    body: str | None = None
+    is_resolved: bool | None = None
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Morning Alpha API", lifespan=lifespan)
 
@@ -1183,6 +1195,7 @@ def serialize_report_row(row: dict[str, Any], include_html: bool = False) -> dic
         "report_date": row["report_date"].isoformat() if hasattr(row["report_date"], "isoformat") else row["report_date"],
         "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
         "usage_id": str(row["usage_id"]) if row.get("usage_id") else None,
+        "note_count": int(row.get("note_count") or 0),
     }
     if include_html:
         payload["html"] = row["html"]
@@ -1223,15 +1236,20 @@ def list_reports(
             cursor.execute(
                 """
                 select
-                    id::text as id,
-                    usage_id::text as usage_id,
-                    report_date,
-                    created_at
+                    reports.id::text as id,
+                    reports.usage_id::text as usage_id,
+                    reports.report_date,
+                    reports.created_at,
+                    count(notes.id)::int as note_count
                 from public.reports
-                where user_id = %(user_id)s
-                  and report_date >= %(date_from)s
-                  and report_date <= %(date_to)s
-                order by report_date desc, created_at desc
+                left join public.notes
+                  on notes.report_id = reports.id
+                 and notes.user_id = reports.user_id
+                where reports.user_id = %(user_id)s
+                  and reports.report_date >= %(date_from)s
+                  and reports.report_date <= %(date_to)s
+                group by reports.id
+                order by reports.report_date desc, reports.created_at desc
                 limit %(page_size)s
                 offset %(offset)s
                 """,
@@ -1281,6 +1299,300 @@ def get_report(report_id: str, request: Request) -> dict[str, Any]:
     if not row:
         raise HTTPException(status_code=404, detail="Report not found.")
     return {"report": serialize_report_row(dict(row), include_html=True)}
+
+
+def serialize_note_row(row: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(row["symbol"]).upper()
+    return {
+        "id": str(row["id"]),
+        "user_id": str(row["user_id"]),
+        "stock_id": str(row["stock_id"]),
+        "report_id": str(row["report_id"]) if row.get("report_id") else None,
+        "body": row["body"],
+        "is_resolved": bool(row["is_resolved"]),
+        "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
+        "updated_at": row["updated_at"].isoformat() if hasattr(row["updated_at"], "isoformat") else row["updated_at"],
+        "symbol": symbol,
+        "company_name": row["company_name"],
+        "logo_url": stock_logo_url(symbol),
+        "report_date": row["report_date"].isoformat() if row.get("report_date") and hasattr(row["report_date"], "isoformat") else row.get("report_date"),
+    }
+
+
+NOTE_SELECT = """
+    select
+        notes.id::text as id,
+        notes.user_id::text as user_id,
+        notes.stock_id::text as stock_id,
+        notes.report_id::text as report_id,
+        notes.body,
+        notes.is_resolved,
+        notes.created_at,
+        notes.updated_at,
+        stocks.symbol,
+        stocks.company_name,
+        reports.report_date
+    from public.notes
+    join public.stocks on stocks.id = notes.stock_id
+    left join public.reports on reports.id = notes.report_id
+"""
+
+
+def note_body(value: str | None) -> str:
+    body = (value or "").strip()
+    if not body:
+        raise HTTPException(status_code=422, detail="Note body cannot be empty.")
+    return body
+
+
+def ensure_user_stock(cursor: Any, user_id: str, stock_id: str) -> None:
+    cursor.execute(
+        """
+        select 1
+        from public.stocks
+        where id::text = %(stock_id)s
+          and (
+            exists (
+                select 1 from public.portfolio_items
+                where user_id = %(user_id)s and stock_id = public.stocks.id
+            )
+            or exists (
+                select 1 from public.watchlist_items
+                where user_id = %(user_id)s and stock_id = public.stocks.id
+            )
+          )
+        """,
+        {"stock_id": stock_id, "user_id": user_id},
+    )
+    if not cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Stock not found in your portfolio or watchlist.")
+
+
+def ensure_user_report(cursor: Any, user_id: str, report_id: str | None) -> None:
+    if not report_id:
+        return
+    cursor.execute(
+        "select 1 from public.reports where id::text = %(report_id)s and user_id = %(user_id)s",
+        {"report_id": report_id, "user_id": user_id},
+    )
+    if not cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Report not found.")
+
+
+@app.get("/api/notes/stocks")
+def list_note_stocks(request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select distinct
+                    stocks.id::text as stock_id,
+                    stocks.symbol,
+                    stocks.company_name,
+                    case
+                        when portfolio_items.id is not null and watchlist_items.id is not null then 'portfolio, watchlist'
+                        when portfolio_items.id is not null then 'portfolio'
+                        else 'watchlist'
+                    end as list_name
+                from public.stocks
+                left join public.portfolio_items
+                  on portfolio_items.stock_id = stocks.id
+                 and portfolio_items.user_id = %(user_id)s
+                left join public.watchlist_items
+                  on watchlist_items.stock_id = stocks.id
+                 and watchlist_items.user_id = %(user_id)s
+                where portfolio_items.id is not null
+                   or watchlist_items.id is not null
+                order by stocks.symbol
+                """,
+                {"user_id": user_id},
+            )
+            rows = cursor.fetchall()
+
+    items = []
+    for row in rows:
+        row = dict(row)
+        symbol = str(row["symbol"]).upper()
+        items.append(
+            {
+                "stock_id": str(row["stock_id"]),
+                "symbol": symbol,
+                "company_name": row["company_name"],
+                "logo_url": stock_logo_url(symbol),
+                "list_name": row["list_name"],
+            }
+        )
+    return {"items": items}
+
+
+@app.get("/api/notes")
+def list_notes(
+    request: Request,
+    report_id: str | None = None,
+    stock_id: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    is_resolved: bool | None = None,
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    parsed_date_from = parse_report_date_filter(date_from, "date_from")
+    parsed_date_to = parse_report_date_filter(date_to, "date_to")
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
+    offset = (page - 1) * page_size
+    where_clauses = ["notes.user_id = %(user_id)s"]
+    params: dict[str, Any] = {
+        "user_id": user_id,
+        "limit": page_size,
+        "offset": offset,
+    }
+    if report_id:
+        where_clauses.append("notes.report_id::text = %(report_id)s")
+        params["report_id"] = report_id
+    if stock_id:
+        where_clauses.append("notes.stock_id::text = %(stock_id)s")
+        params["stock_id"] = stock_id
+    if is_resolved is not None:
+        where_clauses.append("notes.is_resolved = %(is_resolved)s")
+        params["is_resolved"] = is_resolved
+    if parsed_date_from:
+        where_clauses.append("notes.created_at::date >= %(date_from)s")
+        params["date_from"] = parsed_date_from
+    if parsed_date_to:
+        where_clauses.append("notes.created_at::date <= %(date_to)s")
+        params["date_to"] = parsed_date_to
+    where_sql = " and ".join(where_clauses)
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"select count(*) as total from public.notes where {where_sql}",
+                params,
+            )
+            total = int(cursor.fetchone()["total"] or 0)
+            cursor.execute(
+                NOTE_SELECT
+                + f"""
+                where {where_sql}
+                order by notes.created_at desc
+                limit %(limit)s offset %(offset)s
+                """,
+                params,
+            )
+            rows = cursor.fetchall()
+
+    return {
+        "items": [serialize_note_row(dict(row)) for row in rows],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    }
+
+
+@app.post("/api/notes")
+def create_note(payload: NoteCreateRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            ensure_user_stock(cursor, user_id, payload.stock_id)
+            ensure_user_report(cursor, user_id, payload.report_id)
+            cursor.execute(
+                """
+                insert into public.notes (
+                    user_id,
+                    stock_id,
+                    report_id,
+                    body,
+                    is_resolved
+                )
+                values (
+                    %(user_id)s,
+                    %(stock_id)s,
+                    %(report_id)s,
+                    %(body)s,
+                    %(is_resolved)s
+                )
+                returning id::text
+                """,
+                {
+                    "user_id": user_id,
+                    "stock_id": payload.stock_id,
+                    "report_id": payload.report_id,
+                    "body": note_body(payload.body),
+                    "is_resolved": payload.is_resolved,
+                },
+            )
+            inserted = cursor.fetchone()
+            cursor.execute(
+                NOTE_SELECT + " where notes.id::text = %(id)s and notes.user_id = %(user_id)s",
+                {"id": inserted["id"], "user_id": user_id},
+            )
+            row = cursor.fetchone()
+
+    return {"note": serialize_note_row(dict(row))}
+
+
+@app.put("/api/notes/{note_id}")
+def update_note(note_id: str, payload: NoteUpdateRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    updates = payload.model_dump(exclude_unset=True)
+    if not updates:
+        raise HTTPException(status_code=422, detail="No note updates provided.")
+    set_clauses = []
+    params: dict[str, Any] = {"id": note_id, "user_id": user_id}
+    if "body" in updates and updates["body"] is not None:
+        set_clauses.append("body = %(body)s")
+        params["body"] = note_body(updates["body"])
+    if "is_resolved" in updates and updates["is_resolved"] is not None:
+        set_clauses.append("is_resolved = %(is_resolved)s")
+        params["is_resolved"] = updates["is_resolved"]
+    if not set_clauses:
+        raise HTTPException(status_code=422, detail="No note updates provided.")
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""
+                update public.notes
+                set {", ".join(set_clauses)}
+                where id::text = %(id)s and user_id = %(user_id)s
+                """,
+                params,
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Note not found.")
+            cursor.execute(
+                NOTE_SELECT + " where notes.id::text = %(id)s and notes.user_id = %(user_id)s",
+                {"id": note_id, "user_id": user_id},
+            )
+            row = cursor.fetchone()
+
+    return {"note": serialize_note_row(dict(row))}
+
+
+@app.delete("/api/notes/{note_id}")
+def delete_note(note_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "delete from public.notes where id::text = %s and user_id = %s",
+                (note_id, user_id),
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Note not found.")
+    return {"deleted": True}
 
 
 def frontend_dist_file(path: str) -> Path | None:
