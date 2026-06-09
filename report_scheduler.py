@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import argparse
 import datetime as dt
 import logging
@@ -15,6 +16,7 @@ from report import load_dotenv_if_available, run_report_for_user
 
 
 DEFAULT_TIMEZONE = "Europe/Prague"
+SCHEDULER_INTERVAL_MINS = int(os.getenv("SCHEDULER_INTERVAL_MINS", "30"))
 UTC = dt.timezone.utc
 
 
@@ -33,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--date", default="latest", help="'latest' or an explicit YYYY-MM-DD US trading date.")
     parser.add_argument("--config", default="config.yaml", help="Path to config YAML.")
     parser.add_argument("--skip-openai", action="store_true", help="Use deterministic fallback report generation.")
-    parser.add_argument("--lookback-minutes", type=int, default=60, help="Scheduler lookback window in minutes.")
+    parser.add_argument("--lookback-minutes", type=int, default=SCHEDULER_INTERVAL_MINS, help="Scheduler lookback window in minutes.")
     parser.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"))
     return parser.parse_args()
 
@@ -208,9 +210,17 @@ def run_scheduler_cycle(args: argparse.Namespace, run_at_utc: dt.datetime | None
     )
 
 
-def next_hour(now: dt.datetime) -> dt.datetime:
+def next_minutes(now: dt.datetime, minutes: int) -> dt.datetime:
     current = now.astimezone(UTC)
-    return (current.replace(minute=0, second=0, microsecond=0) + dt.timedelta(hours=1)).astimezone(UTC)
+
+    current = current.replace(second=0, microsecond=0)
+
+    next_minute = ((current.minute // minutes) + 1) * minutes
+
+    return (
+        current.replace(minute=0)
+        + dt.timedelta(minutes=next_minute)
+    ).astimezone(UTC)
 
 
 def sleep_until(target: dt.datetime) -> None:
@@ -232,7 +242,7 @@ def main() -> int:
         run_scheduler_cycle(args)
 
     while True:
-        target = next_hour(dt.datetime.now(tz=UTC))
+        target = next_minutes(dt.datetime.now(tz=UTC), minutes=SCHEDULER_INTERVAL_MINS)
         sleep_until(target)
         run_scheduler_cycle(args, run_at_utc=target)
 
