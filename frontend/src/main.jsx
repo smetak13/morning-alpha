@@ -13,6 +13,7 @@ import {
   Info,
   LogOut,
   Mail,
+  MoveRight,
   Pencil,
   Plus,
   Search,
@@ -24,14 +25,21 @@ import {
 import "./styles.css";
 
 async function requestJson(path, options = {}) {
-  const { headers, ...requestOptions } = options;
+  const { headers, timeoutMs, ...requestOptions } = options;
+  const controller = timeoutMs ? new AbortController() : null;
+  const timeoutId = timeoutMs ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
   const response = await fetch(path, {
     credentials: "include",
     ...requestOptions,
+    signal: requestOptions.signal ?? controller?.signal,
     headers: {
       "Content-Type": "application/json",
       ...(headers ?? {}),
     },
+  }).finally(() => {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
   });
 
   const payload = await response.json().catch(() => ({}));
@@ -224,6 +232,9 @@ function currentRoute() {
   }
   if (window.location.pathname === "/notes") {
     return { view: "notes", reportId: "" };
+  }
+  if (window.location.pathname === "/research") {
+    return { view: "research", reportId: "" };
   }
   return { view: "portfolio", reportId: "" };
 }
@@ -620,7 +631,13 @@ function MainPage({ route, user, onLogout }) {
     setBrowserRoute("/notes");
   };
 
-  const pageTitle = activeView === "portfolio" ? "Portfolio workspace" : activeView === "reports" ? "Reports" : "Notes";
+  const showResearch = () => {
+    setActiveView("research");
+    setBrowserRoute("/research");
+  };
+
+  const pageTitle =
+    activeView === "portfolio" ? "Portfolio workspace" : activeView === "reports" ? "Reports" : activeView === "notes" ? "Notes" : "Research";
 
   const updateUserSettings = async (patch) => {
     setSettings((current) => ({ ...current, ...patch }));
@@ -658,6 +675,23 @@ function MainPage({ route, user, onLogout }) {
       thesis: thesisFromItem(item, itemType),
       positionSize: Number(item.position_size_pct || 0),
       maxPositionSize,
+    });
+  };
+
+  const openMoveToPortfolioModal = (item) => {
+    const remaining = Math.max(0, 100 - portfolioTotal);
+    setModal({
+      mode: "add",
+      itemType: "portfolio",
+      item: null,
+      stock: {
+        symbol: item.symbol,
+        company_name: item.company_name,
+        logo_url: item.logo_url,
+      },
+      positionSize: Math.min(10, remaining),
+      maxPositionSize: remaining,
+      moveFromWatchlistId: item.id,
     });
   };
 
@@ -763,6 +797,13 @@ function MainPage({ route, user, onLogout }) {
           >
             Notes
           </button>
+          <button
+            className={activeView === "research" ? "view-tab active" : "view-tab"}
+            onClick={showResearch}
+            type="button"
+          >
+            Research
+          </button>
         </div>
 
         {activeView === "portfolio" ? (
@@ -800,14 +841,40 @@ function MainPage({ route, user, onLogout }) {
               onAdd={() => openAddModal("watchlist")}
               onDelete={(item) => setDeleteTarget({ itemType: "watchlist", item })}
               onEdit={(item) => openEditModal("watchlist", item)}
+              onMoveToPortfolio={openMoveToPortfolioModal}
               onReportToggle={(item, nextValue) => updateReportInclusion("watchlist", item, nextValue)}
               title="Watchlist"
             />
           </>
         ) : activeView === "reports" ? (
           <ReportsView routeReportId={route.reportId} />
-        ) : (
+        ) : activeView === "notes" ? (
           <NotesView />
+        ) : (
+          <ResearchView
+            onAddToWatchlist={(stock) => {
+              setModal({
+                mode: "add",
+                itemType: "watchlist",
+                item: null,
+                stock,
+                positionSize: 10,
+                maxPositionSize: 100,
+              });
+            }}
+            onEditItem={(itemType, stockId) => {
+              const item = (itemType === "portfolio" ? portfolio : watchlist).find((current) => current.stock_id === stockId);
+              if (item) {
+                openEditModal(itemType, item);
+              }
+            }}
+            onMoveToPortfolio={(stockId) => {
+              const item = watchlist.find((current) => current.stock_id === stockId);
+              if (item) {
+                openMoveToPortfolioModal(item);
+              }
+            }}
+          />
         )}
       </section>
 
@@ -816,6 +883,9 @@ function MainPage({ route, user, onLogout }) {
           modal={modal}
           onClose={() => setModal(null)}
           onSaved={async () => {
+            if (modal.moveFromWatchlistId) {
+              await requestJson(`/api/watchlist-items/${modal.moveFromWatchlistId}`, { method: "DELETE" });
+            }
             setModal(null);
             await loadItems();
           }}
@@ -1179,10 +1249,10 @@ function stockMatchesSearch(stock, search) {
   return `${stock.symbol} ${stock.company_name}`.toLowerCase().includes(normalized);
 }
 
-function NoteFormModal({ report = null, onClose, onSaved }) {
+function NoteFormModal({ initialStock = null, report = null, onClose, onSaved }) {
   const { error: stocksError, stocks } = useNoteStocks();
   const [search, setSearch] = useState("");
-  const [selectedStock, setSelectedStock] = useState(null);
+  const [selectedStock, setSelectedStock] = useState(initialStock);
   const [body, setBody] = useState("");
   const [isResolved, setIsResolved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1567,7 +1637,7 @@ function NotesView() {
     <section className="reports-view">
       <div className="reports-toolbar notes-toolbar">
         <div>
-          <p className="eyebrow">Research notes</p>
+          <p className="eyebrow">Notes archive</p>
           <h2>Saved notes</h2>
         </div>
         <div className="notes-toolbar-side">
@@ -1799,6 +1869,642 @@ function GroupedNotesModal({ notes, onClose }) {
         </div>
       </section>
     </div>
+  );
+}
+
+function defaultResearchWindow() {
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(today.getDate() - 30);
+  return {
+    date_from: dateInputValue(start),
+    date_to: dateInputValue(today),
+  };
+}
+
+function ResearchView({ onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
+  const [search, setSearch] = useState("");
+  const [results, setResults] = useState([]);
+  const [selectedStock, setSelectedStock] = useState(null);
+  const [filters, setFilters] = useState(defaultResearchWindow);
+  const [status, setStatus] = useState("idle");
+  const [error, setError] = useState("");
+  const [payload, setPayload] = useState(null);
+  const [showNoteForm, setShowNoteForm] = useState(false);
+
+  useEffect(() => {
+    if (search.trim().length < 1 || selectedStock) {
+      setResults([]);
+      return undefined;
+    }
+    const timer = window.setTimeout(async () => {
+      setError("");
+      try {
+        const response = await requestJson(`/api/stocks/search?q=${encodeURIComponent(search.trim())}`, { method: "GET" });
+        setResults(response.results ?? []);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Search failed.");
+      }
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [search, selectedStock]);
+
+  const runResearch = async () => {
+    if (!selectedStock) {
+      setError("Choose a company first.");
+      return;
+    }
+    setStatus("loading");
+    setError("");
+    setPayload(null);
+    try {
+      const response = await requestJson("/api/research/company", {
+        method: "POST",
+        timeoutMs: 60000,
+        body: JSON.stringify({
+          symbol: selectedStock.symbol,
+          company_name: selectedStock.company_name,
+          date_from: filters.date_from,
+          date_to: filters.date_to,
+        }),
+      });
+      setPayload(response);
+      setStatus("ready");
+    } catch (err) {
+      setStatus("error");
+      setError(err?.name === "AbortError" ? "Research timed out after 60 seconds. Try a shorter window or run it again." : err instanceof Error ? err.message : "Unable to run research.");
+    }
+  };
+
+  const resetCompany = () => {
+    setSelectedStock(null);
+    setPayload(null);
+    setSearch("");
+  };
+
+  const modeLabel = payload?.mode === "portfolio" ? "Portfolio thesis check" : payload?.mode === "watchlist" ? "Watchlist entry check" : "Company primer";
+  const canAddNote = payload?.stock?.stock_id && payload.mode !== "new";
+
+  return (
+    <section className="research-view">
+      <div className="reports-toolbar research-toolbar">
+        <div>
+          <p className="eyebrow">Company research</p>
+          <h2>Research workspace</h2>
+        </div>
+        <div className="research-controls">
+          <div className="research-company-search">
+            <label className="research-search-label">
+              Company
+              <div className="search-input research-search-input">
+                <Search size={18} aria-hidden="true" />
+                <input
+                  onChange={(event) => {
+                    setSelectedStock(null);
+                    setSearch(event.target.value);
+                  }}
+                  placeholder={selectedStock ? selectedStock.symbol : "Search company"}
+                  value={selectedStock ? `${selectedStock.symbol} - ${selectedStock.company_name}` : search}
+                />
+                {selectedStock ? (
+                  <button className="combo-icon-button" onClick={resetCompany} title="Clear company" type="button">
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
+            </label>
+            {results.length ? (
+              <div className="search-results research-search-results">
+                {results.map((result) => (
+                  <button
+                    className="search-result"
+                    key={`${result.symbol}-${result.exchange || ""}`}
+                    onClick={() => {
+                      setSelectedStock(result);
+                      setSearch("");
+                    }}
+                    type="button"
+                  >
+                    <img className="stock-logo" {...stockLogoProps(result.logo_url)} alt="" />
+                    <div className="stock-search-copy">
+                      <div className="stock-title-row">
+                        <strong>{result.symbol}</strong>
+                        {result.exchange ? <span className="exchange-badge">{result.exchange}</span> : null}
+                      </div>
+                      <span>{result.company_name}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <div className="research-date-actions">
+            <div className="research-date-row">
+              <ReportDateField label="From" value={filters.date_from} onChange={(value) => setFilters((current) => ({ ...current, date_from: value }))} />
+              <ReportDateField label="To" value={filters.date_to} onChange={(value) => setFilters((current) => ({ ...current, date_to: value }))} />
+            </div>
+            <button className="primary-button compact-button research-run-button" disabled={status === "loading"} onClick={runResearch} type="button">
+              <Sparkles size={16} aria-hidden="true" />
+              {status === "loading" ? "Researching..." : "Run research"}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {error ? <p className="error">{error}</p> : null}
+      {status === "idle" ? <p className="muted">Choose a company to run a thesis check, entry condition check, or company primer.</p> : null}
+      {status === "loading" ? (
+        <div className="generating-state research-loading">
+          <Sparkles size={22} aria-hidden="true" />
+          <p>Building focused research...</p>
+        </div>
+      ) : null}
+      {payload ? (
+        <div className="research-result">
+          <div className="research-result-header">
+            <div className="selected-stock">
+              <img className="stock-logo large" {...stockLogoProps(payload.stock.logo_url)} alt="" />
+              <div>
+                <div className="stock-title-row">
+                  <strong>{payload.stock.symbol}</strong>
+                  <span className="exchange-badge">{modeLabel}</span>
+                </div>
+                <span>{payload.stock.company_name}</span>
+              </div>
+            </div>
+            <div className="toolbar-actions">
+              {canAddNote ? (
+                <button className="secondary-button compact-button" onClick={() => setShowNoteForm(true)} type="button">
+                  <Plus size={16} aria-hidden="true" />
+                  Add note
+                </button>
+              ) : null}
+              {payload.mode === "portfolio" ? (
+                <button className="secondary-button compact-button" onClick={() => onEditItem("portfolio", payload.stock.stock_id)} type="button">
+                  <Pencil size={16} aria-hidden="true" />
+                  Edit thesis
+                </button>
+              ) : null}
+              {payload.mode === "watchlist" ? (
+                <>
+                  <button className="secondary-button compact-button" onClick={() => onEditItem("watchlist", payload.stock.stock_id)} type="button">
+                    <Pencil size={16} aria-hidden="true" />
+                    Edit watchlist
+                  </button>
+                  <button className="secondary-button compact-button" onClick={() => onMoveToPortfolio(payload.stock.stock_id)} type="button">
+                    <MoveRight size={16} aria-hidden="true" />
+                    Move to portfolio
+                  </button>
+                </>
+              ) : null}
+              {payload.mode === "new" ? (
+                <button className="primary-button compact-button" onClick={() => onAddToWatchlist(payload.stock)} type="button">
+                  <Plus size={16} aria-hidden="true" />
+                  Add to Watchlist
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <ResearchResultContent payload={payload} />
+        </div>
+      ) : null}
+      {showNoteForm ? (
+        <NoteFormModal
+          initialStock={{
+            stock_id: payload.stock.stock_id,
+            symbol: payload.stock.symbol,
+            company_name: payload.stock.company_name,
+            logo_url: payload.stock.logo_url,
+            list_name: payload.mode,
+          }}
+          onClose={() => setShowNoteForm(false)}
+          onSaved={() => setShowNoteForm(false)}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function formatCompactNumber(value) {
+  if (value === null || value === undefined || value === "") {
+    return "N/A";
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "N/A";
+  }
+  return new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: number >= 100 ? 0 : 2,
+    notation: Math.abs(number) >= 1000000 ? "compact" : "standard",
+  }).format(number);
+}
+
+function formatMetricPercent(value) {
+  if (value === null || value === undefined || value === "") {
+    return "N/A";
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "N/A";
+  }
+  return `${number.toFixed(1)}%`;
+}
+
+function metricValue(key, value) {
+  if (key.includes("growth")) {
+    return formatMetricPercent(value);
+  }
+  if (key.includes("margin") || key === "roe_pct" || key.includes("yield")) {
+    return formatMetricPercent(value);
+  }
+  if (key === "market_cap") {
+    return formatCompactNumber(value);
+  }
+  if (key === "price" || key === "year_high" || key === "year_low") {
+    if (value === null || value === undefined || value === "") {
+      return "N/A";
+    }
+    const number = Number(value);
+    return Number.isFinite(number) ? `$${formatCompactNumber(number)}` : "N/A";
+  }
+  return formatCompactNumber(value);
+}
+
+function metricLabel(key) {
+  const labels = {
+    price: "Price",
+    market_cap: "Market cap",
+    pe: "P/E TTM",
+    ps: "P/S TTM",
+    ev_to_ebitda: "EV/EBITDA",
+    fcf_yield_pct: "FCF yield",
+    eps: "EPS",
+    eps_growth_3y_pct: "EPS growth 3Y",
+    eps_growth_5y_pct: "EPS growth 5Y",
+    revenue_growth_3y_pct: "Revenue growth 3Y",
+    eps_growth_next_year_pct: "EPS growth next year",
+    revenue_per_share: "Revenue/share",
+    fcf_per_share: "FCF/share",
+    gross_margin_pct: "Gross margin",
+    operating_margin_pct: "Operating margin",
+    net_margin_pct: "Net margin",
+    roe_pct: "ROE",
+    debt_to_equity: "Debt/equity",
+    year_high: "52W high",
+    year_low: "52W low",
+  };
+  return labels[key] ?? researchHumanLabel(key);
+}
+
+function parseChartDate(value) {
+  return new Date(String(value || "").replace(" ", "T"));
+}
+
+function formatChartDate(value, period) {
+  const date = parseChartDate(value);
+  if (Number.isNaN(date.getTime())) {
+    return value || "";
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: period === "5Y" || period === "MAX" ? "numeric" : undefined });
+}
+
+function formatAxisDate(value, period) {
+  const date = parseChartDate(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  if (period === "5Y" || period === "MAX") {
+    return date.toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function filterPriceHistory(dailyPoints, period) {
+  if (!Array.isArray(dailyPoints) || !dailyPoints.length) {
+    return [];
+  }
+  if (period === "MAX") {
+    return dailyPoints;
+  }
+  const days = { "1W": 7, "1M": 31, "3M": 93, "6M": 186, "1Y": 370, "5Y": 365 * 5 + 10 }[period] ?? 370;
+  const latest = parseChartDate(dailyPoints[dailyPoints.length - 1].date);
+  const cutoff = new Date(latest);
+  cutoff.setDate(latest.getDate() - days);
+  return dailyPoints.filter((point) => parseChartDate(point.date) >= cutoff);
+}
+
+function StockPriceChart({ dailyPoints }) {
+  const [period, setPeriod] = useState("6M");
+  const [hoverIndex, setHoverIndex] = useState(null);
+  const [tooltipSide, setTooltipSide] = useState("right");
+  const visiblePoints = filterPriceHistory(dailyPoints, period);
+  const width = 720;
+  const height = 260;
+  const left = 54;
+  const right = 16;
+  const top = 18;
+  const bottom = 34;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  if (!visiblePoints.length) {
+    return <div className="price-chart-empty">Price chart unavailable.</div>;
+  }
+  const closes = visiblePoints.map((point) => point.close);
+  const min = Math.min(...closes);
+  const max = Math.max(...closes);
+  const range = max - min || 1;
+  const coordinate = (point, index) => {
+    const x = left + (index / Math.max(1, visiblePoints.length - 1)) * plotWidth;
+    const y = top + (1 - (point.close - min) / range) * plotHeight;
+    return { x, y };
+  };
+  const path = visiblePoints
+    .map((point, index) => {
+      const { x, y } = coordinate(point, index);
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+  const first = visiblePoints[0].close;
+  const last = visiblePoints[visiblePoints.length - 1].close;
+  const change = ((last / first) - 1) * 100;
+  const yTicks = Array.from({ length: 4 }, (_, index) => max - (index / 3) * range);
+  const xTickIndexes = Array.from(new Set([0, Math.floor((visiblePoints.length - 1) / 2), visiblePoints.length - 1]));
+  const hovered = hoverIndex === null ? null : visiblePoints[hoverIndex];
+  const hoveredCoord = hovered ? coordinate(hovered, hoverIndex) : null;
+  const handleHover = (event) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const svgX = ((event.clientX - bounds.left) / bounds.width) * width;
+    const ratio = Math.min(1, Math.max(0, (svgX - left) / plotWidth));
+    setTooltipSide(svgX > width * 0.72 ? "left" : "right");
+    setHoverIndex(Math.round(ratio * (visiblePoints.length - 1)));
+  };
+
+  return (
+    <div className="price-chart">
+      <div className="price-chart-header">
+        <div>
+          <strong>${formatCompactNumber(last)}</strong>
+          <span className={change >= 0 ? "chart-change positive" : "chart-change negative"}>
+            {change >= 0 ? "+" : ""}{change.toFixed(1)}%
+          </span>
+        </div>
+        <div className="chart-periods">
+          {["1W", "1M", "3M", "6M", "1Y", "5Y"].map((item) => (
+            <button className={period === item ? "active" : ""} key={item} onClick={() => setPeriod(item)} type="button">
+              {item}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="price-chart-plot" onMouseLeave={() => setHoverIndex(null)} onMouseMove={handleHover}>
+        {hovered && hoveredCoord ? (
+          <div className={`chart-tooltip ${tooltipSide}`} style={{ left: `${(hoveredCoord.x / width) * 100}%` }}>
+            <strong>${formatCompactNumber(hovered.close)}</strong>
+            <span>{formatChartDate(hovered.date, period)}</span>
+          </div>
+        ) : null}
+        <svg className="price-chart-svg" viewBox={`0 0 ${width} ${height}`}>
+          {yTicks.map((tick) => {
+            const y = top + (1 - (tick - min) / range) * plotHeight;
+            return (
+              <g key={tick}>
+                <line className="chart-grid-line" x1={left} x2={width - right} y1={y} y2={y} />
+                <text className="chart-axis-label" x={left - 10} y={y + 4} textAnchor="end">${formatCompactNumber(tick)}</text>
+              </g>
+            );
+          })}
+          {xTickIndexes.map((index) => {
+            const point = visiblePoints[index];
+            const { x } = coordinate(point, index);
+            return (
+              <text className="chart-axis-label" key={`${point.date}-${index}`} textAnchor={index === 0 ? "start" : index === visiblePoints.length - 1 ? "end" : "middle"} x={x} y={height - 8}>
+                {formatAxisDate(point.date, period)}
+              </text>
+            );
+          })}
+          <line className="chart-axis-line" x1={left} x2={width - right} y1={height - bottom} y2={height - bottom} />
+          <line className="chart-axis-line" x1={left} x2={left} y1={top} y2={height - bottom} />
+          <path d={path} fill="none" stroke="#f4c430" strokeLinecap="round" strokeWidth="3" />
+          {hovered && hoveredCoord ? (
+            <>
+              <line className="chart-hover-line" x1={hoveredCoord.x} x2={hoveredCoord.x} y1={top} y2={height - bottom} />
+              <circle className="chart-hover-point" cx={hoveredCoord.x} cy={hoveredCoord.y} r="4" />
+            </>
+          ) : null}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function ResearchMarketSnapshot({ marketData }) {
+  if (!marketData) {
+    return null;
+  }
+  const metrics = marketData.metrics || {};
+  const metricEntries = [
+    "price",
+    "market_cap",
+    "pe",
+    "ps",
+    "ev_to_ebitda",
+    "fcf_yield_pct",
+    "eps",
+    "revenue_growth_3y_pct",
+    "eps_growth_3y_pct",
+    "eps_growth_5y_pct",
+    "revenue_per_share",
+    "gross_margin_pct",
+    "operating_margin_pct",
+    "net_margin_pct",
+    "year_high",
+    "year_low",
+  ];
+  return (
+    <section className="research-market-panel">
+      <div className="research-chart-panel">
+        <StockPriceChart dailyPoints={marketData.price_history ?? []} />
+      </div>
+      <div className="research-metrics-panel">
+        <div className="metric-grid">
+          {metricEntries.map((key) => (
+            <div className="metric-tile" key={key}>
+              <span>{metricLabel(key)}</span>
+              <strong>{metricValue(key, metrics[key])}</strong>
+            </div>
+          ))}
+        </div>
+        {marketData.latest_earnings?.source_url ? (
+          <div className="earnings-source">
+            <strong>Latest earnings</strong>
+            <span>{marketData.latest_earnings.date || "Date unavailable"}</span>
+            <div className="earnings-details">
+              <span>EPS {formatCompactNumber(marketData.latest_earnings.eps)}</span>
+              <span>Est. {formatCompactNumber(marketData.latest_earnings.eps_estimated)}</span>
+              <span>Revenue {formatCompactNumber(marketData.latest_earnings.revenue)}</span>
+            </div>
+            <a href={marketData.latest_earnings.source_url} rel="noreferrer" target="_blank">Source</a>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function ResearchResultContent({ payload }) {
+  const research = payload.research || {};
+  if (payload.mode === "portfolio") {
+    return (
+      <div className="research-section-grid">
+        <ResearchSignal label="Signal" value={research.signal} />
+        <ResearchMarketSnapshot marketData={payload.market_data} />
+        <ResearchList title="Executive summary" items={research.executive_summary} />
+        <ResearchAssessmentList title="Thesis check" items={research.thesis_check} titleKey="field" />
+        <ResearchArticleList title="Recent developments" items={research.recent_developments} />
+        <ResearchList title="Risks to watch" items={research.risks_to_watch} />
+        <ResearchList title="Suggested next steps" items={research.suggested_next_steps} />
+      </div>
+    );
+  }
+  if (payload.mode === "watchlist") {
+    return (
+      <div className="research-section-grid">
+        <ResearchSignal label="Signal" value={research.signal} />
+        <ResearchMarketSnapshot marketData={payload.market_data} />
+        <ResearchList title="Executive summary" items={research.executive_summary} />
+        <ResearchAssessmentList title="Entry conditions check" items={research.entry_conditions_check} titleKey="condition" />
+        <ResearchArticleList title="Recent developments" items={research.recent_developments} />
+        <ResearchList title="Still missing" items={research.still_missing} />
+        <ResearchList title="Suggested next steps" items={research.suggested_next_steps} />
+      </div>
+    );
+  }
+  return (
+    <div className="research-section-grid">
+      <ResearchSignal label="Watchlist suitability" value={research.watchlist_suitability} />
+      <ResearchMarketSnapshot marketData={payload.market_data} />
+      <ResearchList title="Company overview" items={research.company_overview} />
+      <ResearchList title="Business model" items={research.business_model} />
+      <ResearchList title="Products and customers" items={research.products_and_customers} />
+      <ResearchList title="Current situation" items={research.current_situation} />
+      <ResearchList title="Future outlook" items={research.future_outlook} />
+      <ResearchList title="Bull case" items={research.bull_case} />
+      <ResearchList title="Bear case" items={research.bear_case} />
+      <ResearchList title="What to understand next" items={research.what_to_understand_next} />
+    </div>
+  );
+}
+
+function researchHumanLabel(value) {
+  return String(value || "").replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function stripInlineSourceDomains(value) {
+  return String(value || "").replace(/\s*\(([a-z0-9.-]+\.[a-z]{2,})(?:\/[^)]*)?\)/gi, "");
+}
+
+function ResearchSignal({ label, value }) {
+  const signalKey = String(value || "unknown").replaceAll("_", "-").toLowerCase();
+  return (
+    <section className={`research-card signal-card signal-${signalKey}`}>
+      <div className="signal-card-copy">
+        <p className="eyebrow">{label}</p>
+        <h3>{researchHumanLabel(value || "Unknown")}</h3>
+      </div>
+      <div className="signal-orbit" aria-hidden="true">
+        <Sparkles size={24} />
+      </div>
+    </section>
+  );
+}
+
+function ResearchList({ title, items }) {
+  return (
+    <section className="research-card">
+      <div className="research-card-header">
+        <h3>{title}</h3>
+      </div>
+      {items?.length ? (
+        <ul>
+          {items.map((item, index) => (
+            <li key={`${title}-${index}`}>
+              <span className="research-list-index">{String(index + 1).padStart(2, "0")}</span>
+              <p>{stripInlineSourceDomains(typeof item === "string" ? item : JSON.stringify(item))}</p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">No material points returned.</p>
+      )}
+    </section>
+  );
+}
+
+function ResearchAssessmentList({ title, items, titleKey }) {
+  return (
+    <section className="research-card">
+      <div className="research-card-header">
+        <h3>{title}</h3>
+      </div>
+      <div className="research-assessment-list">
+        {items?.length ? (
+          items.map((item, index) => (
+            <div className="research-assessment" key={`${title}-${index}`}>
+              <strong>{item?.[titleKey] || `Item ${index + 1}`}</strong>
+              {item?.assessment ? <p>{stripInlineSourceDomains(item.assessment)}</p> : null}
+              {Array.isArray(item?.evidence) && item.evidence.length ? (
+                <ul>
+                  {item.evidence.map((point, pointIndex) => {
+                    const text = typeof point === "string" ? point : point?.text;
+                    const sourceUrl = typeof point === "object" ? point?.source_url : "";
+                    return (
+                      <li key={`${title}-${index}-${pointIndex}`}>
+                        {stripInlineSourceDomains(text)}
+                        {sourceUrl ? (
+                          <>
+                            {" "}
+                            <a href={sourceUrl} rel="noreferrer" target="_blank">Source</a>
+                          </>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : null}
+            </div>
+          ))
+        ) : (
+          <p className="muted">No checks returned.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ResearchArticleList({ title, items }) {
+  return (
+    <section className="research-card">
+      <div className="research-card-header">
+        <h3>{title}</h3>
+      </div>
+      <div className="research-assessment-list">
+        {items?.length ? (
+          items.map((item, index) => (
+            <div className="research-assessment" key={`${title}-${index}`}>
+              <strong>{item?.headline || `Article ${index + 1}`}</strong>
+              {item?.summary ? <p>{stripInlineSourceDomains(item.summary)}</p> : null}
+              {item?.source_url ? (
+                <a href={item.source_url} rel="noreferrer" target="_blank">
+                  Full article
+                </a>
+              ) : null}
+            </div>
+          ))
+        ) : (
+          <p className="muted">No material articles returned.</p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -2040,6 +2746,7 @@ function HoldingsSection({
   onAdd,
   onDelete,
   onEdit,
+  onMoveToPortfolio,
   onPositionChange,
   onPositionCommit,
   onReportToggle,
@@ -2114,6 +2821,11 @@ function HoldingsSection({
                     <button className="icon-button" onClick={() => onEdit(item)} title="Edit thesis" type="button">
                       <Pencil size={17} aria-hidden="true" />
                     </button>
+                    {itemType === "watchlist" ? (
+                      <button className="icon-button" onClick={() => onMoveToPortfolio(item)} title="Move to portfolio" type="button">
+                        <MoveRight size={17} aria-hidden="true" />
+                      </button>
+                    ) : null}
                     <button className="icon-button danger" onClick={() => onDelete(item)} title="Delete" type="button">
                       <Trash2 size={17} aria-hidden="true" />
                     </button>
@@ -2183,7 +2895,7 @@ function StockThesisModal({ modal, onClose, onSaved }) {
   const [stock, setStock] = useState(modal.stock ?? null);
   const [thesis, setThesis] = useState(modal.thesis ?? null);
   const [positionSize, setPositionSize] = useState(modal.positionSize ?? 10);
-  const [status, setStatus] = useState(modal.mode === "edit" ? "review" : "search");
+  const [status, setStatus] = useState(modal.mode === "edit" ? "review" : modal.stock ? "generating" : "search");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -2226,6 +2938,12 @@ function StockThesisModal({ modal, onClose, onSaved }) {
       setStatus("search");
     }
   };
+
+  useEffect(() => {
+    if (modal.mode === "add" && modal.stock && status === "generating" && !thesis) {
+      selectStock(modal.stock);
+    }
+  }, [modal.mode, modal.stock, status, thesis]);
 
   const save = async () => {
     if (!stock || !thesis) {

@@ -162,6 +162,13 @@ class NoteUpdateRequest(BaseModel):
     is_resolved: bool | None = None
 
 
+class CompanyResearchRequest(BaseModel):
+    symbol: str
+    company_name: str | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Morning Alpha API", lifespan=lifespan)
 
@@ -1178,6 +1185,577 @@ def delete_watchlist_item(item_id: str, request: Request) -> dict[str, Any]:
             if cursor.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Watchlist item not found.")
     return {"deleted": True}
+
+
+def try_fmp_get(client: Any, endpoint: str, params: dict[str, Any]) -> Any:
+    try:
+        return client.get(endpoint, params)
+    except Exception:
+        return None
+
+
+def first_item(data: Any) -> dict[str, Any]:
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        return data[0]
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+def compact_fmp_item(item: dict[str, Any], keys: list[str]) -> dict[str, Any]:
+    return {key: item.get(key) for key in keys if item.get(key) not in (None, "", [])}
+
+
+def compact_news_item(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title": item.get("title") or item.get("headline") or "",
+        "published_at": item.get("publishedDate") or item.get("date") or item.get("published_at") or "",
+        "source": item.get("site") or item.get("publisher") or item.get("source") or "",
+        "url": item.get("url") or item.get("link") or "",
+        "text": str(item.get("text") or item.get("summary") or item.get("content") or "")[:700],
+    }
+
+
+def is_blocked_research_source(item: dict[str, Any]) -> bool:
+    source = str(item.get("site") or item.get("publisher") or item.get("source") or "").lower().replace(" ", "")
+    url = str(item.get("url") or item.get("link") or "").lower()
+    return "seekingalpha" in source or "seekingalpha.com" in url
+
+
+def fmp_items(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, dict):
+        items = data.get("historical") or data.get("historicalStockList") or data.get("data") or []
+    elif isinstance(data, list):
+        items = data
+    else:
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def normalize_price_history(data: Any, *, include_time: bool = False) -> list[dict[str, Any]]:
+    items = fmp_items(data)
+    if not items and isinstance(data, dict) and data:
+        items = [data]
+    points = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        date_value = item.get("date")
+        close = item.get("close") or item.get("adjClose") or item.get("price")
+        if not date_value or close in (None, ""):
+            continue
+        try:
+            point_date = str(date_value) if include_time else str(date_value)[:10]
+            points.append({"date": point_date, "close": float(close)})
+        except (TypeError, ValueError):
+            continue
+    return sorted(points, key=lambda point: point["date"])
+
+
+def fetch_price_history(client: Any, symbol: str, end: dt.date) -> list[dict[str, Any]]:
+    start = end - dt.timedelta(days=365 * 5 + 10)
+    for endpoint, params in (
+        ("historical-price-eod/full", {"symbol": symbol, "from": start.isoformat(), "to": end.isoformat()}),
+        (f"historical-price-full/{symbol}", {"from": start.isoformat(), "to": end.isoformat()}),
+        ("historical-price-eod/light", {"symbol": symbol, "from": start.isoformat(), "to": end.isoformat()}),
+    ):
+        data = try_fmp_get(client, endpoint, params)
+        points = normalize_price_history(data)
+        if points:
+            return points[-1300:]
+    return []
+
+
+def fetch_intraday_history(client: Any, symbol: str) -> list[dict[str, Any]]:
+    for endpoint in (f"historical-chart/5min/{symbol}", f"historical-chart/15min/{symbol}", f"historical-chart/1hour/{symbol}"):
+        points = normalize_price_history(try_fmp_get(client, endpoint, {}), include_time=True)
+        if points:
+            return points[-120:]
+    return []
+
+
+def fetch_first_available(client: Any, candidates: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
+    for endpoint, params in candidates:
+        item = first_item(try_fmp_get(client, endpoint, params))
+        if item:
+            return item
+    return {}
+
+
+def parse_fmp_date(value: Any) -> dt.date | None:
+    if not value:
+        return None
+    try:
+        return dt.date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def fetch_latest_actual_earnings(client: Any, symbol: str, today: dt.date) -> dict[str, Any]:
+    for endpoint, params in (
+        ("earnings", {"symbol": symbol, "limit": 12}),
+        ("historical/earning_calendar", {"symbol": symbol, "limit": 12}),
+        ("earnings-calendar", {"symbol": symbol, "limit": 12}),
+    ):
+        rows = fmp_items(try_fmp_get(client, endpoint, params))
+        actual_rows = [
+            row
+            for row in rows
+            if (parse_fmp_date(row.get("date") or row.get("fiscalDateEnding")) or today) <= today
+        ]
+        if actual_rows:
+            return sorted(actual_rows, key=lambda row: str(row.get("date") or row.get("fiscalDateEnding") or ""), reverse=True)[0]
+    return {}
+
+
+def percent_growth(newer: Any, older: Any) -> float | None:
+    try:
+        newer_value = float(newer)
+        older_value = float(older)
+    except (TypeError, ValueError):
+        return None
+    if older_value == 0:
+        return None
+    return ((newer_value / older_value) - 1) * 100
+
+
+def safe_float(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number
+
+
+def first_number(*values: Any) -> float | None:
+    for value in values:
+        number = safe_float(value)
+        if number is not None:
+            return number
+    return None
+
+
+def divide_or_none(numerator: Any, denominator: Any) -> float | None:
+    numerator_value = safe_float(numerator)
+    denominator_value = safe_float(denominator)
+    if numerator_value is None or denominator_value in (None, 0):
+        return None
+    return numerator_value / denominator_value
+
+
+def calculate_eps_growth(income_rows: Any, years: int) -> float | None:
+    if not isinstance(income_rows, list) or len(income_rows) <= years:
+        return None
+    latest = income_rows[0].get("eps") or income_rows[0].get("epsdiluted")
+    previous = income_rows[years].get("eps") or income_rows[years].get("epsdiluted")
+    return percent_growth(latest, previous)
+
+
+def calculate_statement_growth(income_rows: Any, field: str, years: int) -> float | None:
+    if not isinstance(income_rows, list) or len(income_rows) <= years:
+        return None
+    return percent_growth(income_rows[0].get(field), income_rows[years].get(field))
+
+
+def ratio_to_percent(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number * 100 if abs(number) <= 1 else number
+
+
+def research_market_data(
+    *,
+    symbol: str,
+    quote: dict[str, Any],
+    metrics: dict[str, Any],
+    metrics_latest: dict[str, Any],
+    ratios: dict[str, Any],
+    ratios_latest: dict[str, Any],
+    income_rows: Any,
+    income_ttm: dict[str, Any],
+    balance_ttm: dict[str, Any],
+    cashflow_ttm: dict[str, Any],
+    analyst_estimate: dict[str, Any],
+    earnings: dict[str, Any],
+    price_history: list[dict[str, Any]],
+    intraday_history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    next_eps = (
+        analyst_estimate.get("estimatedEpsAvg")
+        or analyst_estimate.get("estimatedEpsHigh")
+        or analyst_estimate.get("epsEstimated")
+    )
+    price = first_number(quote.get("price"))
+    market_cap = first_number(quote.get("marketCap"), metrics_latest.get("marketCap"))
+    latest_income = first_item(income_rows)
+    shares = first_number(
+        quote.get("sharesOutstanding"),
+        income_ttm.get("weightedAverageShsOutDil"),
+        income_ttm.get("weightedAverageShsOut"),
+        latest_income.get("weightedAverageShsOutDil"),
+        latest_income.get("weightedAverageShsOut"),
+    )
+    revenue = first_number(income_ttm.get("revenue"), latest_income.get("revenue"))
+    net_income = first_number(income_ttm.get("netIncome"), latest_income.get("netIncome"))
+    ebitda = first_number(income_ttm.get("ebitda"), latest_income.get("ebitda"))
+    equity = first_number(
+        balance_ttm.get("totalStockholdersEquity"),
+        balance_ttm.get("totalEquity"),
+        balance_ttm.get("totalShareholderEquity"),
+    )
+    short_term_debt = safe_float(balance_ttm.get("shortTermDebt"))
+    long_term_debt = safe_float(balance_ttm.get("longTermDebt"))
+    total_debt = first_number(
+        balance_ttm.get("totalDebt"),
+        short_term_debt + long_term_debt if short_term_debt is not None and long_term_debt is not None else None,
+    )
+    operating_cash_flow = first_number(cashflow_ttm.get("operatingCashFlow"), cashflow_ttm.get("netCashProvidedByOperatingActivities"))
+    capex = first_number(cashflow_ttm.get("capitalExpenditure"), cashflow_ttm.get("capitalExpenditures"))
+    free_cash_flow = first_number(cashflow_ttm.get("freeCashFlow"))
+    if free_cash_flow is None and operating_cash_flow is not None and capex is not None:
+        free_cash_flow = operating_cash_flow - abs(capex)
+
+    latest_eps = first_number(
+        quote.get("eps"),
+        metrics.get("netIncomePerShareTTM"),
+        income_ttm.get("eps"),
+        income_ttm.get("epsdiluted"),
+        latest_income.get("eps"),
+        latest_income.get("epsdiluted"),
+        divide_or_none(net_income, shares),
+    )
+    pe = first_number(
+        quote.get("pe"),
+        metrics.get("peRatioTTM"),
+        metrics.get("priceEarningsRatioTTM"),
+        metrics_latest.get("peRatio"),
+        ratios.get("priceEarningsRatioTTM"),
+        ratios_latest.get("priceEarningsRatio"),
+    )
+    if pe is None and price is not None and latest_eps not in (None, 0):
+        pe = price / latest_eps
+
+    revenue_per_share = first_number(metrics.get("revenuePerShareTTM"), divide_or_none(revenue, shares))
+    fcf_per_share = first_number(metrics.get("freeCashFlowPerShareTTM"), divide_or_none(free_cash_flow, shares))
+    ps = first_number(metrics.get("priceToSalesRatioTTM"), ratios.get("priceToSalesRatioTTM"), divide_or_none(price, revenue_per_share))
+    fcf_yield = ratio_to_percent(metrics.get("freeCashFlowYieldTTM") or ratios.get("freeCashFlowYieldTTM"))
+    if fcf_yield is None and free_cash_flow is not None and market_cap not in (None, 0):
+        fcf_yield = (free_cash_flow / market_cap) * 100
+    roe = ratio_to_percent(ratios.get("returnOnEquityTTM") or metrics.get("roeTTM") or ratios_latest.get("returnOnEquity"))
+    if roe is None and net_income is not None and equity not in (None, 0):
+        roe = (net_income / equity) * 100
+    debt_to_equity = first_number(
+        metrics.get("debtToEquityTTM"),
+        ratios.get("debtEquityRatioTTM"),
+        ratios_latest.get("debtEquityRatio"),
+        divide_or_none(total_debt, equity),
+    )
+
+    return {
+        "price_history": price_history,
+        "intraday_history": intraday_history,
+        "metrics": {
+            "price": price,
+            "market_cap": market_cap,
+            "pe": pe,
+            "ps": ps,
+            "ev_to_ebitda": first_number(
+                metrics.get("enterpriseValueOverEBITDATTM"),
+                ratios.get("enterpriseValueOverEBITDATTM"),
+                ratios.get("enterpriseValueMultipleTTM"),
+                divide_or_none(metrics_latest.get("enterpriseValue"), ebitda),
+            ),
+            "fcf_yield_pct": fcf_yield,
+            "eps": latest_eps,
+            "eps_growth_3y_pct": calculate_eps_growth(income_rows, 3),
+            "eps_growth_5y_pct": calculate_eps_growth(income_rows, 5),
+            "revenue_growth_3y_pct": calculate_statement_growth(income_rows, "revenue", 3),
+            "eps_growth_next_year_pct": percent_growth(next_eps, latest_eps),
+            "revenue_per_share": revenue_per_share,
+            "fcf_per_share": fcf_per_share,
+            "gross_margin_pct": ratio_to_percent(ratios.get("grossProfitMarginTTM")),
+            "operating_margin_pct": ratio_to_percent(ratios.get("operatingProfitMarginTTM")),
+            "net_margin_pct": ratio_to_percent(ratios.get("netProfitMarginTTM")),
+            "roe_pct": roe,
+            "debt_to_equity": debt_to_equity,
+            "year_high": first_number(quote.get("yearHigh")),
+            "year_low": first_number(quote.get("yearLow")),
+        },
+        "latest_earnings": {
+            "date": earnings.get("date") or earnings.get("fiscalDateEnding"),
+            "eps": earnings.get("eps") or earnings.get("epsActual"),
+            "eps_estimated": earnings.get("epsEstimated") or earnings.get("epsEstimate"),
+            "revenue": earnings.get("revenue"),
+            "revenue_estimated": earnings.get("revenueEstimated"),
+            "source_url": earnings.get("url") or earnings.get("link") or earnings.get("finalLink"),
+        }
+        if earnings
+        else None,
+    }
+
+
+def research_stock_context(cursor: Any, user_id: str, symbol: str) -> tuple[str, dict[str, Any] | None]:
+    cursor.execute(
+        PORTFOLIO_SELECT
+        + """
+        where portfolio_items.user_id = %(user_id)s
+          and upper(stocks.symbol) = %(symbol)s
+        """,
+        {"user_id": user_id, "symbol": symbol},
+    )
+    portfolio_row = cursor.fetchone()
+    if portfolio_row:
+        return "portfolio", serialize_portfolio_row(dict(portfolio_row))
+
+    cursor.execute(
+        WATCHLIST_SELECT
+        + """
+        where watchlist_items.user_id = %(user_id)s
+          and upper(stocks.symbol) = %(symbol)s
+        """,
+        {"user_id": user_id, "symbol": symbol},
+    )
+    watchlist_row = cursor.fetchone()
+    if watchlist_row:
+        return "watchlist", serialize_watchlist_row(dict(watchlist_row))
+
+    return "new", None
+
+
+def research_schema(mode: str) -> dict[str, Any]:
+    if mode == "portfolio":
+        return {
+            "mode": "portfolio",
+            "signal": "thesis_supported | thesis_needs_review | red_flag_rising | no_material_change",
+            "executive_summary": ["string"],
+            "thesis_check": [{"field": "string", "assessment": "string", "evidence": [{"text": "string", "source_url": "string"}]}],
+            "recent_developments": [{"headline": "string", "summary": "string", "source_url": "string"}],
+            "risks_to_watch": ["string"],
+            "suggested_next_steps": ["string"],
+        }
+    if mode == "watchlist":
+        return {
+            "mode": "watchlist",
+            "signal": "positive_signal | negative_signal | mixed_signal | needs_more_evidence | no_material_change",
+            "executive_summary": ["string"],
+            "entry_conditions_check": [{"condition": "string", "assessment": "string", "evidence": [{"text": "string", "source_url": "string"}]}],
+            "recent_developments": [{"headline": "string", "summary": "string", "source_url": "string"}],
+            "still_missing": ["string"],
+            "suggested_next_steps": ["string"],
+        }
+    return {
+        "mode": "new",
+        "watchlist_suitability": "potential_watchlist_candidate | worth_researching_further | too_early | low_relevance",
+        "company_overview": ["string"],
+        "business_model": ["string"],
+        "products_and_customers": ["string"],
+        "current_situation": ["string"],
+        "future_outlook": ["string"],
+        "bull_case": ["string"],
+        "bear_case": ["string"],
+        "what_to_understand_next": ["string"],
+    }
+
+
+def normalize_research_payload(payload: dict[str, Any], mode: str) -> dict[str, Any]:
+    schema = research_schema(mode)
+    normalized: dict[str, Any] = {"mode": mode}
+    for key, fallback in schema.items():
+        if key == "mode":
+            continue
+        value = payload.get(key)
+        if isinstance(fallback, list):
+            normalized[key] = value if isinstance(value, list) else []
+        elif isinstance(value, str):
+            normalized[key] = value.strip()
+        else:
+            normalized[key] = ""
+    return normalized
+
+
+@app.post("/api/research/company")
+def research_company(payload: CompanyResearchRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    if not os.getenv("OPENAI_API_KEY"):
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
+
+    from openai import OpenAI
+    from psycopg.rows import dict_row
+    from report import load_yaml, log_openai_usage, openai_usage_summary, parse_model_json
+
+    symbol = clean_symbol(payload.symbol)
+    company_name = (payload.company_name or symbol).strip() or symbol
+    date_to = parse_report_date_filter(payload.date_to, "date_to") or dt.date.today()
+    date_from = parse_report_date_filter(payload.date_from, "date_from") or (date_to - dt.timedelta(days=30))
+    if date_from > date_to:
+        raise HTTPException(status_code=422, detail="date_from must be before date_to.")
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            relationship, item = research_stock_context(cursor, user_id, symbol)
+
+    client = fmp_client_from_env()
+    profile = first_item(try_fmp_get(client, "profile", {"symbol": symbol}))
+    quote = first_item(try_fmp_get(client, "quote", {"symbol": symbol}))
+    metrics = first_item(try_fmp_get(client, "key-metrics-ttm", {"symbol": symbol}))
+    metrics_latest = first_item(try_fmp_get(client, "key-metrics", {"symbol": symbol, "period": "annual", "limit": 1}))
+    ratios = first_item(try_fmp_get(client, "ratios-ttm", {"symbol": symbol}))
+    ratios_latest = first_item(try_fmp_get(client, "ratios", {"symbol": symbol, "period": "annual", "limit": 1}))
+    income_ttm = first_item(try_fmp_get(client, "income-statement-ttm", {"symbol": symbol}))
+    balance_ttm = first_item(try_fmp_get(client, "balance-sheet-statement-ttm", {"symbol": symbol}))
+    cashflow_ttm = first_item(try_fmp_get(client, "cash-flow-statement-ttm", {"symbol": symbol}))
+    income_rows = try_fmp_get(client, "income-statement", {"symbol": symbol, "period": "annual", "limit": 6})
+    income = first_item(income_rows)
+    analyst_estimate = fetch_first_available(
+        client,
+        [
+            ("analyst-estimates", {"symbol": symbol, "period": "annual", "limit": 2}),
+            ("analyst-estimates", {"symbol": symbol, "limit": 2}),
+        ],
+    )
+    earnings = fetch_latest_actual_earnings(client, symbol, dt.date.today())
+    price_history = fetch_price_history(client, symbol, date_to)
+    intraday_history = fetch_intraday_history(client, symbol)
+    news: list[dict[str, Any]] = []
+    if relationship in {"portfolio", "watchlist"}:
+        try:
+            news = client.stock_news([symbol], start=date_from, end=date_to, limit=20)
+            news = [item for item in news if not is_blocked_research_source(item)]
+        except Exception:
+            news = []
+
+    config = load_yaml(ROOT / "config.yaml")
+    model = config.get("openai", {}).get("model", "gpt-4.1-mini")
+    task = {
+        "portfolio": "research_portfolio_check",
+        "watchlist": "research_watchlist_check",
+        "new": "research_company_primer",
+    }[relationship]
+    context = {
+        "company": {
+            "symbol": symbol,
+            "company_name": company_name,
+            "relationship": relationship,
+        },
+        "date_window": {"from": date_from.isoformat(), "to": date_to.isoformat()} if relationship != "new" else None,
+        "user_item": item,
+        "fmp": {
+            "profile": compact_fmp_item(
+                profile,
+                [
+                    "companyName",
+                    "description",
+                    "sector",
+                    "industry",
+                    "ceo",
+                    "country",
+                    "website",
+                    "fullTimeEmployees",
+                    "marketCap",
+                ],
+            ),
+            "quote": compact_fmp_item(
+                quote,
+                ["price", "changesPercentage", "marketCap", "eps", "pe", "sharesOutstanding", "yearHigh", "yearLow"],
+            ),
+            "metrics_ttm": compact_fmp_item(
+                metrics,
+                ["revenuePerShareTTM", "netIncomePerShareTTM", "freeCashFlowPerShareTTM", "debtToEquityTTM", "roeTTM"],
+            ),
+            "ratios_ttm": compact_fmp_item(
+                ratios,
+                ["grossProfitMarginTTM", "operatingProfitMarginTTM", "netProfitMarginTTM", "returnOnEquityTTM"],
+            ),
+            "latest_income_statement": compact_fmp_item(
+                income,
+                ["date", "revenue", "grossProfit", "operatingIncome", "netIncome", "eps", "ebitda"],
+            ),
+            "news": [compact_news_item(item) for item in news[:8]],
+        },
+        "required_json_schema": research_schema(relationship),
+    }
+    market_data = research_market_data(
+        symbol=symbol,
+        quote=quote,
+        metrics=metrics,
+        metrics_latest=metrics_latest,
+        ratios=ratios,
+        ratios_latest=ratios_latest,
+        income_rows=income_rows,
+        income_ttm=income_ttm,
+        balance_ttm=balance_ttm,
+        cashflow_ttm=cashflow_ttm,
+        analyst_estimate=analyst_estimate,
+        earnings=earnings,
+        price_history=price_history,
+        intraday_history=intraday_history,
+    )
+    if relationship == "new":
+        instructions = (
+            "Create a deep but concise company primer for a long-term investor who does not yet own or watch this company. "
+            "Focus on what the company actually does, how it makes money, product lines, customer/end-market exposure, competitive position, current situation, future outlook, bull case, bear case, and what to learn next. "
+            "Do not make a buy/sell/hold recommendation. Do not over-focus on generic valuation metrics. Use supplied data only; if something is unknown, say what should be verified."
+        )
+    elif relationship == "portfolio":
+        instructions = (
+            "Test the user's existing portfolio thesis against recent company-specific news and supplied data. "
+            "Focus only on information relevant to why the user owns it, bull/bear case, key metrics, red flags, and action triggers. "
+            "Summarize only a few material articles and include their source_url. When citing an article, use source_url fields; do not put source domains in parentheses inside the prose. Do not recommend buying, selling, or holding."
+        )
+    else:
+        instructions = (
+            "Check whether recent company-specific news and supplied data support or contradict the user's watchlist thesis and entry_conditions. "
+            "Explain whether the company is moving closer to the user's entry conditions, what evidence is still missing, and summarize only material articles with source_url. When citing an article, use source_url fields; do not put source domains in parentheses inside the prose. "
+            "Do not recommend buying, selling, or holding."
+        )
+
+    try:
+        response = OpenAI(timeout=60).responses.create(
+            model=model,
+            input=[
+                {
+                    "role": "system",
+                    "content": "You produce structured, evidence-based investment research JSON. Be specific, concise, neutral, and avoid recommendations.",
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "instructions": instructions,
+                            "constraints": [
+                                "Return valid JSON only.",
+                                "Keep each bullet specific and useful; avoid generic filler.",
+                                "Prefer 3-5 bullets per list.",
+                                "Use only the supplied context and mark uncertainty clearly.",
+                                "No buy/sell/hold recommendation and no personalized financial advice.",
+                            ],
+                            "context": context,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+        )
+        usage = openai_usage_summary(response, model, config)
+        log_openai_usage(user_id, task, usage)
+        research = normalize_research_payload(parse_model_json(response.output_text), relationship)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Research generation failed: {exc}") from exc
+
+    return {
+        "mode": relationship,
+        "stock": {
+            "symbol": symbol,
+            "company_name": profile.get("companyName") or company_name,
+            "stock_id": item.get("stock_id") if item else None,
+            "logo_url": stock_logo_url(symbol),
+        },
+        "date_window": context["date_window"],
+        "market_data": market_data,
+        "research": research,
+    }
 
 
 def parse_report_date_filter(value: str | None, field_name: str) -> dt.date | None:
