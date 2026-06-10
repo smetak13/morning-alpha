@@ -1173,6 +1173,10 @@ textarea:focus {
   min-width: 1080px;
 }
 
+.research-history-table-panel {
+  min-width: 0;
+}
+
 .research-history-view .pagination-row {
   margin-top: 12px;
 }
@@ -1190,7 +1194,7 @@ textarea:focus {
 }
 
 .research-history-table .report-notes-col {
-  width: 158px;
+  width: 198px;
 }
 
 .research-history-actions-col {
@@ -1219,6 +1223,31 @@ textarea:focus {
   display: grid;
   gap: 14px;
   padding: 16px;
+}
+
+.research-preview-notes {
+  background:
+    radial-gradient(circle at right top, rgba(244, 196, 48, 0.08), transparent 28%),
+    linear-gradient(135deg, rgba(244, 196, 48, 0.05), rgba(244, 196, 48, 0) 42%),
+    #181818;
+  border: 1px solid #2a2a2a;
+  border-left: 3px solid rgba(244, 196, 48, 0.72);
+  border-radius: 8px;
+  display: grid;
+  gap: 0;
+}
+
+.research-preview-notes-stack {
+  padding: 0 16px 16px;
+}
+
+.research-preview-notes .empty-table {
+  border-top: 1px solid rgba(58, 58, 58, 0.68);
+  padding-top: 16px;
+}
+
+.research-preview-notes .note-card {
+  border-left-color: #2a2a2a;
 }
 
 .selected-stock.no-margin {
@@ -1363,7 +1392,7 @@ textarea:focus {
 
 .chart-axis-label {
   fill: #8d8d86;
-  font-size: 0.72rem;
+  font-size: 10px;
 }
 
 .chart-hover-line {

@@ -2246,79 +2246,84 @@ function ResearchHistoryView() {
 
       {error ? <p className="error">{error}</p> : null}
 
-      <div className="table-shell">
-        <table className="reports-table research-history-table">
-          <colgroup>
-            <col className="research-history-company-col" />
-            <col className="research-history-type-col" />
-            <col className="research-history-signal-col" />
-            <col className="report-created-col" />
-            <col className="report-notes-col" />
-            <col className="research-history-actions-col" />
-          </colgroup>
-          <thead>
-            <tr>
-              <th>Company</th>
-              <th>Type</th>
-              <th>Signal</th>
-              <th>Created at</th>
-              <th className="actions-cell">Notes</th>
-              <th className="actions-cell">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {payload.items.length ? (
-              payload.items.map((item) => (
-                <tr key={item.id} onClick={() => openItem(item)}>
-                  <td>
-                    <div className="stock-cell">
-                      <img className="stock-logo" {...stockLogoProps(item.logo_url)} alt="" />
-                      <div>
-                        <strong>{item.symbol}</strong>
-                        <span>{item.company_name}</span>
+      <div className="research-history-table-panel">
+        <div className="table-shell">
+          <table className="reports-table research-history-table">
+            <colgroup>
+              <col className="research-history-company-col" />
+              <col className="research-history-type-col" />
+              <col className="research-history-signal-col" />
+              <col className="report-created-col" />
+              <col className="report-notes-col" />
+              <col className="research-history-actions-col" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Company</th>
+                <th>Type</th>
+                <th>Signal</th>
+                <th>Created at</th>
+                <th className="actions-cell">Notes</th>
+                <th className="actions-cell">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {payload.items.length ? (
+                payload.items.map((item) => (
+                  <tr key={item.id} onClick={() => openItem(item)}>
+                    <td>
+                      <div className="stock-cell">
+                        <img className="stock-logo" {...stockLogoProps(item.logo_url)} alt="" />
+                        <div>
+                          <strong>{item.symbol}</strong>
+                          <span>{item.company_name}</span>
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td><span className="status-pill">{researchTypeLabel(item.research_type)}</span></td>
-                  <td><span className="research-signal-pill">{researchHumanLabel(item.signal || "Unknown")}</span></td>
-                  <td>{formatDateTime(item.created_at)}</td>
-                  <td className="actions-cell">
-                    <span className="notes-count-pill" title={`${item.note_count ?? 0} notes`}>{item.note_count ?? 0}</span>
-                    <button className="icon-button" onClick={(event) => { event.stopPropagation(); setNotesModal({ researchItem: item, mode: "view" }); }} title="View notes" type="button">
-                      <Eye size={17} aria-hidden="true" />
-                    </button>
-                    <button className="icon-button" onClick={(event) => { event.stopPropagation(); setNoteFormItem(item); }} title="Add note" type="button">
-                      <Plus size={17} aria-hidden="true" />
-                    </button>
-                  </td>
-                  <td className="actions-cell">
-                    <button className="icon-button danger" onClick={(event) => { event.stopPropagation(); setDeleteTarget(item); }} title="Delete research" type="button">
-                      <Trash2 size={17} aria-hidden="true" />
-                    </button>
+                    </td>
+                    <td><span className="status-pill">{researchTypeLabel(item.research_type)}</span></td>
+                    <td><span className="research-signal-pill">{researchHumanLabel(item.signal || "Unknown")}</span></td>
+                    <td>{formatDateTime(item.created_at)}</td>
+                    <td className="actions-cell">
+                      <span className="notes-count-pill" title={`${item.note_count ?? 0} notes`}>{item.note_count ?? 0}</span>
+                      <button className="icon-button" onClick={(event) => { event.stopPropagation(); setNotesModal({ researchItem: item, mode: "view" }); }} title="View notes" type="button">
+                        <Eye size={17} aria-hidden="true" />
+                      </button>
+                      <button className="icon-button" onClick={(event) => { event.stopPropagation(); setNotesModal({ researchItem: item, mode: "edit" }); }} title="Edit notes" type="button">
+                        <Pencil size={17} aria-hidden="true" />
+                      </button>
+                      <button className="icon-button" onClick={(event) => { event.stopPropagation(); setNoteFormItem(item); }} title="Add note" type="button">
+                        <Plus size={17} aria-hidden="true" />
+                      </button>
+                    </td>
+                    <td className="actions-cell">
+                      <button className="icon-button danger" onClick={(event) => { event.stopPropagation(); setDeleteTarget(item); }} title="Delete research" type="button">
+                        <Trash2 size={17} aria-hidden="true" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td className="empty-table" colSpan={6}>
+                    {status === "loading" ? "Loading research..." : "No research found for these filters."}
                   </td>
                 </tr>
-              ))
-            ) : (
-              <tr>
-                <td className="empty-table" colSpan={6}>
-                  {status === "loading" ? "Loading research..." : "No research found for these filters."}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+              )}
+            </tbody>
+          </table>
+        </div>
 
-      <div className="pagination-row">
-        <button className="secondary-button compact-button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">
-          <ChevronLeft size={16} aria-hidden="true" />
-          Previous
-        </button>
-        <span>Page {page} of {totalPages}</span>
-        <button className="secondary-button compact-button" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)} type="button">
-          Next
-          <ChevronRight size={16} aria-hidden="true" />
-        </button>
+        <div className="pagination-row">
+          <button className="secondary-button compact-button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">
+            <ChevronLeft size={16} aria-hidden="true" />
+            Previous
+          </button>
+          <span>Page {page} of {totalPages}</span>
+          <button className="secondary-button compact-button" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)} type="button">
+            Next
+            <ChevronRight size={16} aria-hidden="true" />
+          </button>
+        </div>
       </div>
 
       {selectedItem?.body ? (
@@ -2364,6 +2369,34 @@ function ResearchHistoryView() {
 }
 
 function ResearchPreviewModal({ item, onAddNote, onClose }) {
+  const [notes, setNotes] = useState([]);
+  const [notesStatus, setNotesStatus] = useState("loading");
+  const [notesError, setNotesError] = useState("");
+
+  useEffect(() => {
+    let ignore = false;
+    const loadNotes = async () => {
+      setNotesStatus("loading");
+      setNotesError("");
+      try {
+        const payload = await requestJson(`/api/notes?research_item_id=${encodeURIComponent(item.id)}&page_size=100`, { method: "GET" });
+        if (!ignore) {
+          setNotes(payload.items ?? []);
+          setNotesStatus("ready");
+        }
+      } catch (err) {
+        if (!ignore) {
+          setNotesError(err instanceof Error ? err.message : "Unable to load research notes.");
+          setNotesStatus("error");
+        }
+      }
+    };
+    loadNotes();
+    return () => {
+      ignore = true;
+    };
+  }, [item.id]);
+
   return (
     <div className="modal-backdrop report-preview-backdrop" onMouseDown={onClose}>
       <section className="modal-panel research-preview-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
@@ -2387,6 +2420,17 @@ function ResearchPreviewModal({ item, onAddNote, onClose }) {
         </div>
         <div className="research-preview-content">
           <ResearchResultContent payload={item.body} />
+          {notesError ? <p className="error">{notesError}</p> : null}
+          {notes.length ? (
+            <section className="research-preview-notes">
+              <div className="research-card-header">
+                <h3>Research notes</h3>
+              </div>
+              <div className="notes-stack research-preview-notes-stack">
+                {notes.map((note) => <NoteCard editable={false} key={note.id} note={note} />)}
+              </div>
+            </section>
+          ) : null}
         </div>
       </section>
     </div>
