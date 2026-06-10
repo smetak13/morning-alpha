@@ -2230,7 +2230,7 @@ def render_shared_research_email(
               <div style="color:#a7a7a0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Shared research</div>
               <h1 style="color:#ffffff;font-size:28px;line-height:1.15;margin:8px 0 10px;">{html_escape(email_title)}</h1>
               <p style="color:#d7d7d0;font-size:14px;line-height:1.55;margin:0 0 16px;">{html_escape(sender_name)} shared this Morning Alpha research with you.</p>
-              <div style="margin-top:18px;">
+              <div style="margin-top:30px;">
                 {cta_html}
               </div>
             </div>
