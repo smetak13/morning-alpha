@@ -1198,7 +1198,7 @@ textarea:focus {
 }
 
 .research-history-actions-col {
-  width: 72px;
+  width: 116px;
 }
 
 .research-signal-pill {
@@ -1217,6 +1217,10 @@ textarea:focus {
   overflow: auto;
   scrollbar-color: #3a3a3a #151515;
   width: min(1080px, 100%);
+}
+
+.share-research-panel {
+  width: min(560px, 100%);
 }
 
 .research-preview-content {

@@ -17,6 +17,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Share2,
   Sparkles,
   Trash2,
   UserPlus,
@@ -2144,6 +2145,7 @@ function ResearchHistoryView() {
   const [selectedItem, setSelectedItem] = useState(null);
   const [notesModal, setNotesModal] = useState(null);
   const [noteFormItem, setNoteFormItem] = useState(null);
+  const [shareTarget, setShareTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [notesRevision, setNotesRevision] = useState(0);
   const [status, setStatus] = useState("loading");
@@ -2295,7 +2297,10 @@ function ResearchHistoryView() {
                         <Plus size={17} aria-hidden="true" />
                       </button>
                     </td>
-                    <td className="actions-cell">
+                  <td className="actions-cell">
+                      <button className="icon-button" onClick={(event) => { event.stopPropagation(); setShareTarget(item); }} title="Share research" type="button">
+                        <Share2 size={17} aria-hidden="true" />
+                      </button>
                       <button className="icon-button danger" onClick={(event) => { event.stopPropagation(); setDeleteTarget(item); }} title="Delete research" type="button">
                         <Trash2 size={17} aria-hidden="true" />
                       </button>
@@ -2330,6 +2335,7 @@ function ResearchHistoryView() {
         <ResearchPreviewModal
           item={selectedItem}
           onAddNote={() => setNoteFormItem(selectedItem)}
+          onShare={() => setShareTarget(selectedItem)}
           onClose={() => setSelectedItem(null)}
         />
       ) : null}
@@ -2364,11 +2370,18 @@ function ResearchHistoryView() {
           title={`Delete research for ${deleteTarget.symbol}?`}
         />
       ) : null}
+      {shareTarget ? (
+        <ShareResearchModal
+          item={shareTarget}
+          onClose={() => setShareTarget(null)}
+          onShared={() => setShareTarget(null)}
+        />
+      ) : null}
     </section>
   );
 }
 
-function ResearchPreviewModal({ item, onAddNote, onClose }) {
+function ResearchPreviewModal({ item, onAddNote, onShare, onClose }) {
   const [notes, setNotes] = useState([]);
   const [notesStatus, setNotesStatus] = useState("loading");
   const [notesError, setNotesError] = useState("");
@@ -2413,6 +2426,10 @@ function ResearchPreviewModal({ item, onAddNote, onClose }) {
               <Plus size={16} aria-hidden="true" />
               Add note
             </button>
+            <button className="secondary-button compact-button" onClick={onShare} type="button">
+              <Share2 size={16} aria-hidden="true" />
+              Share research
+            </button>
             <button className="icon-button" onClick={onClose} title="Close" type="button">
               <X size={18} aria-hidden="true" />
             </button>
@@ -2431,6 +2448,68 @@ function ResearchPreviewModal({ item, onAddNote, onClose }) {
               </div>
             </section>
           ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ShareResearchModal({ item, onClose, onShared }) {
+  const [recipientEmail, setRecipientEmail] = useState("");
+  const [message, setMessage] = useState("");
+  const [status, setStatus] = useState("idle");
+  const [error, setError] = useState("");
+
+  const share = async () => {
+    setStatus("sending");
+    setError("");
+    try {
+      await requestJson(`/api/research-items/${item.id}/share`, {
+        method: "POST",
+        body: JSON.stringify({
+          recipient_email: recipientEmail,
+          message,
+        }),
+      });
+      await onShared();
+    } catch (err) {
+      setStatus("error");
+      setError(err instanceof Error ? err.message : "Unable to share research.");
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section className="modal-panel share-research-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Share research</p>
+            <h2>{item.symbol}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Close" type="button">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="note-form-grid">
+          <label>
+            Recipient email
+            <input autoFocus onChange={(event) => setRecipientEmail(event.target.value)} placeholder="friend@example.com" type="email" value={recipientEmail} />
+          </label>
+          <label>
+            Message
+            <textarea onChange={(event) => setMessage(event.target.value)} placeholder="Add a short note..." rows={5} value={message} />
+          </label>
+          <p className="muted">The email will include this research along with your research notes.</p>
+        </div>
+        {error ? <p className="error">{error}</p> : null}
+        <div className="modal-actions">
+          <button className="secondary-button" onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button className="primary-button" disabled={status === "sending" || !recipientEmail.trim()} onClick={share} type="button">
+            <Share2 size={18} aria-hidden="true" />
+            {status === "sending" ? "Sending..." : "Share research"}
+          </button>
         </div>
       </section>
     </div>

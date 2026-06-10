@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import html
 import datetime as dt
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -168,6 +169,11 @@ class CompanyResearchRequest(BaseModel):
     company_name: str | None = None
     date_from: str | None = None
     date_to: str | None = None
+
+
+class ShareResearchRequest(BaseModel):
+    recipient_email: str
+    message: str | None = None
 
 
 def create_app() -> FastAPI:
@@ -1859,6 +1865,414 @@ def serialize_research_item_row(row: dict[str, Any], include_body: bool = False)
     return payload
 
 
+def validate_share_email(value: str) -> str:
+    email_value = (value or "").strip()
+    if not email_value or "@" not in email_value or "." not in email_value.rsplit("@", 1)[-1]:
+        raise HTTPException(status_code=422, detail="Enter a valid recipient email.")
+    return email_value
+
+
+def app_public_url() -> str:
+    return (os.getenv("API_PUBLIC_URL") or "http://localhost:8000").strip().rstrip("/")
+
+
+def html_escape(value: Any) -> str:
+    return html.escape(str(value or ""), quote=True)
+
+
+def html_email_text(value: Any) -> str:
+    return html_escape(value).replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+
+
+def email_spacer(height: int = 14) -> str:
+    return f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;"><tr><td height="{height}" style="font-size:{height}px;line-height:{height}px;">&nbsp;</td></tr></table>'
+
+
+def render_research_email_panel(title: str, content_html: str) -> str:
+    return f"""
+    {email_spacer(14)}
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;">
+      <tr>
+        <td width="3" bgcolor="#f3c42e" style="background:#f3c42e;border-radius:8px 0 0 8px;font-size:0;line-height:0;width:3px;">&nbsp;</td>
+        <td bgcolor="#181818" style="background:#181818;border:1px solid #2a2a2a;border-color:#2a2a2a;border-left:0;border-radius:0 8px 8px 0;mso-border-alt:solid #2a2a2a 1pt;padding:16px;">
+          <h3 style="color:#ffffff;font-size:18px;line-height:1.25;margin:0 0 13px;">{html_escape(title)}</h3>
+          {content_html}
+        </td>
+      </tr>
+    </table>
+    """
+
+
+def research_email_label(value: str | None) -> str:
+    return {
+        "portfolio_check": "Portfolio thesis check",
+        "watchlist_check": "Watchlist entry check",
+        "company_primer": "Company primer",
+    }.get(value or "", py_human_label(value or "Research"))
+
+
+def py_human_label(value: Any) -> str:
+    return " ".join(str(value or "").replace("_", " ").split()).title()
+
+
+def compact_email_number(value: Any, prefix: str = "", suffix: str = "") -> str:
+    number = None
+    try:
+        if value is not None and value != "":
+            number = float(value)
+    except (TypeError, ValueError):
+        number = None
+    if number is None:
+        return "N/A"
+    abs_number = abs(number)
+    if abs_number >= 1_000_000_000_000:
+        formatted = f"{number / 1_000_000_000_000:.1f}T"
+    elif abs_number >= 1_000_000_000:
+        formatted = f"{number / 1_000_000_000:.1f}B"
+    elif abs_number >= 1_000_000:
+        formatted = f"{number / 1_000_000:.1f}M"
+    elif abs_number >= 100:
+        formatted = f"{number:.0f}"
+    else:
+        formatted = f"{number:.2f}".rstrip("0").rstrip(".")
+    return f"{prefix}{formatted}{suffix}"
+
+
+def research_email_metric_value(key: str, value: Any) -> str:
+    if key in {"price", "year_high", "year_low"}:
+        return compact_email_number(value, prefix="$")
+    if key == "market_cap":
+        return compact_email_number(value)
+    if "growth" in key or "margin" in key or "yield" in key:
+        return compact_email_number(value, suffix="%")
+    return compact_email_number(value)
+
+
+def research_email_metrics(body: dict[str, Any]) -> list[tuple[str, str]]:
+    metrics = (((body or {}).get("market_data") or {}).get("metrics") or {})
+    labels = {
+        "price": "Price",
+        "market_cap": "Market cap",
+        "pe": "P/E TTM",
+        "ps": "P/S TTM",
+        "ev_to_ebitda": "EV/EBITDA",
+        "fcf_yield_pct": "FCF yield",
+        "eps": "EPS",
+        "revenue_growth_3y_pct": "Revenue growth 3Y",
+        "eps_growth_3y_pct": "EPS growth 3Y",
+        "eps_growth_5y_pct": "EPS growth 5Y",
+        "revenue_per_share": "Revenue/share",
+        "gross_margin_pct": "Gross margin",
+        "operating_margin_pct": "Operating margin",
+        "net_margin_pct": "Net margin",
+        "year_high": "52W high",
+        "year_low": "52W low",
+    }
+    return [(label, research_email_metric_value(key, metrics.get(key))) for key, label in labels.items()]
+
+
+def render_research_email_list(title: str, items: Any) -> str:
+    if not isinstance(items, list) or not items:
+        return ""
+    rows = "".join(
+        f"""
+        <tr>
+          <td width="34" style="width:34px;vertical-align:top;padding:12px 10px 12px 0;border-top:1px solid #303030;border-top-color:#303030;color:#f3c42e;font-weight:700;mso-border-top-alt:solid #303030 1pt;">{index:02d}</td>
+          <td style="padding:12px 0;border-top:1px solid #303030;border-top-color:#303030;color:#d7d7d0;font-size:14px;line-height:1.55;mso-border-top-alt:solid #303030 1pt;">{html_email_text(item if isinstance(item, str) else json.dumps(item, ensure_ascii=False))}</td>
+        </tr>
+        """
+        for index, item in enumerate(items, start=1)
+    )
+    return render_research_email_panel(title, f"<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" style=\"border-collapse:collapse;\">{rows}</table>")
+
+
+def render_research_email_assessments(title: str, items: Any, title_key: str) -> str:
+    if not isinstance(items, list) or not items:
+        return ""
+    blocks = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        evidence_items = item.get("evidence") if isinstance(item.get("evidence"), list) else []
+        evidence_html = ""
+        if evidence_items:
+            evidence_html = "<ul style=\"margin:8px 0 0 18px;padding:0;color:#d7d7d0;line-height:1.5;\">" + "".join(
+                f"<li>{html_email_text(point.get('text') if isinstance(point, dict) else point)}</li>"
+                for point in evidence_items
+            ) + "</ul>"
+        blocks.append(
+            f"""
+            {email_spacer(10)}
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin-top:10px;">
+              <tr>
+                <td bgcolor="#0d0d0d" style="background:#0d0d0d;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;padding:12px;">
+                  <strong style="color:#ffffff;font-size:14px;line-height:1.35;">{html_escape(item.get(title_key) or "Item")}</strong>
+                  <p style="color:#d7d7d0;font-size:14px;line-height:1.55;margin:8px 0 0;">{html_email_text(item.get("assessment") or "")}</p>
+                  {evidence_html}
+                </td>
+              </tr>
+            </table>
+            """
+        )
+    if not blocks:
+        return ""
+    return render_research_email_panel(title, "".join(blocks))
+
+
+def render_research_email_articles(title: str, items: Any) -> str:
+    if not isinstance(items, list) or not items:
+        return ""
+    blocks = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        link = item.get("source_url")
+        link_html = f"<a href=\"{html_escape(link)}\" style=\"color:#f3c42e;text-decoration:none;\">Full article</a>" if link else ""
+        blocks.append(
+            f"""
+            {email_spacer(10)}
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin-top:10px;">
+              <tr>
+                <td bgcolor="#0d0d0d" style="background:#0d0d0d;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;padding:12px;">
+                  <strong style="color:#ffffff;font-size:14px;line-height:1.35;">{html_escape(item.get("headline") or "Article")}</strong>
+                  <p style="color:#d7d7d0;font-size:14px;line-height:1.55;margin:8px 0;">{html_email_text(item.get("summary") or "")}</p>
+                  {link_html}
+                </td>
+              </tr>
+            </table>
+            """
+        )
+    return render_research_email_panel(title, "".join(blocks))
+
+
+def render_research_email_body(body: dict[str, Any]) -> str:
+    research = (body or {}).get("research") or {}
+    mode = (body or {}).get("mode")
+    sections = []
+    if mode == "portfolio":
+        sections.extend(
+            [
+                render_research_email_list("Executive summary", research.get("executive_summary")),
+                render_research_email_assessments("Thesis check", research.get("thesis_check"), "field"),
+                render_research_email_articles("Recent developments", research.get("recent_developments")),
+                render_research_email_list("Risks to watch", research.get("risks_to_watch")),
+                render_research_email_list("Suggested next steps", research.get("suggested_next_steps")),
+            ]
+        )
+    elif mode == "watchlist":
+        sections.extend(
+            [
+                render_research_email_list("Executive summary", research.get("executive_summary")),
+                render_research_email_assessments("Entry conditions check", research.get("entry_conditions_check"), "condition"),
+                render_research_email_articles("Recent developments", research.get("recent_developments")),
+                render_research_email_list("Still missing", research.get("still_missing")),
+                render_research_email_list("Suggested next steps", research.get("suggested_next_steps")),
+            ]
+        )
+    else:
+        for key, title in [
+            ("company_overview", "Company overview"),
+            ("business_model", "Business model"),
+            ("products_and_customers", "Products and customers"),
+            ("current_situation", "Current situation"),
+            ("future_outlook", "Future outlook"),
+            ("bull_case", "Bull case"),
+            ("bear_case", "Bear case"),
+            ("what_to_understand_next", "What to understand next"),
+        ]:
+            sections.append(render_research_email_list(title, research.get(key)))
+    return "".join(section for section in sections if section)
+
+
+def render_shared_research_email(
+    *,
+    research_item: dict[str, Any],
+    notes: list[dict[str, Any]],
+    sender: dict[str, Any] | None,
+    message: str | None,
+) -> str:
+    body = research_item.get("body") if isinstance(research_item.get("body"), dict) else {}
+    stock = body.get("stock") if isinstance(body.get("stock"), dict) else {}
+    research = body.get("research") if isinstance(body.get("research"), dict) else {}
+    sender_name = (sender or {}).get("display_name") or (sender or {}).get("email") or "A Morning Alpha user"
+    signal = research.get("signal") or research.get("watchlist_suitability") or research_item.get("signal")
+    stock_symbol = str(stock.get("symbol") or research_item.get("symbol") or "").upper()
+    company_name = stock.get("company_name") or research_item.get("company_name") or stock_symbol
+    stock_logo_src = stock.get("logo_url") or research_item.get("logo_url") or (stock_logo_url(stock_symbol) if stock_symbol else None)
+    email_title = f"{research_email_label(research_item.get('research_type'))} for {company_name or stock_symbol}"
+    metric_cells = [
+        f"""
+        <td width="50%" style="width:50%;padding:6px;vertical-align:top;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;">
+            <tr>
+              <td bgcolor="#0d0d0d" style="background:#0d0d0d;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;padding:10px;">
+                <div style="color:#a7a7a0;font-size:12px;line-height:1.25;">{html_escape(label)}</div>
+                <div style="color:#ffffff;font-size:15px;font-weight:700;line-height:1.25;margin-top:4px;">{html_escape(value)}</div>
+              </td>
+            </tr>
+          </table>
+        </td>
+        """
+        for label, value in research_email_metrics(body)
+    ]
+    metric_rows = "".join(f"<tr>{''.join(metric_cells[index:index + 2])}</tr>" for index in range(0, len(metric_cells), 2))
+    notes_html = ""
+    if notes:
+        note_blocks = "".join(
+            f"""
+            {email_spacer(10)}
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin-top:10px;">
+              <tr>
+                <td bgcolor="#0d0d0d" style="background:#0d0d0d;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;padding:12px;">
+                  <p style="color:#d7d7d0;font-size:14px;line-height:1.55;margin:0;">{html_email_text(note.get("body"))}</p>
+                  <p style="color:#a7a7a0;font-size:12px;line-height:1.4;margin:18px 0 0;">Created {html_escape(note.get("created_at"))}</p>
+                </td>
+              </tr>
+            </table>
+            """
+            for note in notes
+        )
+        notes_html = render_research_email_panel(f"Notes from {sender_name}", note_blocks)
+    app_url = app_public_url()
+    logo_src = None
+    cta_button_src = None
+    try:
+        from report import email_asset_src
+
+        logo_src = email_asset_src("ma-logo.png")
+        cta_button_src = email_asset_src("create-account-button.png")
+    except Exception:
+        logo_src = None
+        cta_button_src = None
+    logo_html = (
+        f"<img src=\"{logo_src}\" width=\"270\" height=\"50\" alt=\"Morning Alpha\" style=\"border:0;display:block;height:auto;line-height:0;max-width:270px;width:270px;\">"
+        if logo_src
+        else "<strong style=\"color:#ffffff;font-size:20px;\">Morning Alpha</strong>"
+    )
+    cta_html = (
+        f"""
+        <a href="{html_escape(app_url)}" style="border:0;display:inline-block;text-decoration:none;">
+          <img src="{cta_button_src}" width="360" height="56" alt="Create your Morning Alpha account" style="border:0;display:block;height:56px;line-height:0;max-width:100%;width:360px;">
+        </a>
+        """
+        if cta_button_src
+        else f"""
+        <table border="0" cellpadding="0" cellspacing="0" role="presentation">
+          <tr>
+            <td bgcolor="#f3c42e" style="background:#f3c42e;border-radius:8px;mso-padding-alt:14px 18px;">
+              <a href="{html_escape(app_url)}" style="background:#f3c42e;color:#111111;display:inline-block;font-size:16px;font-weight:700;line-height:20px;padding:14px 18px;text-decoration:none;">Create your account</a>
+            </td>
+          </tr>
+        </table>
+        """
+    )
+    message_html = (
+        f"""
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin:0 0 14px;">
+          <tr>
+            <td bgcolor="#0d0d0d" style="background:#0d0d0d;border:1px solid #343434;border-color:#343434;border-radius:8px;mso-border-alt:solid #343434 1pt;padding:14px;">
+              <div style="color:#a7a7a0;font-size:12px;line-height:1.35;margin-bottom:6px;">Message from {html_escape(sender_name)}</div>
+              <p style="color:#ffffff;font-size:14px;line-height:1.55;margin:0;">{html_email_text(message)}</p>
+            </td>
+          </tr>
+        </table>
+        {email_spacer(14)}
+        """
+        if message
+        else ""
+    )
+    company_logo_html = (
+        f"<img src=\"{html_escape(stock_logo_src)}\" width=\"46\" height=\"46\" alt=\"{html_escape(stock_symbol)}\" style=\"background:#ffffff;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;display:block;height:46px;mso-border-alt:solid #2a2a2a 1pt;width:46px;\">"
+        if stock_logo_src
+        else f"<div style=\"background:#0d0d0d;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;color:#f3c42e;font-size:16px;font-weight:700;line-height:46px;mso-border-alt:solid #2a2a2a 1pt;text-align:center;width:46px;\">{html_escape(stock_symbol[:2])}</div>"
+    )
+    company_panel_html = f"""
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin:0 0 14px;">
+      <tr>
+        <td bgcolor="#181818" style="background:#181818;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;padding:16px;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+            <tr>
+              <td width="58" style="width:58px;vertical-align:top;padding:0 12px 0 0;">{company_logo_html}</td>
+              <td style="vertical-align:top;padding:0;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                  <tr>
+                    <td style="vertical-align:top;padding:0 12px 0 0;">
+                      <div style="color:#ffffff;font-size:18px;font-weight:700;line-height:1.25;">{html_escape(stock_symbol)}</div>
+                      <div style="color:#d7d7d0;font-size:14px;line-height:1.4;margin-top:2px;">{html_escape(company_name)}</div>
+                    </td>
+                    <td align="right" style="vertical-align:top;padding:0;text-align:right;">
+                      <span style="background:#080808;border:1px solid #5a4a16;border-color:#5a4a16;border-radius:999px;color:#f3c42e;display:inline-block;font-size:12px;font-weight:700;line-height:1.2;mso-border-alt:solid #5a4a16 1pt;padding:7px 10px;white-space:nowrap;">{html_escape(py_human_label(signal or "Research"))}</span>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+    {email_spacer(14)}
+    """
+    return f"""
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <base target="_blank">
+        <title>Shared Morning Alpha research</title>
+      </head>
+      <body style="margin:0;padding:0;background:#080808;color:#f4f4f0;font-family:Arial,Helvetica,sans-serif;">
+        <div style="background:#080808;padding:28px 12px;">
+          <div style="max-width:760px;margin:0 auto;background:#111111;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;overflow:hidden;">
+            <div style="background:#151515;border-bottom:1px solid #2a2a2a;border-bottom-color:#2a2a2a;mso-border-bottom-alt:solid #2a2a2a 1pt;padding:26px 28px 22px;">
+              <div style="margin-bottom:26px;">{logo_html}</div>
+              <div style="color:#a7a7a0;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Shared research</div>
+              <h1 style="color:#ffffff;font-size:28px;line-height:1.15;margin:8px 0 10px;">{html_escape(email_title)}</h1>
+              <p style="color:#d7d7d0;font-size:14px;line-height:1.55;margin:0 0 16px;">{html_escape(sender_name)} shared this Morning Alpha research with you.</p>
+              <div style="margin-top:18px;">
+                {cta_html}
+              </div>
+            </div>
+            <div style="padding:24px 28px 28px;">
+              {message_html}
+              {company_panel_html}
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin:0 0 14px 0;">
+                <tr>
+                  <td bgcolor="#181818" style="background:#181818;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;padding:16px;">
+                    <h3 style="color:#ffffff;font-size:18px;line-height:1.25;margin:0 0 10px;">Key metrics</h3>
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;table-layout:fixed;">{metric_rows}</table>
+                  </td>
+                </tr>
+              </table>
+              {render_research_email_body(body)}
+              {notes_html}
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin:18px 0 0;">
+                <tr>
+                  <td width="4" bgcolor="#f3c42e" style="background-color:#f3c42e;background:#f3c42e;border-radius:8px 0 0 8px;font-size:0;line-height:0;width:4px;">&nbsp;</td>
+                  <td bgcolor="#5a4a16" style="background-color:#5a4a16;background:#5a4a16;border-radius:0 8px 8px 0;padding:1px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;">
+                      <tr>
+                        <td bgcolor="#17150f" style="background-color:#17150f;background:#17150f;border-radius:0 7px 7px 0;padding:18px;">
+                          <a href="{html_escape(app_url)}" style="color:#ffffff;text-decoration:none;">
+                            <strong style="color:#ffffff;display:block;font-size:19px;line-height:1.25;margin-bottom:6px;">Build your own investment research workflow</strong>
+                            <span style="color:#d7d7d0;display:block;font-size:14px;line-height:1.5;">Track portfolio theses, watchlist entry conditions, research notes, and daily market reports in Morning Alpha.</span>
+                            <span style="color:#f3c42e;display:block;font-size:14px;font-weight:700;margin-top:12px;">Join Morning Alpha</span>
+                          </a>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+
 @app.get("/api/reports")
 def list_reports(
     request: Request,
@@ -2080,6 +2494,58 @@ def delete_research_item(research_item_id: str, request: Request) -> dict[str, A
             if cursor.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Research item not found.")
     return {"deleted": True}
+
+
+@app.post("/api/research-items/{research_item_id}/share")
+def share_research_item(research_item_id: str, payload: ShareResearchRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    recipient_email = validate_share_email(payload.recipient_email)
+    from psycopg.rows import dict_row
+    from report import send_email
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                RESEARCH_ITEM_SELECT
+                + """
+                where research_items.id::text = %(id)s
+                  and research_items.user_id = %(user_id)s
+                group by research_items.id, stocks.id
+                """,
+                {"id": research_item_id, "user_id": user_id},
+            )
+            research_row = cursor.fetchone()
+            if not research_row:
+                raise HTTPException(status_code=404, detail="Research item not found.")
+            cursor.execute(
+                NOTE_SELECT
+                + """
+                where notes.research_item_id::text = %(id)s
+                  and notes.user_id = %(user_id)s
+                order by notes.created_at desc
+                """,
+                {"id": research_item_id, "user_id": user_id},
+            )
+            note_rows = cursor.fetchall()
+
+    research_item = serialize_research_item_row(dict(research_row), include_body=True)
+    notes = [serialize_note_row(dict(row)) for row in note_rows]
+    sender = get_user_profile(user_id)
+    sender_name = (sender or {}).get("display_name") or (sender or {}).get("email") or "Morning Alpha user"
+    subject = f"{research_email_label(research_item['research_type'])} for {research_item['symbol']} shared by {sender_name}"
+    email_html = render_shared_research_email(
+        research_item=research_item,
+        notes=notes,
+        sender=sender,
+        message=(payload.message or "").strip() or None,
+    )
+    try:
+        send_email(subject, email_html, recipient_email=recipient_email)
+    except SystemExit as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Unable to send research email: {exc}") from exc
+    return {"sent": True}
 
 
 def serialize_note_row(row: dict[str, Any]) -> dict[str, Any]:
