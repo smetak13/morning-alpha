@@ -12,12 +12,16 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from database import connection
-from report import load_dotenv_if_available, run_report_for_user
+from report import load_dotenv_if_available, load_yaml, run_report_for_user
+from sync_stocks import fmp_client, fetch_active_stocks, sync_stocks
 
 
 DEFAULT_TIMEZONE = "Europe/Prague"
 SCHEDULER_INTERVAL_MINS = int(os.getenv("SCHEDULER_INTERVAL_MINS", "30"))
 UTC = dt.timezone.utc
+PRAGUE_TZ = ZoneInfo(DEFAULT_TIMEZONE)
+STOCK_SYNC_MIN_SYMBOL_COUNT = int(os.getenv("STOCK_SYNC_MIN_SYMBOL_COUNT", "10000"))
+_last_stock_sync_date: dt.date | None = None
 
 
 @dataclass(frozen=True)
@@ -193,10 +197,56 @@ def process_queue(
     logging.info("Scheduler cycle finished total=%s completed=%s failed=%s", total, completed, failed)
 
 
+def stock_sync_is_due(run_at_utc: dt.datetime) -> bool:
+    global _last_stock_sync_date
+    local_run_at = run_at_utc.astimezone(PRAGUE_TZ)
+    if local_run_at.hour != 0:
+        return False
+    if _last_stock_sync_date == local_run_at.date():
+        return False
+    return True
+
+
+def run_daily_stock_sync(args: argparse.Namespace, run_at_utc: dt.datetime) -> None:
+    global _last_stock_sync_date
+    if not stock_sync_is_due(run_at_utc):
+        return
+
+    local_date = run_at_utc.astimezone(PRAGUE_TZ).date()
+    logging.info(
+        "Starting daily stock sync local_date=%s timezone=%s min_symbol_count=%s",
+        local_date.isoformat(),
+        DEFAULT_TIMEZONE,
+        STOCK_SYNC_MIN_SYMBOL_COUNT,
+    )
+    try:
+        config_path = Path(args.config)
+        if not config_path.is_absolute():
+            config_path = Path(__file__).resolve().parent / config_path
+        config = load_yaml(config_path)
+        rows = fetch_active_stocks(fmp_client(config), min_symbol_count=STOCK_SYNC_MIN_SYMBOL_COUNT)
+        result = sync_stocks(rows, dry_run=False)
+    except Exception:
+        logging.exception("Daily stock sync failed local_date=%s", local_date.isoformat())
+        return
+
+    _last_stock_sync_date = local_date
+    logging.info(
+        "Daily stock sync finished local_date=%s fetched=%s inserted=%s reactivated=%s deactivated=%s",
+        local_date.isoformat(),
+        result["fetched"],
+        result["inserted"],
+        result["reactivated"],
+        result["deactivated"],
+    )
+
+
 def run_scheduler_cycle(args: argparse.Namespace, run_at_utc: dt.datetime | None = None) -> None:
     run_at = (run_at_utc or dt.datetime.now(tz=UTC)).astimezone(UTC)
     lookback = dt.timedelta(minutes=args.lookback_minutes)
     logging.info("Scheduler cycle started run_at_utc=%s lookback=%s", run_at.isoformat(), lookback)
+
+    run_daily_stock_sync(args, run_at)
 
     jobs = load_due_jobs(run_at, lookback)
     logging.info("Scheduler found %s due users", len(jobs))

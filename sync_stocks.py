@@ -23,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--min-symbol-count",
         type=int,
-        default=1000,
+        default=10000,
         help="Abort if FMP returns fewer symbols than this. Use 0 to disable.",
     )
     return parser.parse_args()
