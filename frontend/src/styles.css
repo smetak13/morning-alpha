@@ -312,7 +312,7 @@ input::placeholder {
 
 .main-content {
   margin: 0 auto;
-  max-width: 1120px;
+  max-width: 1300px;
   padding: 48px 28px;
 }
 
@@ -360,6 +360,24 @@ input::placeholder {
 .view-tab.active {
   background: #f4c430;
   color: #111111;
+  font-weight: 750;
+}
+
+.compact-tabs {
+  grid-template-columns: repeat(2, minmax(112px, 1fr));
+  justify-self: start;
+  margin-bottom: 0;
+  padding: 3px;
+}
+
+.compact-tabs .view-tab {
+  font-size: 0.86rem;
+  font-weight: 700;
+  min-height: 32px;
+  padding: 6px 10px;
+}
+
+.compact-tabs .view-tab.active {
   font-weight: 750;
 }
 
@@ -1102,6 +1120,109 @@ textarea:focus {
 
 .research-search-input .combo-icon-button {
   flex: 0 0 auto;
+}
+
+.research-history-toolbar {
+  align-items: start;
+}
+
+.research-history-filters {
+  display: grid;
+  gap: 12px;
+  justify-items: end;
+}
+
+.research-history-filter-row {
+  align-items: end;
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.research-history-company-filter {
+  min-width: 220px;
+}
+
+.research-type-filter {
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  display: inline-grid;
+  gap: 3px;
+  grid-template-columns: repeat(4, auto);
+  padding: 3px;
+}
+
+.research-type-filter button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #a7a7a0;
+  font-size: 0.82rem;
+  min-height: 34px;
+  padding: 6px 9px;
+}
+
+.research-type-filter button.active {
+  background: #f4c430;
+  color: #111111;
+  font-weight: 700;
+}
+
+.research-history-table {
+  min-width: 1080px;
+}
+
+.research-history-view .pagination-row {
+  margin-top: 12px;
+}
+
+.research-history-company-col {
+  width: auto;
+}
+
+.research-history-type-col {
+  width: 170px;
+}
+
+.research-history-signal-col {
+  width: 210px;
+}
+
+.research-history-table .report-notes-col {
+  width: 158px;
+}
+
+.research-history-actions-col {
+  width: 72px;
+}
+
+.research-signal-pill {
+  background: #0d0d0d;
+  border: 1px solid rgba(244, 196, 48, 0.34);
+  border-radius: 999px;
+  color: #f4c430;
+  display: inline-flex;
+  font-size: 0.76rem;
+  font-weight: 750;
+  padding: 5px 8px;
+}
+
+.research-preview-panel {
+  max-height: 96vh;
+  overflow: auto;
+  scrollbar-color: #3a3a3a #151515;
+  width: min(1080px, 100%);
+}
+
+.research-preview-content {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.selected-stock.no-margin {
+  margin-bottom: 0;
 }
 
 .research-run-button {
@@ -2075,7 +2196,13 @@ input[type="range"] {
 
   .report-filters,
   .research-controls,
+  .research-history-filters,
   .pagination-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .research-history-filter-row {
     align-items: stretch;
     flex-direction: column;
   }
@@ -2091,9 +2218,14 @@ input[type="range"] {
   }
 
   .research-company-search,
-  .research-search-results {
+  .research-search-results,
+  .research-history-company-filter {
     min-width: 0;
     width: 100%;
+  }
+
+  .research-type-filter {
+    grid-template-columns: 1fr 1fr;
   }
 
   .research-result-header {

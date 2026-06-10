@@ -1249,7 +1249,7 @@ function stockMatchesSearch(stock, search) {
   return `${stock.symbol} ${stock.company_name}`.toLowerCase().includes(normalized);
 }
 
-function NoteFormModal({ initialStock = null, report = null, onClose, onSaved }) {
+function NoteFormModal({ initialStock = null, report = null, researchItem = null, onClose, onSaved }) {
   const { error: stocksError, stocks } = useNoteStocks();
   const [search, setSearch] = useState("");
   const [selectedStock, setSelectedStock] = useState(initialStock);
@@ -1272,6 +1272,7 @@ function NoteFormModal({ initialStock = null, report = null, onClose, onSaved })
         body: JSON.stringify({
           stock_id: selectedStock.stock_id,
           report_id: report?.id ?? null,
+          research_item_id: researchItem?.id ?? null,
           body,
           is_resolved: isResolved,
         }),
@@ -1289,7 +1290,7 @@ function NoteFormModal({ initialStock = null, report = null, onClose, onSaved })
       <section className="modal-panel note-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="modal-header">
           <div>
-            <p className="eyebrow">{report ? `Report ${report.report_date}` : "Notes"}</p>
+            <p className="eyebrow">{report ? `Report ${report.report_date}` : researchItem ? `${researchItem.symbol} research` : "Notes"}</p>
             <h2>Add note</h2>
           </div>
           <button className="icon-button" onClick={onClose} title="Close" type="button">
@@ -1309,9 +1310,11 @@ function NoteFormModal({ initialStock = null, report = null, onClose, onSaved })
                     <span>{selectedStock.company_name}</span>
                   </div>
                 </div>
-                <button className="secondary-button compact-button" onClick={() => { setSelectedStock(null); setSearch(""); }} type="button">
-                  Change
-                </button>
+                {!researchItem ? (
+                  <button className="secondary-button compact-button" onClick={() => { setSelectedStock(null); setSearch(""); }} type="button">
+                    Change
+                  </button>
+                ) : null}
               </div>
             ) : (
               <div className="search-input">
@@ -1369,24 +1372,29 @@ function NoteFormModal({ initialStock = null, report = null, onClose, onSaved })
   );
 }
 
-function ReportNotesModal({ mode, report, revision = 0, onAddNote, onChanged, onClose }) {
+function ReportNotesModal({ mode, report = null, researchItem = null, revision = 0, onAddNote, onChanged, onClose }) {
   const [notes, setNotes] = useState([]);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
 
+  const targetId = report?.id ?? researchItem?.id;
+  const queryKey = report ? "report_id" : "research_item_id";
+  const title = report ? report.report_date : `${researchItem?.symbol} research`;
+  const emptyText = report ? "No notes for this report yet." : "No notes for this research yet.";
+
   const loadNotes = useCallback(async () => {
     setStatus("loading");
     setError("");
     try {
-      const payload = await requestJson(`/api/notes?report_id=${encodeURIComponent(report.id)}&page_size=100`, { method: "GET" });
+      const payload = await requestJson(`/api/notes?${queryKey}=${encodeURIComponent(targetId)}&page_size=100`, { method: "GET" });
       setNotes(payload.items ?? []);
       setStatus("ready");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load notes.");
       setStatus("error");
     }
-  }, [report.id]);
+  }, [queryKey, targetId]);
 
   useEffect(() => {
     loadNotes();
@@ -1425,8 +1433,8 @@ function ReportNotesModal({ mode, report, revision = 0, onAddNote, onChanged, on
       <section className="modal-panel note-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="modal-header">
           <div>
-            <p className="eyebrow">Report notes</p>
-            <h2>{report.report_date}</h2>
+            <p className="eyebrow">{report ? "Report notes" : "Research notes"}</p>
+            <h2>{title}</h2>
           </div>
           <div className="modal-header-actions">
             <button className="primary-button compact-button" onClick={onAddNote} type="button">
@@ -1452,13 +1460,13 @@ function ReportNotesModal({ mode, report, revision = 0, onAddNote, onChanged, on
               />
             ))
           ) : (
-            <p className="empty-table">{status === "loading" ? "Loading notes..." : "No notes for this report yet."}</p>
+            <p className="empty-table">{status === "loading" ? "Loading notes..." : emptyText}</p>
           )}
         </div>
         {deleteTarget ? (
           <ConfirmDialog
             item={deleteTarget}
-            message="This removes the note from this report."
+            message={report ? "This removes the note from this report." : "This removes the note from this research."}
             onCancel={() => setDeleteTarget(null)}
             onConfirm={async () => {
               await deleteNote(deleteTarget);
@@ -1882,7 +1890,20 @@ function defaultResearchWindow() {
   };
 }
 
+function defaultResearchHistoryFilters() {
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(today.getDate() - 30);
+  return {
+    date_from: dateInputValue(start),
+    date_to: dateInputValue(today),
+    stock_query: "",
+    research_type: "",
+  };
+}
+
 function ResearchView({ onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
+  const [researchMode, setResearchMode] = useState("new");
   const [search, setSearch] = useState("");
   const [results, setResults] = useState([]);
   const [selectedStock, setSelectedStock] = useState(null);
@@ -1947,6 +1968,16 @@ function ResearchView({ onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
 
   return (
     <section className="research-view">
+      <div className="view-tabs compact-tabs">
+        <button className={researchMode === "new" ? "view-tab active" : "view-tab"} onClick={() => setResearchMode("new")} type="button">
+          New research
+        </button>
+        <button className={researchMode === "history" ? "view-tab active" : "view-tab"} onClick={() => setResearchMode("history")} type="button">
+          History
+        </button>
+      </div>
+      {researchMode === "history" ? <ResearchHistoryView /> : (
+      <>
       <div className="reports-toolbar research-toolbar">
         <div>
           <p className="eyebrow">Company research</p>
@@ -2081,7 +2112,284 @@ function ResearchView({ onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
           onSaved={() => setShowNoteForm(false)}
         />
       ) : null}
+      </>
+      )}
     </section>
+  );
+}
+
+function researchTypeLabel(value) {
+  const labels = {
+    portfolio_check: "Portfolio check",
+    watchlist_check: "Watchlist check",
+    company_primer: "Company primer",
+  };
+  return labels[value] ?? researchHumanLabel(value || "Research");
+}
+
+function researchStockFromItem(item) {
+  return {
+    stock_id: item.stock_id,
+    symbol: item.symbol,
+    company_name: item.company_name,
+    logo_url: item.logo_url,
+    list_name: researchTypeLabel(item.research_type),
+  };
+}
+
+function ResearchHistoryView() {
+  const [filters, setFilters] = useState(defaultResearchHistoryFilters);
+  const [page, setPage] = useState(1);
+  const [payload, setPayload] = useState({ items: [], total: 0, page_size: 10 });
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [notesModal, setNotesModal] = useState(null);
+  const [noteFormItem, setNoteFormItem] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [notesRevision, setNotesRevision] = useState(0);
+  const [status, setStatus] = useState("loading");
+  const [error, setError] = useState("");
+  const totalPages = Math.max(1, Math.ceil((payload.total || 0) / (payload.page_size || 10)));
+
+  const loadHistory = useCallback(async () => {
+    setStatus("loading");
+    setError("");
+    try {
+      const query = new URLSearchParams({
+        date_from: filters.date_from,
+        date_to: filters.date_to,
+        page: String(page),
+        page_size: "10",
+      });
+      if (filters.stock_query.trim()) {
+        query.set("stock_query", filters.stock_query.trim());
+      }
+      if (filters.research_type) {
+        query.set("research_type", filters.research_type);
+      }
+      const nextPayload = await requestJson(`/api/research-items?${query.toString()}`, { method: "GET" });
+      setPayload(nextPayload);
+      setStatus("ready");
+    } catch (err) {
+      setStatus("error");
+      setError(err instanceof Error ? err.message : "Unable to load research history.");
+    }
+  }, [filters.date_from, filters.date_to, filters.research_type, filters.stock_query, page]);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
+
+  const updateFilter = (key, value) => {
+    setFilters((current) => ({ ...current, [key]: value }));
+    setPage(1);
+  };
+
+  const openItem = async (item) => {
+    setError("");
+    try {
+      const detail = await requestJson(`/api/research-items/${item.id}`, { method: "GET" });
+      setSelectedItem(detail.item);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to load research detail.");
+    }
+  };
+
+  const deleteItem = async (item) => {
+    setError("");
+    try {
+      await requestJson(`/api/research-items/${item.id}`, { method: "DELETE" });
+      setDeleteTarget(null);
+      if (selectedItem?.id === item.id) {
+        setSelectedItem(null);
+      }
+      await loadHistory();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to delete research.");
+    }
+  };
+
+  return (
+    <section className="reports-view research-history-view">
+      <div className="reports-toolbar research-history-toolbar">
+        <div>
+          <p className="eyebrow">Research archive</p>
+          <h2>Saved research</h2>
+        </div>
+        <div className="research-history-filters">
+          <div className="research-history-filter-row">
+            <label className="research-search-label research-history-company-filter">
+              Company
+              <div className="search-input research-search-input">
+                <Search size={18} aria-hidden="true" />
+                <input onChange={(event) => updateFilter("stock_query", event.target.value)} placeholder="Symbol or name" value={filters.stock_query} />
+              </div>
+            </label>
+            <ReportDateField label="From" value={filters.date_from} onChange={(value) => updateFilter("date_from", value)} />
+            <ReportDateField label="To" value={filters.date_to} onChange={(value) => updateFilter("date_to", value)} />
+          </div>
+          <div className="research-history-filter-row">
+            <div className="research-type-filter">
+              {[
+                ["", "All"],
+                ["portfolio_check", "Portfolio"],
+                ["watchlist_check", "Watchlist"],
+                ["company_primer", "Primer"],
+              ].map(([value, label]) => (
+                <button className={filters.research_type === value ? "active" : ""} key={value || "all"} onClick={() => updateFilter("research_type", value)} type="button">
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {error ? <p className="error">{error}</p> : null}
+
+      <div className="table-shell">
+        <table className="reports-table research-history-table">
+          <colgroup>
+            <col className="research-history-company-col" />
+            <col className="research-history-type-col" />
+            <col className="research-history-signal-col" />
+            <col className="report-created-col" />
+            <col className="report-notes-col" />
+            <col className="research-history-actions-col" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Company</th>
+              <th>Type</th>
+              <th>Signal</th>
+              <th>Created at</th>
+              <th className="actions-cell">Notes</th>
+              <th className="actions-cell">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {payload.items.length ? (
+              payload.items.map((item) => (
+                <tr key={item.id} onClick={() => openItem(item)}>
+                  <td>
+                    <div className="stock-cell">
+                      <img className="stock-logo" {...stockLogoProps(item.logo_url)} alt="" />
+                      <div>
+                        <strong>{item.symbol}</strong>
+                        <span>{item.company_name}</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td><span className="status-pill">{researchTypeLabel(item.research_type)}</span></td>
+                  <td><span className="research-signal-pill">{researchHumanLabel(item.signal || "Unknown")}</span></td>
+                  <td>{formatDateTime(item.created_at)}</td>
+                  <td className="actions-cell">
+                    <span className="notes-count-pill" title={`${item.note_count ?? 0} notes`}>{item.note_count ?? 0}</span>
+                    <button className="icon-button" onClick={(event) => { event.stopPropagation(); setNotesModal({ researchItem: item, mode: "view" }); }} title="View notes" type="button">
+                      <Eye size={17} aria-hidden="true" />
+                    </button>
+                    <button className="icon-button" onClick={(event) => { event.stopPropagation(); setNoteFormItem(item); }} title="Add note" type="button">
+                      <Plus size={17} aria-hidden="true" />
+                    </button>
+                  </td>
+                  <td className="actions-cell">
+                    <button className="icon-button danger" onClick={(event) => { event.stopPropagation(); setDeleteTarget(item); }} title="Delete research" type="button">
+                      <Trash2 size={17} aria-hidden="true" />
+                    </button>
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="empty-table" colSpan={6}>
+                  {status === "loading" ? "Loading research..." : "No research found for these filters."}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="pagination-row">
+        <button className="secondary-button compact-button" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} type="button">
+          <ChevronLeft size={16} aria-hidden="true" />
+          Previous
+        </button>
+        <span>Page {page} of {totalPages}</span>
+        <button className="secondary-button compact-button" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)} type="button">
+          Next
+          <ChevronRight size={16} aria-hidden="true" />
+        </button>
+      </div>
+
+      {selectedItem?.body ? (
+        <ResearchPreviewModal
+          item={selectedItem}
+          onAddNote={() => setNoteFormItem(selectedItem)}
+          onClose={() => setSelectedItem(null)}
+        />
+      ) : null}
+      {notesModal ? (
+        <ReportNotesModal
+          mode={notesModal.mode}
+          researchItem={notesModal.researchItem}
+          revision={notesRevision}
+          onAddNote={() => setNoteFormItem(notesModal.researchItem)}
+          onChanged={loadHistory}
+          onClose={() => setNotesModal(null)}
+        />
+      ) : null}
+      {noteFormItem ? (
+        <NoteFormModal
+          initialStock={researchStockFromItem(noteFormItem)}
+          researchItem={noteFormItem}
+          onClose={() => setNoteFormItem(null)}
+          onSaved={() => {
+            setNoteFormItem(null);
+            setNotesRevision((current) => current + 1);
+            loadHistory();
+          }}
+        />
+      ) : null}
+      {deleteTarget ? (
+        <ConfirmDialog
+          item={deleteTarget}
+          message="This removes the saved research and its linked notes."
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => deleteItem(deleteTarget)}
+          title={`Delete research for ${deleteTarget.symbol}?`}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+function ResearchPreviewModal({ item, onAddNote, onClose }) {
+  return (
+    <div className="modal-backdrop report-preview-backdrop" onMouseDown={onClose}>
+      <section className="modal-panel research-preview-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <div className="report-modal-header">
+          <div className="selected-stock no-margin">
+            <img className="stock-logo large" {...stockLogoProps(item.logo_url)} alt="" />
+            <div>
+              <p className="eyebrow">{researchTypeLabel(item.research_type)}</p>
+              <h2>{item.symbol} research</h2>
+            </div>
+          </div>
+          <div className="modal-header-actions">
+            <button className="primary-button compact-button" onClick={onAddNote} type="button">
+              <Plus size={16} aria-hidden="true" />
+              Add note
+            </button>
+            <button className="icon-button" onClick={onClose} title="Close" type="button">
+              <X size={18} aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+        <div className="research-preview-content">
+          <ResearchResultContent payload={item.body} />
+        </div>
+      </section>
+    </div>
   );
 }
 

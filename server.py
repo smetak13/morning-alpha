@@ -153,6 +153,7 @@ class UserSettingsUpdateRequest(BaseModel):
 class NoteCreateRequest(BaseModel):
     stock_id: str
     report_id: str | None = None
+    research_item_id: str | None = None
     body: str
     is_resolved: bool = False
 
@@ -1744,7 +1745,7 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Research generation failed: {exc}") from exc
 
-    return {
+    response_payload = {
         "mode": relationship,
         "stock": {
             "symbol": symbol,
@@ -1756,6 +1757,48 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
         "market_data": market_data,
         "research": research,
     }
+    from psycopg.types.json import Json
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            stock_id = item.get("stock_id") if item else get_or_create_stock(cursor, symbol, response_payload["stock"]["company_name"])
+            response_payload["stock"]["stock_id"] = stock_id
+            cursor.execute(
+                """
+                insert into public.research_items (
+                    user_id,
+                    stock_id,
+                    body,
+                    research_type,
+                    signal,
+                    date_from,
+                    date_to
+                )
+                values (
+                    %(user_id)s,
+                    %(stock_id)s,
+                    %(body)s,
+                    %(research_type)s,
+                    %(signal)s,
+                    %(date_from)s,
+                    %(date_to)s
+                )
+                returning id::text
+                """,
+                {
+                    "user_id": user_id,
+                    "stock_id": stock_id,
+                    "body": Json(response_payload),
+                    "research_type": research_type_for_mode(relationship),
+                    "signal": research_signal_from_body(response_payload),
+                    "date_from": date_from if relationship != "new" else None,
+                    "date_to": date_to if relationship != "new" else None,
+                },
+            )
+            inserted = cursor.fetchone()
+            response_payload["research_item_id"] = inserted["id"]
+
+    return response_payload
 
 
 def parse_report_date_filter(value: str | None, field_name: str) -> dt.date | None:
@@ -1777,6 +1820,42 @@ def serialize_report_row(row: dict[str, Any], include_html: bool = False) -> dic
     }
     if include_html:
         payload["html"] = row["html"]
+    return payload
+
+
+def research_type_for_mode(mode: str) -> str:
+    return {
+        "portfolio": "portfolio_check",
+        "watchlist": "watchlist_check",
+        "new": "company_primer",
+    }[mode]
+
+
+def research_signal_from_body(body: dict[str, Any]) -> str | None:
+    research = body.get("research") if isinstance(body, dict) else None
+    if not isinstance(research, dict):
+        return None
+    return research.get("signal") or research.get("watchlist_suitability")
+
+
+def serialize_research_item_row(row: dict[str, Any], include_body: bool = False) -> dict[str, Any]:
+    symbol = str(row["symbol"]).upper()
+    body = row.get("body") if isinstance(row.get("body"), dict) else None
+    payload = {
+        "id": str(row["id"]),
+        "stock_id": str(row["stock_id"]),
+        "symbol": symbol,
+        "company_name": row["company_name"],
+        "logo_url": stock_logo_url(symbol),
+        "research_type": row["research_type"],
+        "signal": row.get("signal"),
+        "date_from": row["date_from"].isoformat() if row.get("date_from") and hasattr(row["date_from"], "isoformat") else row.get("date_from"),
+        "date_to": row["date_to"].isoformat() if row.get("date_to") and hasattr(row["date_to"], "isoformat") else row.get("date_to"),
+        "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
+        "note_count": int(row.get("note_count") or 0),
+    }
+    if include_body:
+        payload["body"] = body or row.get("body")
     return payload
 
 
@@ -1879,6 +1958,130 @@ def get_report(report_id: str, request: Request) -> dict[str, Any]:
     return {"report": serialize_report_row(dict(row), include_html=True)}
 
 
+RESEARCH_ITEM_SELECT = """
+    select
+        research_items.id::text as id,
+        research_items.stock_id::text as stock_id,
+        research_items.body,
+        research_items.research_type,
+        research_items.signal,
+        research_items.date_from,
+        research_items.date_to,
+        research_items.created_at,
+        stocks.symbol,
+        stocks.company_name,
+        count(notes.id)::int as note_count
+    from public.research_items
+    join public.stocks on stocks.id = research_items.stock_id
+    left join public.notes
+      on notes.research_item_id = research_items.id
+     and notes.user_id = research_items.user_id
+"""
+
+
+@app.get("/api/research-items")
+def list_research_items(
+    request: Request,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    stock_query: str | None = None,
+    research_type: str | None = None,
+    page: int = 1,
+    page_size: int = 10,
+) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    parsed_date_from = parse_report_date_filter(date_from, "date_from")
+    parsed_date_to = parse_report_date_filter(date_to, "date_to")
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 50)
+    offset = (page - 1) * page_size
+    where_clauses = ["research_items.user_id = %(user_id)s"]
+    params: dict[str, Any] = {"user_id": user_id, "page_size": page_size, "offset": offset}
+    if parsed_date_from:
+        where_clauses.append("research_items.created_at::date >= %(date_from)s")
+        params["date_from"] = parsed_date_from
+    if parsed_date_to:
+        where_clauses.append("research_items.created_at::date <= %(date_to)s")
+        params["date_to"] = parsed_date_to
+    if research_type:
+        where_clauses.append("research_items.research_type = %(research_type)s")
+        params["research_type"] = research_type
+    if stock_query and stock_query.strip():
+        where_clauses.append("(stocks.symbol ilike %(stock_query)s or stocks.company_name ilike %(stock_query)s)")
+        params["stock_query"] = f"%{stock_query.strip()}%"
+    where_sql = " and ".join(where_clauses)
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                f"""
+                select count(*) as total
+                from public.research_items
+                join public.stocks on stocks.id = research_items.stock_id
+                where {where_sql}
+                """,
+                params,
+            )
+            total = int(cursor.fetchone()["total"] or 0)
+            cursor.execute(
+                RESEARCH_ITEM_SELECT
+                + f"""
+                where {where_sql}
+                group by research_items.id, stocks.id
+                order by research_items.created_at desc
+                limit %(page_size)s offset %(offset)s
+                """,
+                params,
+            )
+            rows = cursor.fetchall()
+
+    return {
+        "items": [serialize_research_item_row(dict(row)) for row in rows],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    }
+
+
+@app.get("/api/research-items/{research_item_id}")
+def get_research_item(research_item_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                RESEARCH_ITEM_SELECT
+                + """
+                where research_items.id::text = %(id)s
+                  and research_items.user_id = %(user_id)s
+                group by research_items.id, stocks.id
+                """,
+                {"id": research_item_id, "user_id": user_id},
+            )
+            row = cursor.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Research item not found.")
+    return {"item": serialize_research_item_row(dict(row), include_body=True)}
+
+
+@app.delete("/api/research-items/{research_item_id}")
+def delete_research_item(research_item_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "delete from public.research_items where id::text = %s and user_id = %s",
+                (research_item_id, user_id),
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Research item not found.")
+    return {"deleted": True}
+
+
 def serialize_note_row(row: dict[str, Any]) -> dict[str, Any]:
     symbol = str(row["symbol"]).upper()
     return {
@@ -1886,6 +2089,7 @@ def serialize_note_row(row: dict[str, Any]) -> dict[str, Any]:
         "user_id": str(row["user_id"]),
         "stock_id": str(row["stock_id"]),
         "report_id": str(row["report_id"]) if row.get("report_id") else None,
+        "research_item_id": str(row["research_item_id"]) if row.get("research_item_id") else None,
         "body": row["body"],
         "is_resolved": bool(row["is_resolved"]),
         "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
@@ -1894,6 +2098,7 @@ def serialize_note_row(row: dict[str, Any]) -> dict[str, Any]:
         "company_name": row["company_name"],
         "logo_url": stock_logo_url(symbol),
         "report_date": row["report_date"].isoformat() if row.get("report_date") and hasattr(row["report_date"], "isoformat") else row.get("report_date"),
+        "research_type": row.get("research_type"),
     }
 
 
@@ -1903,16 +2108,19 @@ NOTE_SELECT = """
         notes.user_id::text as user_id,
         notes.stock_id::text as stock_id,
         notes.report_id::text as report_id,
+        notes.research_item_id::text as research_item_id,
         notes.body,
         notes.is_resolved,
         notes.created_at,
         notes.updated_at,
         stocks.symbol,
         stocks.company_name,
-        reports.report_date
+        reports.report_date,
+        research_items.research_type
     from public.notes
     join public.stocks on stocks.id = notes.stock_id
     left join public.reports on reports.id = notes.report_id
+    left join public.research_items on research_items.id = notes.research_item_id
 """
 
 
@@ -1955,6 +2163,25 @@ def ensure_user_report(cursor: Any, user_id: str, report_id: str | None) -> None
     )
     if not cursor.fetchone():
         raise HTTPException(status_code=404, detail="Report not found.")
+
+
+def ensure_user_research_item(cursor: Any, user_id: str, research_item_id: str | None, stock_id: str | None = None) -> None:
+    if not research_item_id:
+        return
+    cursor.execute(
+        """
+        select stock_id::text as stock_id
+        from public.research_items
+        where id::text = %(research_item_id)s
+          and user_id = %(user_id)s
+        """,
+        {"research_item_id": research_item_id, "user_id": user_id},
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Research item not found.")
+    if stock_id and str(row["stock_id"]) != str(stock_id):
+        raise HTTPException(status_code=422, detail="Research note stock must match the research item.")
 
 
 @app.get("/api/notes/stocks")
@@ -2010,6 +2237,7 @@ def list_note_stocks(request: Request) -> dict[str, Any]:
 def list_notes(
     request: Request,
     report_id: str | None = None,
+    research_item_id: str | None = None,
     stock_id: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
@@ -2034,6 +2262,9 @@ def list_notes(
     if report_id:
         where_clauses.append("notes.report_id::text = %(report_id)s")
         params["report_id"] = report_id
+    if research_item_id:
+        where_clauses.append("notes.research_item_id::text = %(research_item_id)s")
+        params["research_item_id"] = research_item_id
     if stock_id:
         where_clauses.append("notes.stock_id::text = %(stock_id)s")
         params["stock_id"] = stock_id
@@ -2081,7 +2312,10 @@ def create_note(payload: NoteCreateRequest, request: Request) -> dict[str, Any]:
 
     with connection(row_factory=dict_row) as conn:
         with conn.cursor() as cursor:
-            ensure_user_stock(cursor, user_id, payload.stock_id)
+            if payload.research_item_id:
+                ensure_user_research_item(cursor, user_id, payload.research_item_id, payload.stock_id)
+            else:
+                ensure_user_stock(cursor, user_id, payload.stock_id)
             ensure_user_report(cursor, user_id, payload.report_id)
             cursor.execute(
                 """
@@ -2089,6 +2323,7 @@ def create_note(payload: NoteCreateRequest, request: Request) -> dict[str, Any]:
                     user_id,
                     stock_id,
                     report_id,
+                    research_item_id,
                     body,
                     is_resolved
                 )
@@ -2096,6 +2331,7 @@ def create_note(payload: NoteCreateRequest, request: Request) -> dict[str, Any]:
                     %(user_id)s,
                     %(stock_id)s,
                     %(report_id)s,
+                    %(research_item_id)s,
                     %(body)s,
                     %(is_resolved)s
                 )
@@ -2105,6 +2341,7 @@ def create_note(payload: NoteCreateRequest, request: Request) -> dict[str, Any]:
                     "user_id": user_id,
                     "stock_id": payload.stock_id,
                     "report_id": payload.report_id,
+                    "research_item_id": payload.research_item_id,
                     "body": note_body(payload.body),
                     "is_resolved": payload.is_resolved,
                 },
