@@ -2830,6 +2830,11 @@ function researchHumanLabel(value) {
   return String(value || "").replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function capitalizeFirst(value) {
+  const text = String(value || "").trim();
+  return text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}` : "";
+}
+
 function stripInlineSourceDomains(value) {
   return String(value || "").replace(/\s*\(([a-z0-9.-]+\.[a-z]{2,})(?:\/[^)]*)?\)/gi, "");
 }
@@ -2881,7 +2886,7 @@ function ResearchAssessmentList({ title, items, titleKey }) {
         {items?.length ? (
           items.map((item, index) => (
             <div className="research-assessment" key={`${title}-${index}`}>
-              <strong>{item?.[titleKey] || `Item ${index + 1}`}</strong>
+              <strong>{capitalizeFirst(item?.[titleKey]) || `Item ${index + 1}`}</strong>
               {item?.assessment ? <p>{stripInlineSourceDomains(item.assessment)}</p> : null}
               {Array.isArray(item?.evidence) && item.evidence.length ? (
                 <ul>
