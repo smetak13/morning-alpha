@@ -1891,15 +1891,10 @@ def email_spacer(height: int = 14) -> str:
 def render_research_email_panel(title: str, content_html: str) -> str:
     return f"""
     {email_spacer(14)}
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;">
-      <tr>
-        <td width="3" bgcolor="#f3c42e" style="background:#f3c42e;border-radius:8px 0 0 8px;font-size:0;line-height:0;width:3px;">&nbsp;</td>
-        <td bgcolor="#181818" style="background:#181818;border:1px solid #2a2a2a;border-color:#2a2a2a;border-left:0;border-radius:0 8px 8px 0;mso-border-alt:solid #2a2a2a 1pt;padding:16px;">
-          <h3 style="color:#ffffff;font-size:18px;line-height:1.25;margin:0 0 13px;">{html_escape(title)}</h3>
-          {content_html}
-        </td>
-      </tr>
-    </table>
+    <div style="background:#181818;border:1px solid #2a2a2a;border-left:4px solid #f3c42e;border-radius:8px;margin:0;padding:16px;">
+      <h3 style="color:#ffffff;font-size:18px;line-height:1.25;margin:0 0 15px;">{html_escape(title)}</h3>
+      {content_html}
+    </div>
     """
 
 
@@ -1913,6 +1908,11 @@ def research_email_label(value: str | None) -> str:
 
 def py_human_label(value: Any) -> str:
     return " ".join(str(value or "").replace("_", " ").split()).title()
+
+
+def py_capitalize_first(value: Any) -> str:
+    text = str(value or "").strip()
+    return text[:1].upper() + text[1:] if text else ""
 
 
 def compact_email_number(value: Any, prefix: str = "", suffix: str = "") -> str:
@@ -2003,15 +2003,11 @@ def render_research_email_assessments(title: str, items: Any, title_key: str) ->
         blocks.append(
             f"""
             {email_spacer(10)}
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin-top:10px;">
-              <tr>
-                <td bgcolor="#0d0d0d" style="background:#0d0d0d;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;padding:12px;">
-                  <strong style="color:#ffffff;font-size:14px;line-height:1.35;">{html_escape(item.get(title_key) or "Item")}</strong>
-                  <p style="color:#d7d7d0;font-size:14px;line-height:1.55;margin:8px 0 0;">{html_email_text(item.get("assessment") or "")}</p>
-                  {evidence_html}
-                </td>
-              </tr>
-            </table>
+            <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;margin:0;padding:12px;">
+              <strong style="color:#ffffff;font-size:14px;line-height:1.35;">{html_escape(py_capitalize_first(item.get(title_key) or "Item"))}</strong>
+              <p style="color:#d7d7d0;font-size:14px;line-height:1.55;margin:8px 0 0;">{html_email_text(item.get("assessment") or "")}</p>
+              {evidence_html}
+            </div>
             """
         )
     if not blocks:
@@ -2031,15 +2027,11 @@ def render_research_email_articles(title: str, items: Any) -> str:
         blocks.append(
             f"""
             {email_spacer(10)}
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin-top:10px;">
-              <tr>
-                <td bgcolor="#0d0d0d" style="background:#0d0d0d;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;padding:12px;">
-                  <strong style="color:#ffffff;font-size:14px;line-height:1.35;">{html_escape(item.get("headline") or "Article")}</strong>
-                  <p style="color:#d7d7d0;font-size:14px;line-height:1.55;margin:8px 0;">{html_email_text(item.get("summary") or "")}</p>
-                  {link_html}
-                </td>
-              </tr>
-            </table>
+            <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;margin:0;padding:12px;">
+              <strong style="color:#ffffff;font-size:14px;line-height:1.35;">{html_escape(item.get("headline") or "Article")}</strong>
+              <p style="color:#d7d7d0;font-size:14px;line-height:1.55;margin:8px 0;">{html_email_text(item.get("summary") or "")}</p>
+              {link_html}
+            </div>
             """
         )
     return render_research_email_panel(title, "".join(blocks))
@@ -2103,14 +2095,10 @@ def render_shared_research_email(
     metric_cells = [
         f"""
         <td width="50%" style="width:50%;padding:6px;vertical-align:top;">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;">
-            <tr>
-              <td bgcolor="#0d0d0d" style="background:#0d0d0d;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;padding:10px;">
-                <div style="color:#a7a7a0;font-size:12px;line-height:1.25;">{html_escape(label)}</div>
-                <div style="color:#ffffff;font-size:15px;font-weight:700;line-height:1.25;margin-top:4px;">{html_escape(value)}</div>
-              </td>
-            </tr>
-          </table>
+          <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;margin:0;padding:10px;">
+            <div style="color:#a7a7a0;font-size:12px;line-height:1.25;">{html_escape(label)}</div>
+            <div style="color:#ffffff;font-size:15px;font-weight:700;line-height:1.25;margin-top:4px;">{html_escape(value)}</div>
+          </div>
         </td>
         """
         for label, value in research_email_metrics(body)
@@ -2121,14 +2109,10 @@ def render_shared_research_email(
         note_blocks = "".join(
             f"""
             {email_spacer(10)}
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin-top:10px;">
-              <tr>
-                <td bgcolor="#0d0d0d" style="background:#0d0d0d;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;padding:12px;">
-                  <p style="color:#d7d7d0;font-size:14px;line-height:1.55;margin:0;">{html_email_text(note.get("body"))}</p>
-                  <p style="color:#a7a7a0;font-size:12px;line-height:1.4;margin:18px 0 0;">Created {html_escape(note.get("created_at"))}</p>
-                </td>
-              </tr>
-            </table>
+            <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;margin:0;padding:12px;">
+              <p style="color:#d7d7d0;font-size:14px;line-height:1.55;margin:0;">{html_email_text(note.get("body"))}</p>
+              <p style="color:#a7a7a0;font-size:12px;line-height:1.4;margin:18px 0 0;">Created {html_escape(note.get("created_at"))}</p>
+            </div>
             """
             for note in notes
         )
@@ -2152,7 +2136,7 @@ def render_shared_research_email(
     cta_html = (
         f"""
         <a href="{html_escape(app_url)}" style="border:0;display:inline-block;text-decoration:none;">
-          <img src="{cta_button_src}" width="360" height="56" alt="Create your Morning Alpha account" style="border:0;display:block;height:56px;line-height:0;max-width:100%;width:360px;">
+          <img src="{cta_button_src}" width="320" height="50" alt="Create your Morning Alpha account" style="border:0;display:block;height:50px;line-height:0;max-width:100%;width:320px;">
         </a>
         """
         if cta_button_src
@@ -2168,14 +2152,10 @@ def render_shared_research_email(
     )
     message_html = (
         f"""
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin:0 0 14px;">
-          <tr>
-            <td bgcolor="#0d0d0d" style="background:#0d0d0d;border:1px solid #343434;border-color:#343434;border-radius:8px;mso-border-alt:solid #343434 1pt;padding:14px;">
-              <div style="color:#a7a7a0;font-size:12px;line-height:1.35;margin-bottom:6px;">Message from {html_escape(sender_name)}</div>
-              <p style="color:#ffffff;font-size:14px;line-height:1.55;margin:0;">{html_email_text(message)}</p>
-            </td>
-          </tr>
-        </table>
+        <div style="background:#0d0d0d;border:1px solid #343434;border-radius:8px;margin:0 0 14px;padding:14px;">
+          <div style="color:#a7a7a0;font-size:12px;line-height:1.35;margin-bottom:6px;">Message from {html_escape(sender_name)}</div>
+          <p style="color:#ffffff;font-size:14px;line-height:1.55;margin:0;">{html_email_text(message)}</p>
+        </div>
         {email_spacer(14)}
         """
         if message
@@ -2187,31 +2167,27 @@ def render_shared_research_email(
         else f"<div style=\"background:#0d0d0d;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;color:#f3c42e;font-size:16px;font-weight:700;line-height:46px;mso-border-alt:solid #2a2a2a 1pt;text-align:center;width:46px;\">{html_escape(stock_symbol[:2])}</div>"
     )
     company_panel_html = f"""
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin:0 0 14px;">
-      <tr>
-        <td bgcolor="#181818" style="background:#181818;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;padding:16px;">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-            <tr>
-              <td width="58" style="width:58px;vertical-align:top;padding:0 12px 0 0;">{company_logo_html}</td>
-              <td style="vertical-align:top;padding:0;">
-                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-                  <tr>
-                    <td style="vertical-align:top;padding:0 12px 0 0;">
-                      <div style="color:#ffffff;font-size:18px;font-weight:700;line-height:1.25;">{html_escape(stock_symbol)}</div>
-                      <div style="color:#d7d7d0;font-size:14px;line-height:1.4;margin-top:2px;">{html_escape(company_name)}</div>
-                    </td>
-                    <td align="right" style="vertical-align:top;padding:0;text-align:right;">
-                      <span style="background:#080808;border:1px solid #5a4a16;border-color:#5a4a16;border-radius:999px;color:#f3c42e;display:inline-block;font-size:12px;font-weight:700;line-height:1.2;mso-border-alt:solid #5a4a16 1pt;padding:7px 10px;white-space:nowrap;">{html_escape(py_human_label(signal or "Research"))}</span>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-    {email_spacer(14)}
+    <div style="background:#181818;border:1px solid #2a2a2a;border-radius:8px;margin:0 0 8px;padding:16px;">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+        <tr>
+          <td width="58" style="width:58px;vertical-align:top;padding:0 12px 0 0;">{company_logo_html}</td>
+          <td style="vertical-align:top;padding:0;">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+              <tr>
+                <td style="vertical-align:top;padding:0 12px 0 0;">
+                  <div style="color:#ffffff;font-size:18px;font-weight:700;line-height:1.25;">{html_escape(stock_symbol)}</div>
+                  <div style="color:#d7d7d0;font-size:14px;line-height:1.4;margin-top:2px;">{html_escape(company_name)}</div>
+                </td>
+                <td align="right" style="vertical-align:top;padding:0;text-align:right;">
+                  <span style="background:#080808;border:1px solid #5a4a16;border-radius:999px;color:#f3c42e;display:inline-block;font-size:12px;font-weight:700;line-height:1.2;padding:7px 10px;white-space:nowrap;">{html_escape(py_human_label(signal or "Research"))}</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+    {email_spacer(6)}
     """
     return f"""
     <!doctype html>
@@ -2237,34 +2213,19 @@ def render_shared_research_email(
             <div style="padding:24px 28px 28px;">
               {message_html}
               {company_panel_html}
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin:0 0 14px 0;">
-                <tr>
-                  <td bgcolor="#181818" style="background:#181818;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;mso-border-alt:solid #2a2a2a 1pt;padding:16px;">
-                    <h3 style="color:#ffffff;font-size:18px;line-height:1.25;margin:0 0 10px;">Key metrics</h3>
-                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;table-layout:fixed;">{metric_rows}</table>
-                  </td>
-                </tr>
-              </table>
+              <div style="background:#181818;border:1px solid #2a2a2a;border-radius:8px;margin:0 0 14px;padding:16px;">
+                <h3 style="color:#ffffff;font-size:18px;line-height:1.25;margin:0 0 10px;">Key metrics</h3>
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;table-layout:fixed;">{metric_rows}</table>
+              </div>
               {render_research_email_body(body)}
               {notes_html}
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;margin:18px 0 0;">
-                <tr>
-                  <td width="4" bgcolor="#f3c42e" style="background-color:#f3c42e;background:#f3c42e;border-radius:8px 0 0 8px;font-size:0;line-height:0;width:4px;">&nbsp;</td>
-                  <td bgcolor="#5a4a16" style="background-color:#5a4a16;background:#5a4a16;border-radius:0 8px 8px 0;padding:1px;">
-                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;">
-                      <tr>
-                        <td bgcolor="#17150f" style="background-color:#17150f;background:#17150f;border-radius:0 7px 7px 0;padding:18px;">
-                          <a href="{html_escape(app_url)}" style="color:#ffffff;text-decoration:none;">
-                            <strong style="color:#ffffff;display:block;font-size:19px;line-height:1.25;margin-bottom:6px;">Build your own investment research workflow</strong>
-                            <span style="color:#d7d7d0;display:block;font-size:14px;line-height:1.5;">Track portfolio theses, watchlist entry conditions, research notes, and daily market reports in Morning Alpha.</span>
-                            <span style="color:#f3c42e;display:block;font-size:14px;font-weight:700;margin-top:12px;">Join Morning Alpha</span>
-                          </a>
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-              </table>
+              <div style="background:#17150f;border:1px solid #5a4a16;border-left:4px solid #f3c42e;border-radius:8px;margin:18px 0 0;padding:18px;">
+                <a href="{html_escape(app_url)}" style="color:#ffffff;display:block;text-decoration:none;">
+                  <strong style="color:#ffffff;display:block;font-size:19px;line-height:1.25;margin-bottom:6px;">Build your own investment research workflow</strong>
+                  <span style="color:#d7d7d0;display:block;font-size:14px;line-height:1.5;">Track portfolio theses, watchlist entry conditions, research notes, and daily market reports in Morning Alpha.</span>
+                  <span style="color:#f3c42e;display:block;font-size:14px;font-weight:700;margin-top:12px;">Join Morning Alpha</span>
+                </a>
+              </div>
             </div>
           </div>
         </div>

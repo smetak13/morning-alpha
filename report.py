@@ -2363,7 +2363,12 @@ def validate_report(report: dict[str, Any], context: dict[str, Any]) -> dict[str
     return report
 
 
-def render_email(report: dict[str, Any], subject: str, open_app_url: str | None = None) -> str:
+def render_email(
+    report: dict[str, Any],
+    subject: str,
+    open_app_url: str | None = None,
+    display_title: str = "Investment morning report",
+) -> str:
     jinja2 = require_dependency("jinja2", "Jinja2")
     env = jinja2.Environment(
         loader=jinja2.FileSystemLoader(ROOT / "templates"),
@@ -2375,6 +2380,7 @@ def render_email(report: dict[str, Any], subject: str, open_app_url: str | None 
     return template.render(
         report=report,
         subject=subject,
+        display_title=display_title,
         generated_at=dt.datetime.now(tz=PRAGUE_TZ).date().isoformat(),
         logo_src=email_asset_src("ma-logo.png"),
         open_app_button_src=email_asset_src("open-in-app-button.png"),
