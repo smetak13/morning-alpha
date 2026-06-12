@@ -737,7 +737,7 @@ def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any
             "bear_case": "3 concise bullets for what could go wrong",
             "key_metrics": "3 concise metrics or signals to monitor",
             "red_flags": "3 concise warning signs",
-            "action_triggers": "3 concise events or evidence that would justify reviewing the thesis",
+            "action_triggers": "3 concise negative or thesis-breaking events/evidence that would make an existing holder reconsider the position",
             "entry_conditions": "3 concise pieces of evidence that would make this watchlist company more attractive as a portfolio candidate",
         },
         "constraints": [
