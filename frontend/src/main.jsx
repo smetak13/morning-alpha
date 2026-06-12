@@ -853,6 +853,8 @@ function MainPage({ route, user, onLogout }) {
           <NotesView />
         ) : (
           <ResearchView
+            portfolioItems={portfolio}
+            watchlistItems={watchlist}
             onAddToWatchlist={(stock) => {
               setModal({
                 mode: "add",
@@ -1903,16 +1905,53 @@ function defaultResearchHistoryFilters() {
   };
 }
 
-function ResearchView({ onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
+function researchRelationshipForStock(stock, portfolioItems, watchlistItems) {
+  const symbol = String(stock?.symbol || "").trim().toUpperCase();
+  if (!symbol) {
+    return "new";
+  }
+  if (portfolioItems.some((item) => String(item.symbol || "").trim().toUpperCase() === symbol)) {
+    return "portfolio";
+  }
+  if (watchlistItems.some((item) => String(item.symbol || "").trim().toUpperCase() === symbol)) {
+    return "watchlist";
+  }
+  return "new";
+}
+
+function defaultResearchTypeForRelationship(relationship) {
+  if (relationship === "portfolio") {
+    return "portfolio_check";
+  }
+  if (relationship === "watchlist") {
+    return "watchlist_check";
+  }
+  return "company_primer";
+}
+
+function ResearchView({ portfolioItems = [], watchlistItems = [], onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
   const [researchMode, setResearchMode] = useState("new");
   const [search, setSearch] = useState("");
   const [results, setResults] = useState([]);
   const [selectedStock, setSelectedStock] = useState(null);
+  const [researchType, setResearchType] = useState("company_primer");
   const [filters, setFilters] = useState(defaultResearchWindow);
   const [status, setStatus] = useState("idle");
   const [error, setError] = useState("");
   const [payload, setPayload] = useState(null);
   const [showNoteForm, setShowNoteForm] = useState(false);
+  const [shareTarget, setShareTarget] = useState(null);
+  const [generatedNotes, setGeneratedNotes] = useState([]);
+  const [generatedNotesRevision, setGeneratedNotesRevision] = useState(0);
+  const [generatedNotesError, setGeneratedNotesError] = useState("");
+  const selectedRelationship = useMemo(
+    () => researchRelationshipForStock(selectedStock, portfolioItems, watchlistItems),
+    [portfolioItems, selectedStock, watchlistItems],
+  );
+
+  useEffect(() => {
+    setResearchType(defaultResearchTypeForRelationship(selectedRelationship));
+  }, [selectedRelationship, selectedStock?.symbol]);
 
   useEffect(() => {
     if (search.trim().length < 1 || selectedStock) {
@@ -1948,6 +1987,7 @@ function ResearchView({ onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
           company_name: selectedStock.company_name,
           date_from: filters.date_from,
           date_to: filters.date_to,
+          research_type: selectedRelationship === "new" ? "company_primer" : researchType,
         }),
       });
       setPayload(response);
@@ -1965,7 +2005,40 @@ function ResearchView({ onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
   };
 
   const modeLabel = payload?.mode === "portfolio" ? "Portfolio thesis check" : payload?.mode === "watchlist" ? "Watchlist entry check" : "Company primer";
-  const canAddNote = payload?.stock?.stock_id && payload.mode !== "new";
+  const payloadRelationship = payload?.relationship ?? payload?.mode;
+  const generatedResearchItem = researchItemFromPayload(payload);
+  const canAddNote = Boolean(generatedResearchItem?.stock_id);
+  const showResearchTypeSwitch = Boolean(selectedStock) && selectedRelationship !== "new";
+  const researchTypeOptions = selectedRelationship === "portfolio"
+    ? [["portfolio_check", "Portfolio check"], ["company_primer", "Company primer"]]
+    : [["watchlist_check", "Watchlist check"], ["company_primer", "Company primer"]];
+
+  useEffect(() => {
+    const researchItemId = generatedResearchItem?.id;
+    if (!researchItemId) {
+      setGeneratedNotes([]);
+      setGeneratedNotesError("");
+      return undefined;
+    }
+    let ignore = false;
+    const loadGeneratedNotes = async () => {
+      setGeneratedNotesError("");
+      try {
+        const response = await requestJson(`/api/notes?research_item_id=${encodeURIComponent(researchItemId)}&page_size=100`, { method: "GET" });
+        if (!ignore) {
+          setGeneratedNotes(response.items ?? []);
+        }
+      } catch (err) {
+        if (!ignore) {
+          setGeneratedNotesError(err instanceof Error ? err.message : "Unable to load research notes.");
+        }
+      }
+    };
+    loadGeneratedNotes();
+    return () => {
+      ignore = true;
+    };
+  }, [generatedResearchItem?.id, generatedNotesRevision]);
 
   return (
     <section className="research-view">
@@ -2035,10 +2108,21 @@ function ResearchView({ onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
               <ReportDateField label="From" value={filters.date_from} onChange={(value) => setFilters((current) => ({ ...current, date_from: value }))} />
               <ReportDateField label="To" value={filters.date_to} onChange={(value) => setFilters((current) => ({ ...current, date_to: value }))} />
             </div>
-            <button className="primary-button compact-button research-run-button" disabled={status === "loading"} onClick={runResearch} type="button">
-              <Sparkles size={16} aria-hidden="true" />
-              {status === "loading" ? "Researching..." : "Run research"}
-            </button>
+            <div className="research-action-row">
+              {showResearchTypeSwitch ? (
+                <div className="research-type-switch" aria-label="Research type">
+                  {researchTypeOptions.map(([value, label]) => (
+                    <button className={researchType === value ? "active" : ""} key={value} onClick={() => setResearchType(value)} type="button">
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <button className="primary-button compact-button research-run-button" disabled={status === "loading"} onClick={runResearch} type="button">
+                <Sparkles size={16} aria-hidden="true" />
+                {status === "loading" ? "Researching..." : "Run research"}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -2066,9 +2150,15 @@ function ResearchView({ onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
             </div>
             <div className="toolbar-actions">
               {canAddNote ? (
-                <button className="secondary-button compact-button" onClick={() => setShowNoteForm(true)} type="button">
+                <button className="primary-button compact-button" onClick={() => setShowNoteForm(true)} type="button">
                   <Plus size={16} aria-hidden="true" />
                   Add note
+                </button>
+              ) : null}
+              {generatedResearchItem ? (
+                <button className="secondary-button compact-button" onClick={() => setShareTarget(generatedResearchItem)} type="button">
+                  <Share2 size={16} aria-hidden="true" />
+                  Share research
                 </button>
               ) : null}
               {payload.mode === "portfolio" ? (
@@ -2089,7 +2179,7 @@ function ResearchView({ onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
                   </button>
                 </>
               ) : null}
-              {payload.mode === "new" ? (
+              {payload.mode === "new" && payloadRelationship === "new" ? (
                 <button className="primary-button compact-button" onClick={() => onAddToWatchlist(payload.stock)} type="button">
                   <Plus size={16} aria-hidden="true" />
                   Add to Watchlist
@@ -2098,6 +2188,10 @@ function ResearchView({ onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
             </div>
           </div>
           <ResearchResultContent payload={payload} />
+          {generatedNotesError ? <p className="error">{generatedNotesError}</p> : null}
+          {generatedNotes.length ? (
+            <ResearchNotesSection notes={generatedNotes} />
+          ) : null}
         </div>
       ) : null}
       {showNoteForm ? (
@@ -2107,10 +2201,21 @@ function ResearchView({ onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
             symbol: payload.stock.symbol,
             company_name: payload.stock.company_name,
             logo_url: payload.stock.logo_url,
-            list_name: payload.mode,
+            list_name: payloadRelationship,
           }}
+          researchItem={generatedResearchItem}
           onClose={() => setShowNoteForm(false)}
-          onSaved={() => setShowNoteForm(false)}
+          onSaved={() => {
+            setShowNoteForm(false);
+            setGeneratedNotesRevision((current) => current + 1);
+          }}
+        />
+      ) : null}
+      {shareTarget ? (
+        <ShareResearchModal
+          item={shareTarget}
+          onClose={() => setShareTarget(null)}
+          onShared={() => setShareTarget(null)}
         />
       ) : null}
       </>
@@ -2136,6 +2241,35 @@ function researchStockFromItem(item) {
     logo_url: item.logo_url,
     list_name: researchTypeLabel(item.research_type),
   };
+}
+
+function researchItemFromPayload(payload) {
+  if (!payload?.research_item_id || !payload?.stock) {
+    return null;
+  }
+  return {
+    id: payload.research_item_id,
+    stock_id: payload.stock.stock_id,
+    symbol: payload.stock.symbol,
+    company_name: payload.stock.company_name,
+    logo_url: payload.stock.logo_url,
+    research_type: researchTypeForMode(payload.mode),
+    signal: researchSignalFromPayload(payload),
+    body: payload,
+  };
+}
+
+function researchTypeForMode(mode) {
+  return {
+    portfolio: "portfolio_check",
+    watchlist: "watchlist_check",
+    new: "company_primer",
+  }[mode] ?? "company_primer";
+}
+
+function researchSignalFromPayload(payload) {
+  const research = payload?.research ?? {};
+  return research.signal ?? research.watchlist_suitability ?? null;
 }
 
 function ResearchHistoryView() {
@@ -2334,6 +2468,7 @@ function ResearchHistoryView() {
       {selectedItem?.body ? (
         <ResearchPreviewModal
           item={selectedItem}
+          revision={notesRevision}
           onAddNote={() => setNoteFormItem(selectedItem)}
           onShare={() => setShareTarget(selectedItem)}
           onClose={() => setSelectedItem(null)}
@@ -2381,7 +2516,7 @@ function ResearchHistoryView() {
   );
 }
 
-function ResearchPreviewModal({ item, onAddNote, onShare, onClose }) {
+function ResearchPreviewModal({ item, revision = 0, onAddNote, onShare, onClose }) {
   const [notes, setNotes] = useState([]);
   const [notesStatus, setNotesStatus] = useState("loading");
   const [notesError, setNotesError] = useState("");
@@ -2408,7 +2543,7 @@ function ResearchPreviewModal({ item, onAddNote, onShare, onClose }) {
     return () => {
       ignore = true;
     };
-  }, [item.id]);
+  }, [item.id, revision]);
 
   return (
     <div className="modal-backdrop report-preview-backdrop" onMouseDown={onClose}>
@@ -2439,18 +2574,24 @@ function ResearchPreviewModal({ item, onAddNote, onShare, onClose }) {
           <ResearchResultContent payload={item.body} />
           {notesError ? <p className="error">{notesError}</p> : null}
           {notes.length ? (
-            <section className="research-preview-notes">
-              <div className="research-card-header">
-                <h3>Research notes</h3>
-              </div>
-              <div className="notes-stack research-preview-notes-stack">
-                {notes.map((note) => <NoteCard editable={false} key={note.id} note={note} />)}
-              </div>
-            </section>
+            <ResearchNotesSection notes={notes} />
           ) : null}
         </div>
       </section>
     </div>
+  );
+}
+
+function ResearchNotesSection({ notes }) {
+  return (
+    <section className="research-preview-notes">
+      <div className="research-card-header">
+        <h3>Research notes</h3>
+      </div>
+      <div className="notes-stack research-preview-notes-stack">
+        {notes.map((note) => <NoteCard editable={false} key={note.id} note={note} />)}
+      </div>
+    </section>
   );
 }
 

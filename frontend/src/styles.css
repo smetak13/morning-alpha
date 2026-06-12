@@ -1074,6 +1074,40 @@ textarea:focus {
   gap: 12px;
 }
 
+.research-action-row {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.research-type-switch {
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  display: inline-grid;
+  gap: 3px;
+  grid-template-columns: repeat(2, minmax(0, auto));
+  padding: 3px;
+}
+
+.research-type-switch button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #a7a7a0;
+  font-size: 0.82rem;
+  min-height: 34px;
+  padding: 6px 9px;
+  white-space: nowrap;
+}
+
+.research-type-switch button.active {
+  background: #f4c430;
+  color: #111111;
+  font-weight: 700;
+}
+
 .research-company-search {
   min-width: 310px;
   position: relative;
@@ -2271,17 +2305,24 @@ input[type="range"] {
   }
 
   .research-date-actions,
-  .research-date-row {
+  .research-date-row,
+  .research-action-row {
     align-items: stretch;
     justify-items: stretch;
     width: 100%;
   }
 
   .research-date-row,
+  .research-action-row,
   .research-market-panel,
   .price-chart-header {
     grid-template-columns: 1fr;
     flex-direction: column;
+  }
+
+  .research-type-switch {
+    grid-template-columns: 1fr;
+    width: 100%;
   }
 
   .research-market-panel {

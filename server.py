@@ -169,6 +169,7 @@ class CompanyResearchRequest(BaseModel):
     company_name: str | None = None
     date_from: str | None = None
     date_to: str | None = None
+    research_type: Literal["portfolio_check", "watchlist_check", "company_primer"] | None = None
 
 
 class ShareResearchRequest(BaseModel):
@@ -1531,6 +1532,26 @@ def research_stock_context(cursor: Any, user_id: str, symbol: str) -> tuple[str,
     return "new", None
 
 
+def research_mode_from_type(research_type: str) -> str:
+    return {
+        "portfolio_check": "portfolio",
+        "watchlist_check": "watchlist",
+        "company_primer": "new",
+    }[research_type]
+
+
+def requested_research_mode(research_type: str | None, relationship: str) -> str:
+    if not research_type:
+        return relationship
+
+    mode = research_mode_from_type(research_type)
+    if mode == "portfolio" and relationship != "portfolio":
+        raise HTTPException(status_code=422, detail="Portfolio check is only available for companies in your portfolio.")
+    if mode == "watchlist" and relationship != "watchlist":
+        raise HTTPException(status_code=422, detail="Watchlist check is only available for companies in your watchlist.")
+    return mode
+
+
 def research_schema(mode: str) -> dict[str, Any]:
     if mode == "portfolio":
         return {
@@ -1602,6 +1623,7 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
     with connection(row_factory=dict_row) as conn:
         with conn.cursor() as cursor:
             relationship, item = research_stock_context(cursor, user_id, symbol)
+            research_mode = requested_research_mode(payload.research_type, relationship)
 
     client = fmp_client_from_env()
     profile = first_item(try_fmp_get(client, "profile", {"symbol": symbol}))
@@ -1626,7 +1648,7 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
     price_history = fetch_price_history(client, symbol, date_to)
     intraday_history = fetch_intraday_history(client, symbol)
     news: list[dict[str, Any]] = []
-    if relationship in {"portfolio", "watchlist"}:
+    if research_mode in {"portfolio", "watchlist"}:
         try:
             news = client.stock_news([symbol], start=date_from, end=date_to, limit=20)
             news = [item for item in news if not is_blocked_research_source(item)]
@@ -1639,15 +1661,16 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
         "portfolio": "research_portfolio_check",
         "watchlist": "research_watchlist_check",
         "new": "research_company_primer",
-    }[relationship]
+    }[research_mode]
+    research_item = item if research_mode in {"portfolio", "watchlist"} else None
     context = {
         "company": {
             "symbol": symbol,
             "company_name": company_name,
-            "relationship": relationship,
+            "relationship": research_mode,
         },
-        "date_window": {"from": date_from.isoformat(), "to": date_to.isoformat()} if relationship != "new" else None,
-        "user_item": item,
+        "date_window": {"from": date_from.isoformat(), "to": date_to.isoformat()} if research_mode != "new" else None,
+        "user_item": research_item,
         "fmp": {
             "profile": compact_fmp_item(
                 profile,
@@ -1681,7 +1704,7 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
             ),
             "news": [compact_news_item(item) for item in news[:8]],
         },
-        "required_json_schema": research_schema(relationship),
+        "required_json_schema": research_schema(research_mode),
     }
     market_data = research_market_data(
         symbol=symbol,
@@ -1699,13 +1722,13 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
         price_history=price_history,
         intraday_history=intraday_history,
     )
-    if relationship == "new":
+    if research_mode == "new":
         instructions = (
             "Create a deep but concise company primer for a long-term investor who does not yet own or watch this company. "
             "Focus on what the company actually does, how it makes money, product lines, customer/end-market exposure, competitive position, current situation, future outlook, bull case, bear case, and what to learn next. "
             "Do not make a buy/sell/hold recommendation. Do not over-focus on generic valuation metrics. Use supplied data only; if something is unknown, say what should be verified."
         )
-    elif relationship == "portfolio":
+    elif research_mode == "portfolio":
         instructions = (
             "Test the user's existing portfolio thesis against recent company-specific news and supplied data. "
             "Focus only on information relevant to why the user owns it, bull/bear case, key metrics, red flags, and action triggers. "
@@ -1747,12 +1770,13 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
         )
         usage = openai_usage_summary(response, model, config)
         log_openai_usage(user_id, task, usage)
-        research = normalize_research_payload(parse_model_json(response.output_text), relationship)
+        research = normalize_research_payload(parse_model_json(response.output_text), research_mode)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Research generation failed: {exc}") from exc
 
     response_payload = {
-        "mode": relationship,
+        "mode": research_mode,
+        "relationship": relationship,
         "stock": {
             "symbol": symbol,
             "company_name": profile.get("companyName") or company_name,
@@ -1795,10 +1819,10 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
                     "user_id": user_id,
                     "stock_id": stock_id,
                     "body": Json(response_payload),
-                    "research_type": research_type_for_mode(relationship),
+                    "research_type": research_type_for_mode(research_mode),
                     "signal": research_signal_from_body(response_payload),
-                    "date_from": date_from if relationship != "new" else None,
-                    "date_to": date_to if relationship != "new" else None,
+                    "date_from": date_from if research_mode != "new" else None,
+                    "date_to": date_to if research_mode != "new" else None,
                 },
             )
             inserted = cursor.fetchone()
