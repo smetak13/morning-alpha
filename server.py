@@ -1316,6 +1316,52 @@ def fetch_latest_actual_earnings(client: Any, symbol: str, today: dt.date) -> di
     return {}
 
 
+def normalize_earnings_report(row: dict[str, Any], report_type: str) -> dict[str, Any]:
+    return {
+        "symbol": row.get("symbol"),
+        "date": row.get("date") or row.get("fiscalDateEnding"),
+        "report_type": report_type,
+        "eps_actual": row.get("epsActual") or row.get("eps"),
+        "eps_estimated": row.get("epsEstimated") or row.get("epsEstimate"),
+        "revenue_actual": row.get("revenueActual") or row.get("revenue"),
+        "revenue_estimated": row.get("revenueEstimated"),
+        "last_updated": row.get("lastUpdated") or row.get("updatedFromDate"),
+    }
+
+
+def fetch_research_earnings_reports(client: Any, symbol: str, today: dt.date) -> dict[str, Any]:
+    rows = fmp_items(try_fmp_get(client, "earnings", {"symbol": symbol, "limit": 100, "includeReportTimes": True}))
+    dated_rows = [
+        (parsed_date, row)
+        for row in rows
+        if (parsed_date := parse_fmp_date(row.get("date") or row.get("fiscalDateEnding"))) is not None
+    ]
+    dated_rows.sort(key=lambda item: item[0], reverse=True)
+
+    current_year_quarters = [
+        normalize_earnings_report(row, "quarter")
+        for report_date, row in dated_rows
+        if report_date.year == today.year
+    ]
+    next_earnings_date = next(
+        (report_date.isoformat() for report_date, _ in sorted(dated_rows, key=lambda item: item[0]) if report_date > today),
+        None,
+    )
+
+    annual_rows = fmp_items(
+        try_fmp_get(client, "income-statement", {"symbol": symbol, "period": "annual", "limit": 1})
+    )
+    latest_fy = None
+    if annual_rows:
+        latest_fy = normalize_earnings_report(annual_rows[0], "fy")
+        latest_fy["fiscal_year"] = str(annual_rows[0].get("calendarYear") or "") or None
+
+    return {
+        "next_earnings_date": next_earnings_date,
+        "reports": [*current_year_quarters, *([latest_fy] if latest_fy else [])],
+    }
+
+
 def percent_growth(newer: Any, older: Any) -> float | None:
     try:
         newer_value = float(newer)
@@ -1387,6 +1433,7 @@ def research_market_data(
     cashflow_ttm: dict[str, Any],
     analyst_estimate: dict[str, Any],
     earnings: dict[str, Any],
+    earnings_reports: dict[str, Any],
     price_history: list[dict[str, Any]],
     intraday_history: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -1464,6 +1511,8 @@ def research_market_data(
     return {
         "price_history": price_history,
         "intraday_history": intraday_history,
+        "earnings_reports": earnings_reports.get("reports") or [],
+        "next_earnings_date": earnings_reports.get("next_earnings_date"),
         "metrics": {
             "price": price,
             "market_cap": market_cap,
@@ -1645,6 +1694,7 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
         ],
     )
     earnings = fetch_latest_actual_earnings(client, symbol, dt.date.today())
+    earnings_reports = fetch_research_earnings_reports(client, symbol, dt.date.today())
     price_history = fetch_price_history(client, symbol, date_to)
     intraday_history = fetch_intraday_history(client, symbol)
     news: list[dict[str, Any]] = []
@@ -1702,6 +1752,8 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
                 income,
                 ["date", "revenue", "grossProfit", "operatingIncome", "netIncome", "eps", "ebitda"],
             ),
+            "earnings_reports": earnings_reports.get("reports") or [],
+            "next_earnings_date": earnings_reports.get("next_earnings_date"),
             "news": [compact_news_item(item) for item in news[:8]],
         },
         "required_json_schema": research_schema(research_mode),
@@ -1719,6 +1771,7 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
         cashflow_ttm=cashflow_ttm,
         analyst_estimate=analyst_estimate,
         earnings=earnings,
+        earnings_reports=earnings_reports,
         price_history=price_history,
         intraday_history=intraday_history,
     )

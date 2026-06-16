@@ -2728,6 +2728,104 @@ function metricLabel(key) {
   return labels[key] ?? researchHumanLabel(key);
 }
 
+function parseDateOnlyStrict(value) {
+  const match = String(value || "").slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return null;
+  }
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function formatDateOnly(value) {
+  const date = parseDateOnlyStrict(value);
+  if (!date) {
+    return value ? String(value) : "N/A";
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function earningsReportLabel(report, index) {
+  if (report.report_type === "fy") {
+    return report.fiscal_year ? `FY ${report.fiscal_year}` : "Last FY";
+  }
+  const date = parseDateOnlyStrict(report.date);
+  if (date) {
+    return `Q${Math.floor(date.getMonth() / 3) + 1} ${date.getFullYear()}`;
+  }
+  return `Quarter ${index + 1}`;
+}
+
+function EarningsReportsPanel({ reports = [], nextEarningsDate }) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const items = Array.isArray(reports) ? reports.filter(Boolean) : [];
+  const activeReport = items[Math.min(activeIndex, Math.max(items.length - 1, 0))];
+
+  useEffect(() => {
+    if (activeIndex >= items.length) {
+      setActiveIndex(0);
+    }
+  }, [activeIndex, items.length]);
+
+  if (!items.length && !nextEarningsDate) {
+    return null;
+  }
+
+  return (
+    <div className="earnings-panel">
+      <div className="earnings-panel-header">
+        <div>
+          <strong>Earnings reports</strong>
+          <span>Next earnings: {nextEarningsDate ? formatDateOnly(nextEarningsDate) : "N/A"}</span>
+        </div>
+      </div>
+      {items.length ? (
+        <>
+          <div className="earnings-tabs" role="tablist" aria-label="Earnings reports">
+            {items.map((report, index) => (
+              <button
+                className={index === activeIndex ? "active" : ""}
+                key={`${report.report_type || "q"}-${report.date || index}`}
+                onClick={() => setActiveIndex(index)}
+                type="button"
+              >
+                {earningsReportLabel(report, index)}
+              </button>
+            ))}
+          </div>
+          {activeReport ? (
+            <div className="earnings-report-detail">
+              <div className="earnings-report-date">
+                <span>{activeReport.report_type === "fy" ? "Fiscal year report" : "Quarterly report"}</span>
+                <strong>{formatDateOnly(activeReport.date)}</strong>
+              </div>
+              <div className="earnings-detail-grid">
+                <div>
+                  <span>EPS actual</span>
+                  <strong>{activeReport.eps_actual === null || activeReport.eps_actual === undefined ? "N/A" : `$${formatCompactNumber(activeReport.eps_actual)}`}</strong>
+                </div>
+                <div>
+                  <span>EPS est.</span>
+                  <strong>{activeReport.eps_estimated === null || activeReport.eps_estimated === undefined ? "N/A" : `$${formatCompactNumber(activeReport.eps_estimated)}`}</strong>
+                </div>
+                <div>
+                  <span>Revenue actual</span>
+                  <strong>{activeReport.revenue_actual === null || activeReport.revenue_actual === undefined ? "N/A" : `$${formatCompactNumber(activeReport.revenue_actual)}`}</strong>
+                </div>
+                <div>
+                  <span>Revenue est.</span>
+                  <strong>{activeReport.revenue_estimated === null || activeReport.revenue_estimated === undefined ? "N/A" : `$${formatCompactNumber(activeReport.revenue_estimated)}`}</strong>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <p className="muted">No earnings reports available.</p>
+      )}
+    </div>
+  );
+}
+
 function parseChartDate(value) {
   return new Date(String(value || "").replace(" ", "T"));
 }
@@ -2918,6 +3016,7 @@ function ResearchMarketSnapshot({ marketData }) {
             <a href={marketData.latest_earnings.source_url} rel="noreferrer" target="_blank">Source</a>
           </div>
         ) : null}
+        <EarningsReportsPanel reports={marketData.earnings_reports ?? []} nextEarningsDate={marketData.next_earnings_date} />
       </div>
     </section>
   );
