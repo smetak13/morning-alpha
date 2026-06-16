@@ -84,6 +84,11 @@ def scheduled_time_is_due(
     return False
 
 
+def report_delivery_is_enabled(*, timezone: str, run_at_utc: dt.datetime) -> bool:
+    local_date = run_at_utc.astimezone(ZoneInfo(timezone)).date()
+    return local_date.weekday() < 5
+
+
 def load_due_jobs(run_at_utc: dt.datetime, lookback: dt.timedelta) -> list[ScheduledReportJob]:
     try:
         from psycopg.rows import dict_row
@@ -114,6 +119,15 @@ def load_due_jobs(run_at_utc: dt.datetime, lookback: dt.timedelta) -> list[Sched
             continue
 
         timezone = normalize_timezone(row.get("timezone"))
+        if not report_delivery_is_enabled(timezone=timezone, run_at_utc=run_at_utc):
+            logging.debug(
+                "Skipping scheduled report on weekend user_id=%s timezone=%s local_date=%s",
+                row["id"],
+                timezone,
+                run_at_utc.astimezone(ZoneInfo(timezone)).date().isoformat(),
+            )
+            continue
+
         report_scheduled_at = coerce_time(row["report_scheduled_at"])
         if not scheduled_time_is_due(
             report_scheduled_at=report_scheduled_at,
