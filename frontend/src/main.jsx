@@ -772,7 +772,7 @@ function MainPage({ route, user, onLogout }) {
           <LogOut size={18} aria-hidden="true" />
         </button>
       </header>
-      <section className="main-content">
+      <section className={`main-content main-content-${activeView}`}>
         <div className="page-heading">
           <div>
             <h1>{pageTitle}</h1>
@@ -1030,14 +1030,19 @@ function ReportsView({ routeReportId = "" }) {
                       key={report.id}
                       onClick={() => openReport(report)}
                     >
-                      <td>
-                        <div className="report-date-cell">
-                          <FileText size={17} aria-hidden="true" />
-                          <strong>{report.report_date}</strong>
+                      <td data-label="Report date">
+                        <div className="mobile-card-title-row">
+                          <div className="report-date-cell">
+                            <FileText size={17} aria-hidden="true" />
+                            <strong>{report.report_date}</strong>
+                          </div>
+                          <button className="mobile-open-button" onClick={(event) => { event.stopPropagation(); openReport(report); }} type="button">
+                            Open
+                          </button>
                         </div>
                       </td>
-                      <td>{formatDateTime(report.created_at)}</td>
-                      <td className="actions-cell">
+                      <td data-label="Created at">{formatDateTime(report.created_at)}</td>
+                      <td className="actions-cell" data-label="Notes">
                         <span className="notes-count-pill" title={`${report.note_count ?? 0} notes`}>
                           {report.note_count ?? 0}
                         </span>
@@ -1808,21 +1813,26 @@ function NotesView() {
               {notes.length ? (
                 notes.map((note) => (
                   <tr key={note.id} onClick={() => setSelectedNote(note)}>
-                    <td>
-                      <div className="stock-cell">
-                        <img className="stock-logo" {...stockLogoProps(note.logo_url)} alt="" />
-                        <div>
-                          <strong>{note.symbol}</strong>
-                          <span>{note.company_name}</span>
+                    <td data-label="Company">
+                      <div className="mobile-card-title-row">
+                        <div className="stock-cell">
+                          <img className="stock-logo" {...stockLogoProps(note.logo_url)} alt="" />
+                          <div>
+                            <strong>{note.symbol}</strong>
+                            <span>{note.company_name}</span>
+                          </div>
                         </div>
+                        <button className="mobile-open-button" onClick={(event) => { event.stopPropagation(); setSelectedNote(note); }} type="button">
+                          Open
+                        </button>
                       </div>
                     </td>
-                    <td className="note-preview-cell">{note.body}</td>
-                    <td>
+                    <td className="note-preview-cell" data-label="Note">{note.body}</td>
+                    <td data-label="Source">
                       <span className="status-pill note-source-pill">{noteSourceLabel(note)}</span>
                     </td>
-                    <td>{formatDateTime(note.created_at)}</td>
-                    <td>
+                    <td data-label="Created at">{formatDateTime(note.created_at)}</td>
+                    <td data-label="Resolved">
                       <ReportToggle
                         checked={note.is_resolved}
                         offLabel="Open"
@@ -1830,7 +1840,7 @@ function NotesView() {
                         onLabel="Resolved"
                       />
                     </td>
-                    <td className="actions-cell">
+                    <td className="actions-cell" data-label="Actions">
                       <button className="icon-button" onClick={(event) => { event.stopPropagation(); setSelectedNote(note); }} title="Edit note" type="button">
                         <Pencil size={17} aria-hidden="true" />
                       </button>
@@ -2522,19 +2532,24 @@ function ResearchHistoryView({ routeResearchId = "" }) {
               {payload.items.length ? (
                 payload.items.map((item) => (
                   <tr key={item.id} onClick={() => openItem(item)}>
-                    <td>
-                      <div className="stock-cell">
-                        <img className="stock-logo" {...stockLogoProps(item.logo_url)} alt="" />
-                        <div>
-                          <strong>{item.symbol}</strong>
-                          <span>{item.company_name}</span>
+                    <td data-label="Company">
+                      <div className="mobile-card-title-row">
+                        <div className="stock-cell">
+                          <img className="stock-logo" {...stockLogoProps(item.logo_url)} alt="" />
+                          <div>
+                            <strong>{item.symbol}</strong>
+                            <span>{item.company_name}</span>
+                          </div>
                         </div>
+                        <button className="mobile-open-button" onClick={(event) => { event.stopPropagation(); openItem(item); }} type="button">
+                          Open
+                        </button>
                       </div>
                     </td>
-                    <td><span className="status-pill">{researchTypeLabel(item.research_type)}</span></td>
-                    <td><span className="research-signal-pill">{researchHumanLabel(item.signal || "Unknown")}</span></td>
-                    <td>{formatDateTime(item.created_at)}</td>
-                    <td className="actions-cell">
+                    <td data-label="Type"><span className="status-pill">{researchTypeLabel(item.research_type)}</span></td>
+                    <td data-label="Signal"><span className="research-signal-pill">{researchHumanLabel(item.signal || "Unknown")}</span></td>
+                    <td data-label="Created at">{formatDateTime(item.created_at)}</td>
+                    <td className="actions-cell" data-label="Notes">
                       <span className="notes-count-pill" title={`${item.note_count ?? 0} notes`}>{item.note_count ?? 0}</span>
                       <button className="icon-button" onClick={(event) => { event.stopPropagation(); setNotesModal({ researchItem: item, mode: "view" }); }} title="View notes" type="button">
                         <Eye size={17} aria-hidden="true" />
@@ -2546,7 +2561,7 @@ function ResearchHistoryView({ routeResearchId = "" }) {
                         <Plus size={17} aria-hidden="true" />
                       </button>
                     </td>
-                  <td className="actions-cell">
+                    <td className="actions-cell" data-label="Actions">
                       <button className="icon-button" onClick={(event) => { event.stopPropagation(); setShareTarget(item); }} title="Share research" type="button">
                         <Share2 size={17} aria-hidden="true" />
                       </button>
@@ -3583,7 +3598,7 @@ function HoldingsSection({
             {items.length ? (
               items.map((item) => (
                 <tr key={item.id}>
-                  <td>
+                  <td data-label="Company">
                     <div className="stock-cell">
                       <img className="stock-logo" {...stockLogoProps(item.logo_url)} alt="" />
                       <div>
@@ -3592,7 +3607,7 @@ function HoldingsSection({
                       </div>
                     </div>
                   </td>
-                  <td>
+                  <td data-label="Position">
                     {itemType === "portfolio" ? (
                       <PositionSlider
                         item={item}
@@ -3602,13 +3617,13 @@ function HoldingsSection({
                       />
                     ) : null}
                   </td>
-                  <td>
+                  <td data-label="Thesis">
                     <span className="status-pill">{thesisPointCount(item, itemType)} points</span>
                   </td>
-                  <td>
+                  <td data-label="In report">
                     <ReportToggle checked={item.include_in_report !== false} onChange={(next) => onReportToggle(item, next)} />
                   </td>
-                  <td className="actions-cell">
+                  <td className="actions-cell" data-label="Actions">
                     <button className="icon-button" onClick={() => onEdit(item)} title="Edit thesis" type="button">
                       <Pencil size={17} aria-hidden="true" />
                     </button>

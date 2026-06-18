@@ -2249,17 +2249,11 @@ def render_shared_research_email(
         <tr>
           <td width="58" style="width:58px;vertical-align:top;padding:0 12px 0 0;">{company_logo_html}</td>
           <td style="vertical-align:top;padding:0;">
-            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
-              <tr>
-                <td style="vertical-align:top;padding:0 12px 0 0;">
-                  <div style="color:#ffffff;font-size:18px;font-weight:700;line-height:1.25;">{html_escape(stock_symbol)}</div>
-                  <div style="color:#d7d7d0;font-size:14px;line-height:1.4;margin-top:2px;">{html_escape(company_name)}</div>
-                </td>
-                <td align="right" style="vertical-align:top;padding:0;text-align:right;">
-                  <span style="background:#080808;border:1px solid #5a4a16;border-radius:999px;color:#f3c42e;display:inline-block;font-size:12px;font-weight:700;line-height:1.2;padding:7px 10px;white-space:nowrap;">{html_escape(py_human_label(signal or "Research"))}</span>
-                </td>
-              </tr>
-            </table>
+            <div style="color:#ffffff;font-size:18px;font-weight:700;line-height:1.25;">{html_escape(stock_symbol)}</div>
+            <div style="color:#d7d7d0;font-size:14px;line-height:1.4;margin-top:2px;">{html_escape(company_name)}</div>
+            <div style="margin-top:9px;">
+              <span style="background:#080808;border:1px solid #5a4a16;border-radius:999px;box-sizing:border-box;color:#f3c42e;display:inline-block;font-size:12px;font-weight:700;line-height:1.25;max-width:100%;padding:7px 10px;word-break:break-word;">{html_escape(py_human_label(signal or "Research"))}</span>
+            </div>
           </td>
         </tr>
       </table>
