@@ -2752,6 +2752,7 @@ def list_notes(
     report_id: str | None = None,
     research_item_id: str | None = None,
     stock_id: str | None = None,
+    source: str | None = None,
     date_from: str | None = None,
     date_to: str | None = None,
     is_resolved: bool | None = None,
@@ -2781,6 +2782,16 @@ def list_notes(
     if stock_id:
         where_clauses.append("notes.stock_id::text = %(stock_id)s")
         params["stock_id"] = stock_id
+    if source:
+        normalized_source = source.strip().lower()
+        if normalized_source == "standalone":
+            where_clauses.append("notes.report_id is null and notes.research_item_id is null")
+        elif normalized_source == "report":
+            where_clauses.append("notes.report_id is not null and notes.research_item_id is null")
+        elif normalized_source == "research":
+            where_clauses.append("notes.research_item_id is not null")
+        elif normalized_source != "all":
+            raise HTTPException(status_code=422, detail="Unsupported notes source filter.")
     if is_resolved is not None:
         where_clauses.append("notes.is_resolved = %(is_resolved)s")
         params["is_resolved"] = is_resolved

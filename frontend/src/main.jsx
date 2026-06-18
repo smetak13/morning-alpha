@@ -224,20 +224,24 @@ function calendarDays(monthDate) {
 }
 
 function currentRoute() {
-  const match = window.location.pathname.match(/^\/reports\/([^/]+)\/?$/);
-  if (match) {
-    return { view: "reports", reportId: decodeURIComponent(match[1]) };
+  const reportMatch = window.location.pathname.match(/^\/reports\/([^/]+)\/?$/);
+  if (reportMatch) {
+    return { view: "reports", reportId: decodeURIComponent(reportMatch[1]), researchId: "" };
   }
   if (window.location.pathname === "/reports") {
-    return { view: "reports", reportId: "" };
+    return { view: "reports", reportId: "", researchId: "" };
   }
   if (window.location.pathname === "/notes") {
-    return { view: "notes", reportId: "" };
+    return { view: "notes", reportId: "", researchId: "" };
+  }
+  const researchMatch = window.location.pathname.match(/^\/research\/([^/]+)\/?$/);
+  if (researchMatch) {
+    return { view: "research", reportId: "", researchId: decodeURIComponent(researchMatch[1]) };
   }
   if (window.location.pathname === "/research") {
-    return { view: "research", reportId: "" };
+    return { view: "research", reportId: "", researchId: "" };
   }
-  return { view: "portfolio", reportId: "" };
+  return { view: "portfolio", reportId: "", researchId: "" };
 }
 
 function setBrowserRoute(path, replace = false) {
@@ -792,18 +796,18 @@ function MainPage({ route, user, onLogout }) {
             Reports
           </button>
           <button
-            className={activeView === "notes" ? "view-tab active" : "view-tab"}
-            onClick={showNotes}
-            type="button"
-          >
-            Notes
-          </button>
-          <button
             className={activeView === "research" ? "view-tab active" : "view-tab"}
             onClick={showResearch}
             type="button"
           >
             Research
+          </button>
+          <button
+            className={activeView === "notes" ? "view-tab active" : "view-tab"}
+            onClick={showNotes}
+            type="button"
+          >
+            Notes
           </button>
         </div>
 
@@ -854,6 +858,7 @@ function MainPage({ route, user, onLogout }) {
         ) : (
           <ResearchView
             portfolioItems={portfolio}
+            routeResearchId={route.researchId}
             watchlistItems={watchlist}
             onAddToWatchlist={(stock) => {
               setModal({
@@ -1252,6 +1257,39 @@ function stockMatchesSearch(stock, search) {
   return `${stock.symbol} ${stock.company_name}`.toLowerCase().includes(normalized);
 }
 
+function noteSourceLabel(note) {
+  if (note.research_item_id) {
+    return "Research";
+  }
+  if (note.report_id) {
+    return "Report";
+  }
+  return "Standalone";
+}
+
+function noteResourceActionTitle(note) {
+  if (note.research_item_id) {
+    return "View research";
+  }
+  if (note.report_id) {
+    return "View report";
+  }
+  return "";
+}
+
+function noteMatchesSourceFilter(note, sourceFilter) {
+  if (sourceFilter === "standalone") {
+    return !note.report_id && !note.research_item_id;
+  }
+  if (sourceFilter === "report") {
+    return Boolean(note.report_id) && !note.research_item_id;
+  }
+  if (sourceFilter === "research") {
+    return Boolean(note.research_item_id);
+  }
+  return true;
+}
+
 function NoteFormModal({ initialStock = null, report = null, researchItem = null, onClose, onSaved }) {
   const { error: stocksError, stocks } = useNoteStocks();
   const [search, setSearch] = useState("");
@@ -1540,6 +1578,7 @@ function NotesView() {
   const [stockSearch, setStockSearch] = useState("");
   const [selectedStock, setSelectedStock] = useState(null);
   const [resolvedFilter, setResolvedFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [notes, setNotes] = useState([]);
   const [payload, setPayload] = useState({ total: 0, page_size: 10 });
   const [page, setPage] = useState(1);
@@ -1568,6 +1607,9 @@ function NotesView() {
       if (resolvedFilter !== "all") {
         query.set("is_resolved", resolvedFilter === "resolved" ? "true" : "false");
       }
+      if (sourceFilter !== "all") {
+        query.set("source", sourceFilter);
+      }
       const payload = await requestJson(`/api/notes?${query.toString()}`, { method: "GET" });
       setNotes(payload.items ?? []);
       setPayload(payload);
@@ -1576,7 +1618,7 @@ function NotesView() {
       setError(err instanceof Error ? err.message : "Unable to load notes.");
       setStatus("error");
     }
-  }, [filters.date_from, filters.date_to, page, resolvedFilter, selectedStock?.stock_id]);
+  }, [filters.date_from, filters.date_to, page, resolvedFilter, selectedStock?.stock_id, sourceFilter]);
 
   useEffect(() => {
     loadNotes();
@@ -1598,9 +1640,10 @@ function NotesView() {
         body: JSON.stringify(patch),
       });
       const serverVisible =
-        resolvedFilter === "all" ||
-        (resolvedFilter === "resolved" && payload.note.is_resolved) ||
-        (resolvedFilter === "open" && !payload.note.is_resolved);
+        noteMatchesSourceFilter(payload.note, sourceFilter) &&
+        (resolvedFilter === "all" ||
+          (resolvedFilter === "resolved" && payload.note.is_resolved) ||
+          (resolvedFilter === "open" && !payload.note.is_resolved));
       setNotes((current) =>
         serverVisible
           ? current.some((item) => item.id === note.id)
@@ -1612,9 +1655,10 @@ function NotesView() {
       return true;
     } catch (err) {
       const originalVisible =
-        resolvedFilter === "all" ||
-        (resolvedFilter === "resolved" && note.is_resolved) ||
-        (resolvedFilter === "open" && !note.is_resolved);
+        noteMatchesSourceFilter(note, sourceFilter) &&
+        (resolvedFilter === "all" ||
+          (resolvedFilter === "resolved" && note.is_resolved) ||
+          (resolvedFilter === "open" && !note.is_resolved));
       setNotes((current) =>
         originalVisible
           ? current.some((item) => item.id === note.id)
@@ -1641,6 +1685,16 @@ function NotesView() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to delete note.");
+    }
+  };
+
+  const openNoteResource = (note) => {
+    if (note.research_item_id) {
+      setBrowserRoute(`/research/${encodeURIComponent(note.research_item_id)}`);
+      return;
+    }
+    if (note.report_id) {
+      setBrowserRoute(`/reports/${encodeURIComponent(note.report_id)}`);
     }
   };
 
@@ -1705,6 +1759,23 @@ function NotesView() {
                 </button>
               ))}
             </div>
+            <div className="resolved-filter source-filter" aria-label="Source filter">
+              {[
+                ["all", "All"],
+                ["standalone", "Standalone"],
+                ["report", "Report"],
+                ["research", "Research"],
+              ].map(([value, label]) => (
+                <button
+                  className={sourceFilter === value ? "resolved-filter-button active" : "resolved-filter-button"}
+                  key={value}
+                  onClick={() => { setSourceFilter(value); setPage(1); }}
+                  type="button"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -1718,6 +1789,7 @@ function NotesView() {
             <colgroup>
               <col className="notes-company-col" />
               <col className="notes-body-col" />
+              <col className="notes-source-col" />
               <col className="notes-created-col" />
               <col className="notes-resolved-col" />
               <col className="notes-actions-col" />
@@ -1726,6 +1798,7 @@ function NotesView() {
               <tr>
                 <th>Company</th>
                 <th>Note</th>
+                <th>Source</th>
                 <th>Created at</th>
                 <th>Resolved</th>
                 <th className="actions-cell">Actions</th>
@@ -1745,6 +1818,9 @@ function NotesView() {
                       </div>
                     </td>
                     <td className="note-preview-cell">{note.body}</td>
+                    <td>
+                      <span className="status-pill note-source-pill">{noteSourceLabel(note)}</span>
+                    </td>
                     <td>{formatDateTime(note.created_at)}</td>
                     <td>
                       <ReportToggle
@@ -1758,6 +1834,11 @@ function NotesView() {
                       <button className="icon-button" onClick={(event) => { event.stopPropagation(); setSelectedNote(note); }} title="Edit note" type="button">
                         <Pencil size={17} aria-hidden="true" />
                       </button>
+                      {note.report_id || note.research_item_id ? (
+                        <button className="icon-button" onClick={(event) => { event.stopPropagation(); openNoteResource(note); }} title={noteResourceActionTitle(note)} type="button">
+                          <MoveRight size={17} aria-hidden="true" />
+                        </button>
+                      ) : null}
                       <button className="icon-button danger" onClick={(event) => { event.stopPropagation(); setDeleteTarget(note); }} title="Delete note" type="button">
                         <Trash2 size={17} aria-hidden="true" />
                       </button>
@@ -1766,7 +1847,7 @@ function NotesView() {
                 ))
               ) : (
                 <tr>
-                  <td className="empty-table" colSpan={5}>
+                  <td className="empty-table" colSpan={6}>
                     {status === "loading" ? "Loading notes..." : "No notes found for this filter."}
                   </td>
                 </tr>
@@ -1929,8 +2010,8 @@ function defaultResearchTypeForRelationship(relationship) {
   return "company_primer";
 }
 
-function ResearchView({ portfolioItems = [], watchlistItems = [], onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
-  const [researchMode, setResearchMode] = useState("new");
+function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItems = [], onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
+  const [researchMode, setResearchMode] = useState(routeResearchId ? "history" : "new");
   const [search, setSearch] = useState("");
   const [results, setResults] = useState([]);
   const [selectedStock, setSelectedStock] = useState(null);
@@ -1952,6 +2033,12 @@ function ResearchView({ portfolioItems = [], watchlistItems = [], onAddToWatchli
   useEffect(() => {
     setResearchType(defaultResearchTypeForRelationship(selectedRelationship));
   }, [selectedRelationship, selectedStock?.symbol]);
+
+  useEffect(() => {
+    if (routeResearchId) {
+      setResearchMode("history");
+    }
+  }, [routeResearchId]);
 
   useEffect(() => {
     if (search.trim().length < 1 || selectedStock) {
@@ -2043,14 +2130,14 @@ function ResearchView({ portfolioItems = [], watchlistItems = [], onAddToWatchli
   return (
     <section className="research-view">
       <div className="view-tabs compact-tabs">
-        <button className={researchMode === "new" ? "view-tab active" : "view-tab"} onClick={() => setResearchMode("new")} type="button">
+        <button className={researchMode === "new" ? "view-tab active" : "view-tab"} onClick={() => { setResearchMode("new"); setBrowserRoute("/research"); }} type="button">
           New research
         </button>
-        <button className={researchMode === "history" ? "view-tab active" : "view-tab"} onClick={() => setResearchMode("history")} type="button">
+        <button className={researchMode === "history" ? "view-tab active" : "view-tab"} onClick={() => { setResearchMode("history"); setBrowserRoute("/research"); }} type="button">
           History
         </button>
       </div>
-      {researchMode === "history" ? <ResearchHistoryView /> : (
+      {researchMode === "history" ? <ResearchHistoryView routeResearchId={routeResearchId} /> : (
       <>
       <div className="reports-toolbar research-toolbar">
         <div>
@@ -2272,7 +2359,7 @@ function researchSignalFromPayload(payload) {
   return research.signal ?? research.watchlist_suitability ?? null;
 }
 
-function ResearchHistoryView() {
+function ResearchHistoryView({ routeResearchId = "" }) {
   const [filters, setFilters] = useState(defaultResearchHistoryFilters);
   const [page, setPage] = useState(1);
   const [payload, setPayload] = useState({ items: [], total: 0, page_size: 10 });
@@ -2284,6 +2371,7 @@ function ResearchHistoryView() {
   const [notesRevision, setNotesRevision] = useState(0);
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
+  const openedRouteResearchIdRef = useRef("");
   const totalPages = Math.max(1, Math.ceil((payload.total || 0) / (payload.page_size || 10)));
 
   const loadHistory = useCallback(async () => {
@@ -2320,13 +2408,40 @@ function ResearchHistoryView() {
     setPage(1);
   };
 
-  const openItem = async (item) => {
+  const openItem = async (item, options = {}) => {
     setError("");
     try {
       const detail = await requestJson(`/api/research-items/${item.id}`, { method: "GET" });
       setSelectedItem(detail.item);
+      if (options.updateRoute !== false) {
+        openedRouteResearchIdRef.current = item.id;
+        setBrowserRoute(`/research/${encodeURIComponent(item.id)}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load research detail.");
+    }
+  };
+
+  useEffect(() => {
+    if (!routeResearchId) {
+      if (openedRouteResearchIdRef.current) {
+        openedRouteResearchIdRef.current = "";
+        setSelectedItem(null);
+      }
+      return;
+    }
+    if (openedRouteResearchIdRef.current === routeResearchId) {
+      return;
+    }
+    openedRouteResearchIdRef.current = routeResearchId;
+    openItem({ id: routeResearchId }, { updateRoute: false });
+  }, [routeResearchId]);
+
+  const closeItem = () => {
+    setSelectedItem(null);
+    if (routeResearchId) {
+      openedRouteResearchIdRef.current = "";
+      setBrowserRoute("/research", true);
     }
   };
 
@@ -2471,7 +2586,7 @@ function ResearchHistoryView() {
           revision={notesRevision}
           onAddNote={() => setNoteFormItem(selectedItem)}
           onShare={() => setShareTarget(selectedItem)}
-          onClose={() => setSelectedItem(null)}
+          onClose={closeItem}
         />
       ) : null}
       {notesModal ? (

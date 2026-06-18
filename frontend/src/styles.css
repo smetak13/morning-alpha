@@ -954,6 +954,10 @@ textarea:focus {
   padding: 3px;
 }
 
+.source-filter {
+  grid-template-columns: repeat(4, auto);
+}
+
 .resolved-filter-button {
   background: transparent;
   border: 0;
@@ -1019,15 +1023,19 @@ textarea:focus {
 }
 
 .notes-table {
-  min-width: 920px;
+  min-width: 1040px;
 }
 
 .notes-company-col {
-  width: 25%;
+  width: 22%;
 }
 
 .notes-body-col {
   width: auto;
+}
+
+.notes-source-col {
+  width: 150px;
 }
 
 .notes-created-col {
@@ -1039,10 +1047,17 @@ textarea:focus {
 }
 
 .notes-actions-col {
-  width: 116px;
+  width: 148px;
 }
 
-.notes-table td:nth-child(3) {
+.notes-table td:nth-child(4) {
+  white-space: nowrap;
+}
+
+.note-source-pill {
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
