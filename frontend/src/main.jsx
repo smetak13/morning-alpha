@@ -1949,7 +1949,7 @@ function GroupedNotesModal({ notes, onClose }) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <section className="modal-panel note-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+      <section className="modal-panel note-modal-panel grouped-notes-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="modal-header">
           <div>
             <p className="eyebrow">Grouped view</p>

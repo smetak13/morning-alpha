@@ -2924,6 +2924,23 @@ input[type="range"] {
     max-height: 96vh;
   }
 
+  .grouped-notes-modal-panel {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 12px);
+    max-height: calc(100dvh - 12px);
+    overflow: hidden;
+  }
+
+  .grouped-notes-modal-panel .modal-header {
+    flex: 0 0 auto;
+  }
+
+  .grouped-notes-modal-panel .grouped-notes-stack {
+    min-height: 0;
+    overflow: auto;
+  }
+
   .research-preview-content,
   .note-form-grid {
     padding: 14px;
