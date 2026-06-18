@@ -286,6 +286,20 @@ input::placeholder {
 
 .app-layout {
   background: #080808;
+  isolation: isolate;
+  position: relative;
+}
+
+.app-layout::before {
+  background:
+    linear-gradient(135deg, rgba(244, 196, 48, 0.13), transparent 36%),
+    linear-gradient(225deg, rgba(255, 255, 255, 0.06), transparent 34%),
+    #080808;
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: fixed;
+  z-index: -1;
 }
 
 .topbar {
