@@ -2924,7 +2924,7 @@ input[type="range"] {
     max-height: 96vh;
   }
 
-  .grouped-notes-modal-panel {
+  .long-modal-panel {
     display: flex;
     flex-direction: column;
     max-height: calc(100vh - 12px);
@@ -2932,11 +2932,19 @@ input[type="range"] {
     overflow: hidden;
   }
 
-  .grouped-notes-modal-panel .modal-header {
+  .long-modal-panel > .modal-header,
+  .long-modal-panel > .report-modal-header,
+  .long-modal-panel > .modal-actions {
     flex: 0 0 auto;
   }
 
-  .grouped-notes-modal-panel .grouped-notes-stack {
+  .long-modal-panel > .note-form-grid,
+  .long-modal-panel > .notes-stack,
+  .long-modal-panel > .note-card,
+  .long-modal-panel > .modal-search,
+  .long-modal-panel > .review-layout,
+  .long-modal-panel > .generating-state,
+  .long-modal-panel > .research-preview-content {
     min-height: 0;
     overflow: auto;
   }

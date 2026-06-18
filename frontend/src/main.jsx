@@ -1333,7 +1333,7 @@ function NoteFormModal({ initialStock = null, report = null, researchItem = null
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <section className="modal-panel note-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+      <section className="modal-panel note-modal-panel long-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="modal-header">
           <div>
             <p className="eyebrow">{report ? `Report ${report.report_date}` : researchItem ? `${researchItem.symbol} research` : "Notes"}</p>
@@ -1476,7 +1476,7 @@ function ReportNotesModal({ mode, report = null, researchItem = null, revision =
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <section className="modal-panel note-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+      <section className="modal-panel note-modal-panel long-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="modal-header">
           <div>
             <p className="eyebrow">{report ? "Report notes" : "Research notes"}</p>
@@ -1925,7 +1925,7 @@ function NotesView() {
 function SingleNoteModal({ note, onClose, onDelete, onSave }) {
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <section className="modal-panel note-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+      <section className="modal-panel note-modal-panel long-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="modal-header">
           <div>
             <p className="eyebrow">Note</p>
@@ -1949,7 +1949,7 @@ function GroupedNotesModal({ notes, onClose }) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <section className="modal-panel note-modal-panel grouped-notes-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+      <section className="modal-panel note-modal-panel long-modal-panel grouped-notes-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="modal-header">
           <div>
             <p className="eyebrow">Grouped view</p>
@@ -2677,7 +2677,7 @@ function ResearchPreviewModal({ item, revision = 0, onAddNote, onShare, onClose 
 
   return (
     <div className="modal-backdrop report-preview-backdrop" onMouseDown={onClose}>
-      <section className="modal-panel research-preview-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+      <section className="modal-panel research-preview-panel long-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="report-modal-header">
           <div className="selected-stock no-margin">
             <img className="stock-logo large" {...stockLogoProps(item.logo_url)} alt="" />
@@ -2751,7 +2751,7 @@ function ShareResearchModal({ item, onClose, onShared }) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <section className="modal-panel share-research-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+      <section className="modal-panel share-research-panel long-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="modal-header">
           <div>
             <p className="eyebrow">Share research</p>
@@ -3791,7 +3791,7 @@ function StockThesisModal({ modal, onClose, onSaved }) {
 
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <section className="modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+      <section className="modal-panel long-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="modal-header">
           <div>
             <p className="eyebrow">{modal.itemType === "portfolio" ? "Portfolio" : "Watchlist"}</p>
