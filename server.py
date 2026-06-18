@@ -2650,12 +2650,16 @@ def ensure_user_stock(cursor: Any, user_id: str, stock_id: str) -> None:
                 select 1 from public.watchlist_items
                 where user_id = %(user_id)s and stock_id = public.stocks.id
             )
+            or exists (
+                select 1 from public.notes
+                where user_id = %(user_id)s and stock_id = public.stocks.id
+            )
           )
         """,
         {"stock_id": stock_id, "user_id": user_id},
     )
     if not cursor.fetchone():
-        raise HTTPException(status_code=404, detail="Stock not found in your portfolio or watchlist.")
+        raise HTTPException(status_code=404, detail="Stock not found in your portfolio, watchlist, or notes.")
 
 
 def ensure_user_report(cursor: Any, user_id: str, report_id: str | None) -> None:
@@ -2704,7 +2708,8 @@ def list_note_stocks(request: Request) -> dict[str, Any]:
                     case
                         when portfolio_items.id is not null and watchlist_items.id is not null then 'portfolio, watchlist'
                         when portfolio_items.id is not null then 'portfolio'
-                        else 'watchlist'
+                        when watchlist_items.id is not null then 'watchlist'
+                        else 'notes'
                     end as list_name
                 from public.stocks
                 left join public.portfolio_items
@@ -2713,8 +2718,12 @@ def list_note_stocks(request: Request) -> dict[str, Any]:
                 left join public.watchlist_items
                   on watchlist_items.stock_id = stocks.id
                  and watchlist_items.user_id = %(user_id)s
+                left join public.notes
+                  on notes.stock_id = stocks.id
+                 and notes.user_id = %(user_id)s
                 where portfolio_items.id is not null
                    or watchlist_items.id is not null
+                   or notes.id is not null
                 order by stocks.symbol
                 """,
                 {"user_id": user_id},

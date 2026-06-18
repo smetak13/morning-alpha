@@ -1852,7 +1852,7 @@ function SingleNoteModal({ note, onClose, onDelete, onSave }) {
 
 function GroupedNotesModal({ notes, onClose }) {
   const grouped = notes.reduce((groups, note) => {
-    const key = note.report_date || String(note.created_at).slice(0, 10);
+    const key = String(note.created_at).slice(0, 10);
     return { ...groups, [key]: [...(groups[key] ?? []), note] };
   }, {});
 
