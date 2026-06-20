@@ -25,3 +25,16 @@ services:
       API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:8000}
     command: ["python", "report_scheduler.py"]
     restart: unless-stopped
+
+  deep-research-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      API_PUBLIC_URL: ${API_PUBLIC_URL:-http://localhost:8000}
+      DEEP_RESEARCH_WORKER_POLL_SECONDS: ${DEEP_RESEARCH_WORKER_POLL_SECONDS:-5}
+      DEEP_RESEARCH_WORKER_LOG_LEVEL: ${DEEP_RESEARCH_WORKER_LOG_LEVEL:-INFO}
+    command: ["python", "deep_research_worker.py"]
+    restart: unless-stopped

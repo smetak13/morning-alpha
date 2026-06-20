@@ -263,6 +263,9 @@ function enhanceReportHtml(html) {
       *::-webkit-scrollbar-track { background: #111111; }
       *::-webkit-scrollbar-thumb { background: #3a3a3a; border: 2px solid #111111; border-radius: 999px; }
       *::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
+      @media (min-width: 761px) {
+        .container { max-width: 1180px !important; }
+      }
     </style>
   `;
   const withTargets = String(html || "").replace(/<a\s+(?![^>]*\btarget=)/g, '<a target="_blank" rel="noopener noreferrer" ');
@@ -2035,6 +2038,7 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
   const [generatedNotes, setGeneratedNotes] = useState([]);
   const [generatedNotesRevision, setGeneratedNotesRevision] = useState(0);
   const [generatedNotesError, setGeneratedNotesError] = useState("");
+  const [activeResearchRun, setActiveResearchRun] = useState(null);
   const selectedRelationship = useMemo(
     () => researchRelationshipForStock(selectedStock, portfolioItems, watchlistItems),
     [portfolioItems, selectedStock, watchlistItems],
@@ -2075,6 +2079,7 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
     setStatus("loading");
     setError("");
     setPayload(null);
+    setActiveResearchRun(null);
     try {
       const response = await requestJson("/api/research/company", {
         method: "POST",
@@ -2084,16 +2089,63 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
           company_name: selectedStock.company_name,
           date_from: filters.date_from,
           date_to: filters.date_to,
-          research_type: selectedRelationship === "new" ? "company_primer" : researchType,
+          research_type: researchType,
         }),
       });
-      setPayload(response);
-      setStatus("ready");
+      if (response.mode === "deep_research" && response.research_run_id && response.status !== "completed") {
+        setActiveResearchRun(response);
+        setStatus("loading");
+      } else {
+        setPayload(response);
+        setStatus("ready");
+      }
     } catch (err) {
       setStatus("error");
       setError(err?.name === "AbortError" ? "Research timed out after 60 seconds. Try a shorter window or run it again." : err instanceof Error ? err.message : "Unable to run research.");
     }
   };
+
+  useEffect(() => {
+    const runId = activeResearchRun?.research_run_id || activeResearchRun?.id;
+    if (!runId || status !== "loading") {
+      return undefined;
+    }
+    let ignore = false;
+    const pollRun = async () => {
+      try {
+        const response = await requestJson(`/api/research-runs/${encodeURIComponent(runId)}`, { method: "GET" });
+        const run = response.run;
+        if (ignore || !run) {
+          return;
+        }
+        setActiveResearchRun(run);
+        if (run.status === "completed" && run.research_item?.body) {
+          setPayload({
+            ...run.research_item.body,
+            research_item_id: run.research_item.id,
+            stock: run.research_item.body.stock || run.stock,
+          });
+          setStatus("ready");
+          setActiveResearchRun(null);
+        } else if (run.status === "failed") {
+          setStatus("error");
+          setError(run.error || "Deep research failed.");
+          setActiveResearchRun(null);
+        }
+      } catch (err) {
+        if (!ignore) {
+          setStatus("error");
+          setError(err instanceof Error ? err.message : "Unable to refresh deep research status.");
+        }
+      }
+    };
+    pollRun();
+    const timer = window.setInterval(pollRun, 5000);
+    return () => {
+      ignore = true;
+      window.clearInterval(timer);
+    };
+  }, [activeResearchRun?.research_run_id, activeResearchRun?.id, status]);
 
   const resetCompany = () => {
     setSelectedStock(null);
@@ -2101,14 +2153,16 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
     setSearch("");
   };
 
-  const modeLabel = payload?.mode === "portfolio" ? "Portfolio thesis check" : payload?.mode === "watchlist" ? "Watchlist entry check" : "Company primer";
+  const modeLabel = payload?.mode === "portfolio" ? "Portfolio thesis check" : payload?.mode === "watchlist" ? "Watchlist entry check" : payload?.mode === "deep_research" ? "Deep research" : "Company primer";
   const payloadRelationship = payload?.relationship ?? payload?.mode;
   const generatedResearchItem = researchItemFromPayload(payload);
   const canAddNote = Boolean(generatedResearchItem?.stock_id);
-  const showResearchTypeSwitch = Boolean(selectedStock) && selectedRelationship !== "new";
+  const showResearchTypeSwitch = Boolean(selectedStock);
   const researchTypeOptions = selectedRelationship === "portfolio"
-    ? [["portfolio_check", "Portfolio check"], ["company_primer", "Company primer"]]
-    : [["watchlist_check", "Watchlist check"], ["company_primer", "Company primer"]];
+    ? [["portfolio_check", "Portfolio check"], ["company_primer", "Company primer"], ["deep_research", "Deep research"]]
+    : selectedRelationship === "watchlist"
+      ? [["watchlist_check", "Watchlist check"], ["company_primer", "Company primer"], ["deep_research", "Deep research"]]
+      : [["company_primer", "Company primer"], ["deep_research", "Deep research"]];
 
   useEffect(() => {
     const researchItemId = generatedResearchItem?.id;
@@ -2229,7 +2283,7 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
       {status === "loading" ? (
         <div className="generating-state research-loading">
           <Sparkles size={22} aria-hidden="true" />
-          <p>Building focused research...</p>
+          <p>{activeResearchRun ? `${activeResearchRun.progress_step || "Running deep research"}${activeResearchRun.progress_pct ? ` (${activeResearchRun.progress_pct}%)` : ""}` : "Building focused research..."}</p>
         </div>
       ) : null}
       {payload ? (
@@ -2252,7 +2306,7 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
                   Add note
                 </button>
               ) : null}
-              {generatedResearchItem ? (
+              {generatedResearchItem && generatedResearchItem.research_type !== "deep_research" ? (
                 <button className="secondary-button compact-button" onClick={() => setShareTarget(generatedResearchItem)} type="button">
                   <Share2 size={16} aria-hidden="true" />
                   Share research
@@ -2326,6 +2380,7 @@ function researchTypeLabel(value) {
     portfolio_check: "Portfolio check",
     watchlist_check: "Watchlist check",
     company_primer: "Company primer",
+    deep_research: "Deep research",
   };
   return labels[value] ?? researchHumanLabel(value || "Research");
 }
@@ -2361,6 +2416,7 @@ function researchTypeForMode(mode) {
     portfolio: "portfolio_check",
     watchlist: "watchlist_check",
     new: "company_primer",
+    deep_research: "deep_research",
   }[mode] ?? "company_primer";
 }
 
@@ -2495,6 +2551,7 @@ function ResearchHistoryView({ routeResearchId = "" }) {
                 ["portfolio_check", "Portfolio"],
                 ["watchlist_check", "Watchlist"],
                 ["company_primer", "Primer"],
+                ["deep_research", "Deep"],
               ].map(([value, label]) => (
                 <button className={filters.research_type === value ? "active" : ""} key={value || "all"} onClick={() => updateFilter("research_type", value)} type="button">
                   {label}
@@ -2562,9 +2619,11 @@ function ResearchHistoryView({ routeResearchId = "" }) {
                       </button>
                     </td>
                     <td className="actions-cell" data-label="Actions">
-                      <button className="icon-button" onClick={(event) => { event.stopPropagation(); setShareTarget(item); }} title="Share research" type="button">
-                        <Share2 size={17} aria-hidden="true" />
-                      </button>
+                      {item.research_type !== "deep_research" ? (
+                        <button className="icon-button" onClick={(event) => { event.stopPropagation(); setShareTarget(item); }} title="Share research" type="button">
+                          <Share2 size={17} aria-hidden="true" />
+                        </button>
+                      ) : null}
                       <button className="icon-button danger" onClick={(event) => { event.stopPropagation(); setDeleteTarget(item); }} title="Delete research" type="button">
                         <Trash2 size={17} aria-hidden="true" />
                       </button>
@@ -2691,10 +2750,12 @@ function ResearchPreviewModal({ item, revision = 0, onAddNote, onShare, onClose 
               <Plus size={16} aria-hidden="true" />
               Add note
             </button>
-            <button className="secondary-button compact-button" onClick={onShare} type="button">
-              <Share2 size={16} aria-hidden="true" />
-              Share research
-            </button>
+            {item.research_type !== "deep_research" ? (
+              <button className="secondary-button compact-button" onClick={onShare} type="button">
+                <Share2 size={16} aria-hidden="true" />
+                Share research
+              </button>
+            ) : null}
             <button className="icon-button" onClick={onClose} title="Close" type="button">
               <X size={18} aria-hidden="true" />
             </button>
@@ -2796,7 +2857,22 @@ function formatCompactNumber(value) {
     return "N/A";
   }
   return new Intl.NumberFormat(undefined, {
-    maximumFractionDigits: number >= 100 ? 0 : 2,
+    maximumFractionDigits: 2,
+    notation: Math.abs(number) >= 1000000 ? "compact" : "standard",
+  }).format(number);
+}
+
+function formatStatementNumber(value) {
+  if (value === null || value === undefined || value === "") {
+    return "N/A";
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "N/A";
+  }
+  return new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
     notation: Math.abs(number) >= 1000000 ? "compact" : "standard",
   }).format(number);
 }
@@ -2819,7 +2895,7 @@ function metricValue(key, value) {
   if (key.includes("margin") || key === "roe_pct" || key.includes("yield")) {
     return formatMetricPercent(value);
   }
-  if (key === "market_cap") {
+  if (["market_cap", "enterprise_value", "net_debt"].includes(key)) {
     return formatCompactNumber(value);
   }
   if (key === "price" || key === "year_high" || key === "year_low") {
@@ -2838,9 +2914,37 @@ function metricLabel(key) {
     market_cap: "Market cap",
     pe: "P/E TTM",
     ps: "P/S TTM",
+    pb: "P/B",
     ev_to_ebitda: "EV/EBITDA",
+    ev_to_sales: "EV/Sales",
     fcf_yield_pct: "FCF yield",
     eps: "EPS",
+    revenue: "Revenue",
+    grossProfit: "Gross profit",
+    gross_profit: "Gross profit",
+    operatingIncome: "Operating income",
+    operating_income: "Operating income",
+    netIncome: "Net income",
+    net_income: "Net income",
+    freeCashFlow: "Free cash flow",
+    free_cash_flow: "Free cash flow",
+    operatingCashFlow: "Operating cash flow",
+    capitalExpenditure: "Capex",
+    cashAndCashEquivalents: "Cash",
+    totalDebt: "Total debt",
+    totalAssets: "Total assets",
+    totalLiabilities: "Total liabilities",
+    totalStockholdersEquity: "Equity",
+    calendarYear: "Year",
+    period: "Period",
+    ebitda: "EBITDA",
+    net_debt: "Net debt",
+    shares_outstanding: "Shares out.",
+    enterprise_value: "Enterprise value",
+    revenue_growth_pct: "Revenue growth",
+    eps_growth_pct: "EPS growth",
+    ebitda_growth_pct: "EBITDA growth",
+    fcf_growth_pct: "FCF growth",
     eps_growth_3y_pct: "EPS growth 3Y",
     eps_growth_5y_pct: "EPS growth 5Y",
     revenue_growth_3y_pct: "Revenue growth 3Y",
@@ -2851,7 +2955,9 @@ function metricLabel(key) {
     operating_margin_pct: "Operating margin",
     net_margin_pct: "Net margin",
     roe_pct: "ROE",
+    roic_pct: "ROIC",
     debt_to_equity: "Debt/equity",
+    current_ratio: "Current ratio",
     year_high: "52W high",
     year_low: "52W low",
   };
@@ -2886,15 +2992,28 @@ function earningsReportLabel(report, index) {
 }
 
 function EarningsReportsPanel({ reports = [], nextEarningsDate }) {
-  const [activeIndex, setActiveIndex] = useState(0);
   const items = Array.isArray(reports) ? reports.filter(Boolean) : [];
+  const defaultActiveIndex = useMemo(() => {
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    const index = items.findIndex((report) => {
+      const date = parseDateOnlyStrict(report?.date);
+      return date && date <= today;
+    });
+    return index >= 0 ? index : 0;
+  }, [items]);
+  const [activeIndex, setActiveIndex] = useState(defaultActiveIndex);
   const activeReport = items[Math.min(activeIndex, Math.max(items.length - 1, 0))];
 
   useEffect(() => {
-    if (activeIndex >= items.length) {
-      setActiveIndex(0);
+    setActiveIndex(defaultActiveIndex);
+  }, [defaultActiveIndex, items.length]);
+
+  useEffect(() => {
+    if (activeIndex >= items.length || activeIndex < 0) {
+      setActiveIndex(defaultActiveIndex);
     }
-  }, [activeIndex, items.length]);
+  }, [activeIndex, defaultActiveIndex, items.length]);
 
   if (!items.length && !nextEarningsDate) {
     return null;
@@ -3024,6 +3143,9 @@ function StockPriceChart({ dailyPoints }) {
       return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
     })
     .join(" ");
+  const firstCoord = coordinate(visiblePoints[0], 0);
+  const lastCoord = coordinate(visiblePoints[visiblePoints.length - 1], visiblePoints.length - 1);
+  const areaPath = `${path} L ${lastCoord.x.toFixed(2)} ${height - bottom} L ${firstCoord.x.toFixed(2)} ${height - bottom} Z`;
   const first = visiblePoints[0].close;
   const last = visiblePoints[visiblePoints.length - 1].close;
   const change = ((last / first) - 1) * 100;
@@ -3084,6 +3206,7 @@ function StockPriceChart({ dailyPoints }) {
           })}
           <line className="chart-axis-line" x1={left} x2={width - right} y1={height - bottom} y2={height - bottom} />
           <line className="chart-axis-line" x1={left} x2={left} y1={top} y2={height - bottom} />
+          <path className="price-chart-area" d={areaPath} />
           <path d={path} fill="none" stroke="#f4c430" strokeLinecap="round" strokeWidth="3" />
           {hovered && hoveredCoord ? (
             <>
@@ -3097,7 +3220,7 @@ function StockPriceChart({ dailyPoints }) {
   );
 }
 
-function ResearchMarketSnapshot({ marketData }) {
+function ResearchMarketSnapshot({ marketData, showEarnings = true }) {
   if (!marketData) {
     return null;
   }
@@ -3107,16 +3230,32 @@ function ResearchMarketSnapshot({ marketData }) {
     "market_cap",
     "pe",
     "ps",
+    "pb",
     "ev_to_ebitda",
+    "ev_to_sales",
     "fcf_yield_pct",
     "eps",
-    "revenue_growth_3y_pct",
-    "eps_growth_3y_pct",
-    "eps_growth_5y_pct",
+    "revenue",
+    "gross_profit",
+    "ebitda",
+    "operating_income",
+    "net_income",
+    "free_cash_flow",
+    "revenue_growth_pct",
+    "eps_growth_pct",
+    "ebitda_growth_pct",
+    "fcf_growth_pct",
     "revenue_per_share",
+    "fcf_per_share",
     "gross_margin_pct",
     "operating_margin_pct",
     "net_margin_pct",
+    "roe_pct",
+    "roic_pct",
+    "debt_to_equity",
+    "current_ratio",
+    "net_debt",
+    "shares_outstanding",
     "year_high",
     "year_low",
   ];
@@ -3146,14 +3285,676 @@ function ResearchMarketSnapshot({ marketData }) {
             <a href={marketData.latest_earnings.source_url} rel="noreferrer" target="_blank">Source</a>
           </div>
         ) : null}
-        <EarningsReportsPanel reports={marketData.earnings_reports ?? []} nextEarningsDate={marketData.next_earnings_date} />
+        {showEarnings ? <EarningsReportsPanel reports={marketData.earnings_reports ?? []} nextEarningsDate={marketData.next_earnings_date} /> : null}
       </div>
     </section>
   );
 }
 
+function recomputeDeepDcf(base, assumptions) {
+  const latestRevenue = Number(base?.latest_revenue);
+  const shares = Number(base?.shares_outstanding);
+  const netDebt = Number(base?.net_debt || 0);
+  const currentPrice = Number(base?.current_price);
+  const years = Number(assumptions?.projection_years || 5);
+  if (!Number.isFinite(latestRevenue) || !Number.isFinite(shares) || shares === 0) {
+    return { projection: [], intrinsic_value_per_share: null, upside_downside_pct: null };
+  }
+  const growth = Number(assumptions.revenue_growth_pct || 0) / 100;
+  const fcfMargin = Number(assumptions.fcf_margin_pct || 0) / 100;
+  const discount = Math.max(Number(assumptions.wacc_pct || 9) / 100, 0.001);
+  const terminalGrowth = Math.min(Number(assumptions.terminal_growth_pct || 2.5) / 100, discount - 0.001);
+  let revenue = latestRevenue;
+  let presentValueSum = 0;
+  const projection = [];
+  for (let year = 1; year <= years; year += 1) {
+    revenue *= 1 + growth;
+    const freeCashFlow = revenue * fcfMargin;
+    const presentValue = freeCashFlow / ((1 + discount) ** year);
+    presentValueSum += presentValue;
+    projection.push({ year, revenue, free_cash_flow: freeCashFlow, present_value: presentValue });
+  }
+  const terminalFcf = (projection.at(-1)?.free_cash_flow || 0) * (1 + terminalGrowth);
+  const terminalValue = terminalFcf / Math.max(discount - terminalGrowth, 0.001);
+  const terminalPresentValue = terminalValue / ((1 + discount) ** years);
+  const enterpriseValue = presentValueSum + terminalPresentValue;
+  const equityValue = enterpriseValue - netDebt;
+  const intrinsic = equityValue / shares;
+  const upside = Number.isFinite(currentPrice) && currentPrice !== 0 ? ((intrinsic / currentPrice) - 1) * 100 : null;
+  return {
+    projection,
+    terminal_value: terminalValue,
+    enterprise_value: enterpriseValue,
+    equity_value: equityValue,
+    intrinsic_value_per_share: intrinsic,
+    upside_downside_pct: upside,
+  };
+}
+
+function impliedGrowthForCurrentDcf(base, assumptions) {
+  const currentPrice = Number(base?.current_price);
+  const latestRevenue = Number(base?.latest_revenue);
+  const shares = Number(base?.shares_outstanding);
+  if (!Number.isFinite(currentPrice) || currentPrice === 0 || !Number.isFinite(latestRevenue) || !Number.isFinite(shares) || shares === 0) {
+    return null;
+  }
+  let low = -30;
+  let high = 50;
+  const targetPrice = currentPrice;
+  for (let index = 0; index < 48; index += 1) {
+    const mid = (low + high) / 2;
+    const result = recomputeDeepDcf(base, { ...assumptions, revenue_growth_pct: mid });
+    const intrinsic = Number(result.intrinsic_value_per_share);
+    if (!Number.isFinite(intrinsic)) {
+      return null;
+    }
+    if (intrinsic < targetPrice) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  return (low + high) / 2;
+}
+
+function DeepResearchDcfCalculator({ dcf }) {
+  const [assumptions, setAssumptions] = useState(() => dcf?.assumptions || {});
+  useEffect(() => {
+    setAssumptions(dcf?.assumptions || {});
+  }, [dcf]);
+  if (!dcf) {
+    return null;
+  }
+  const result = recomputeDeepDcf(dcf.base || {}, assumptions);
+  const sources = dcf.assumption_sources || {};
+  const impliedGrowth = impliedGrowthForCurrentDcf(dcf.base || {}, assumptions);
+  const updateAssumption = (key, value) => {
+    setAssumptions((current) => ({ ...current, [key]: Number(value) }));
+  };
+  const controls = [
+    ["revenue_growth_pct", "Revenue growth", -20, 35, 0.5],
+    ["fcf_margin_pct", "FCF margin", -10, 40, 0.5],
+    ["wacc_pct", "WACC", 4, 18, 0.25],
+    ["terminal_growth_pct", "Terminal growth", 0, 5, 0.25],
+  ];
+  return (
+    <section className="research-card deep-dcf-card">
+      <div className="research-card-header">
+        <h3>DCF calculator</h3>
+      </div>
+      <div className="deep-dcf-summary">
+        <div>
+          <span>Intrinsic value</span>
+          <strong>{metricValue("price", result.intrinsic_value_per_share)}</strong>
+        </div>
+        <div>
+          <span>Current price</span>
+          <strong>{metricValue("price", dcf.base?.current_price)}</strong>
+        </div>
+        <div>
+          <span>Upside / downside</span>
+          <strong className={Number(result.upside_downside_pct) >= 0 ? "positive" : "negative"}>{formatMetricPercent(result.upside_downside_pct)}</strong>
+        </div>
+        <div>
+          <span>Default revenue growth</span>
+          <strong>{formatMetricPercent(assumptions.revenue_growth_pct)}</strong>
+          <small>{sources.revenue_growth_pct?.source_label || "Base assumption"}</small>
+        </div>
+        <div>
+          <span>Analyst growth</span>
+          <strong>{formatMetricPercent(sources.analyst_revenue_growth_pct)}</strong>
+          <small>Nearest available estimate</small>
+        </div>
+        <div>
+          <span>Market-implied growth</span>
+          <strong>{formatMetricPercent(impliedGrowth ?? sources.market_implied_revenue_growth_pct)}</strong>
+          <small>Growth needed to match current price</small>
+        </div>
+        <div>
+          <span>Provider DCF fair value</span>
+          <strong>{metricValue("price", dcf.provider_dcf?.dcf)}</strong>
+          <small>
+            {dcf.provider_dcf?.date || "Reference model"}
+            {dcf.provider_dcf?.upside_downside_pct !== null && dcf.provider_dcf?.upside_downside_pct !== undefined
+              ? `, ${formatMetricPercent(dcf.provider_dcf.upside_downside_pct)} vs current`
+              : ""}
+          </small>
+        </div>
+      </div>
+      <div className="deep-dcf-controls">
+        {controls.map(([key, label, min, max, step]) => (
+          <label key={key}>
+            <span>{label}</span>
+            <div className="deep-dcf-input-row">
+              <input max={max} min={min} onChange={(event) => updateAssumption(key, event.target.value)} step={step} type="range" value={assumptions[key] ?? 0} />
+              <input max={max} min={min} onChange={(event) => updateAssumption(key, event.target.value)} step={step} type="number" value={assumptions[key] ?? 0} />
+            </div>
+          </label>
+        ))}
+      </div>
+      <div className="deep-dcf-projection">
+        {result.projection.map((row) => (
+          <div key={row.year}>
+            <span>Year {row.year}</span>
+            <strong>{formatCompactNumber(row.free_cash_flow)}</strong>
+          </div>
+        ))}
+      </div>
+      <p className="muted">{dcf.methodology || "Interactive revenue-to-FCF DCF. Provider DCF is shown separately when available, because methodology and assumptions can differ materially."}</p>
+    </section>
+  );
+}
+
+function SimpleDeepChart({ artifact }) {
+  const [hoverIndex, setHoverIndex] = useState(null);
+  const series = artifact?.data?.series || [];
+  const suffix = artifact?.data?.value_suffix || "";
+  if (series.length < 2) {
+    return null;
+  }
+  const values = series.map((point) => Number(point.value ?? point.close)).filter((value) => Number.isFinite(value));
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const width = 520;
+  const height = 170;
+  const left = 42;
+  const right = 12;
+  const top = 14;
+  const bottom = 32;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const coordinate = (point, index) => {
+    const value = Number(point.value ?? point.close);
+    const isBar = (artifact?.data?.chart_type || "bar") !== "line";
+    return {
+      x: isBar ? left + ((index + 0.5) / Math.max(1, series.length)) * plotWidth : left + (index / Math.max(1, series.length - 1)) * plotWidth,
+      y: top + (1 - (value - min) / range) * plotHeight,
+      value,
+    };
+  };
+  const chartType = artifact?.data?.chart_type || "bar";
+  const hovered = hoverIndex === null ? null : series[hoverIndex];
+  const hoveredCoord = hovered ? coordinate(hovered, hoverIndex) : null;
+  const handleHover = (event) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
+    setHoverIndex(Math.round(ratio * (series.length - 1)));
+  };
+  const path = series.map((point, index) => {
+    const { x, y } = coordinate(point, index);
+    return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+  }).join(" ");
+  const firstCoord = coordinate(series[0], 0);
+  const lastCoord = coordinate(series[series.length - 1], series.length - 1);
+  const areaPath = `${path} L ${lastCoord.x.toFixed(2)} ${height - bottom} L ${firstCoord.x.toFixed(2)} ${height - bottom} Z`;
+  const avg = artifact?.data?.average;
+  const avgY = Number.isFinite(Number(avg)) ? top + (1 - (Number(avg) - min) / range) * plotHeight : null;
+  return (
+    <div className="deep-chart">
+      <div className="deep-chart-stats">
+        <span>Min {formatCompactNumber(artifact?.data?.min)}{suffix}</span>
+        <span>Avg {formatCompactNumber(avg)}{suffix}</span>
+        <span>Max {formatCompactNumber(artifact?.data?.max)}{suffix}</span>
+      </div>
+      <div className="deep-chart-plot" onMouseLeave={() => setHoverIndex(null)} onMouseMove={handleHover}>
+        {hovered && hoveredCoord ? (
+          <div className="deep-chart-tooltip" style={{ left: `${(hoveredCoord.x / width) * 100}%` }}>
+            <strong>{formatCompactNumber(hovered.value ?? hovered.close)}{suffix}</strong>
+            <span>{formatDeepPeriodLabel(hovered, artifact?.data?.period)}</span>
+          </div>
+        ) : null}
+      <svg className="deep-chart-svg" viewBox={`0 0 ${width} ${height}`}>
+        {avgY !== null ? <line className="deep-chart-average" x1={left} x2={width - right} y1={avgY} y2={avgY} /> : null}
+        {chartType === "line" ? (
+          <>
+            <path className="deep-chart-area" d={areaPath} />
+            <path d={path} fill="none" stroke="#f4c430" strokeLinecap="round" strokeWidth="2.5" />
+          </>
+        ) : (
+          series.map((point, index) => {
+            const { x, y, value } = coordinate(point, index);
+            const barWidth = Math.max(8, plotWidth / series.length - 7);
+            const zeroY = min < 0 && max > 0 ? top + (1 - (0 - min) / range) * plotHeight : height - bottom;
+            const barY = Math.min(y, zeroY);
+            const barHeight = Math.max(1, Math.abs(zeroY - y));
+            return <rect className={value < 0 ? "deep-chart-bar negative" : "deep-chart-bar"} height={barHeight} key={`${point.date}-${index}`} width={barWidth} x={x - barWidth / 2} y={barY} />;
+          })
+        )}
+        {series.map((point, index) => {
+          const shouldShow = series.length <= 12 || index === 0 || index === series.length - 1 || index === Math.floor((series.length - 1) / 2);
+          if (!shouldShow) {
+            return null;
+          }
+          const { x } = coordinate(point, index);
+          return (
+            <text className="chart-axis-label" key={`${point.date}-label`} textAnchor={index === 0 ? "start" : index === series.length - 1 ? "end" : "middle"} x={x} y={height - 8}>
+              {formatDeepPeriodLabel(point, artifact?.data?.period)}
+            </text>
+          );
+        })}
+      </svg>
+      </div>
+    </div>
+  );
+}
+
+function formatDeepPeriodLabel(point, period) {
+  const date = parseChartDate(point?.date);
+  if (Number.isNaN(date.getTime())) {
+    return point?.date || "";
+  }
+  if (period === "quarter") {
+    const quarter = Math.floor(date.getMonth() / 3) + 1;
+    return `Q${quarter} ${date.getFullYear()}`;
+  }
+  return String(date.getFullYear());
+}
+
+function DeepResearchArtifacts({ artifacts }) {
+  const [period, setPeriod] = useState("annual");
+  const visibleArtifacts = Array.isArray(artifacts)
+    ? artifacts.filter((artifact) => (artifact?.data?.period || "annual") === period).slice(0, 12)
+    : [];
+  if (!visibleArtifacts.length) {
+    return null;
+  }
+  return (
+    <section className="research-card deep-artifacts-card">
+      <div className="research-card-header">
+        <h3>Charts and metrics</h3>
+        <div className="deep-chart-tabs">
+          {["annual", "quarter"].map((value) => (
+            <button className={period === value ? "active" : ""} key={value} onClick={() => setPeriod(value)} type="button">
+              {value === "annual" ? "Annual" : "Quarterly"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="deep-artifact-grid">
+        {visibleArtifacts.map((artifact, index) => {
+          const series = artifact?.data?.series || [];
+          const last = series.at(-1)?.value ?? series.at(-1)?.close;
+          return (
+            <div className="deep-artifact-tile" key={`${artifact.title}-${index}`}>
+              <span>{artifact.title}</span>
+              <strong>{formatCompactNumber(last)}{artifact?.data?.value_suffix || ""}</strong>
+              <SimpleDeepChart artifact={artifact} />
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function stripSourceBrackets(value) {
+  return stripInlineSourceDomains(value).replace(/\s*\[[^[\]]+\]/g, "");
+}
+
+function DeepResearchList({ title, items }) {
+  return (
+    <section className="research-card">
+      <div className="research-card-header">
+        <h3>{title}</h3>
+      </div>
+      {items?.length ? (
+        <ul>
+          {items.map((item, index) => (
+            <li key={`${title}-${index}`}>
+              <span className="research-list-index">{String(index + 1).padStart(2, "0")}</span>
+              <p>{stripSourceBrackets(typeof item === "string" ? item : JSON.stringify(item))}</p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">No material points returned.</p>
+      )}
+    </section>
+  );
+}
+
+function sourceByKeyMap(sources) {
+  return new Map((Array.isArray(sources) ? sources : []).map((source) => [source.source_key, source]));
+}
+
+function hasDataError(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  return Object.keys(value).some((key) => ["error", "error message"].includes(String(key).trim().toLowerCase()));
+}
+
+function hasAnnualReportError(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  return hasDataError(value) || hasDataError(value.metadata) || hasDataError(value.metadata?.report);
+}
+
+function DeepSourceChips({ sourceKeys, sourceMap, onOpenResource }) {
+  const keys = Array.isArray(sourceKeys) ? sourceKeys.filter(Boolean) : [];
+  if (!keys.length) {
+    return null;
+  }
+  return (
+    <div className="deep-source-chips">
+      {keys.map((key) => {
+        const source = sourceMap.get(key);
+        if (!source) {
+          return null;
+        }
+        if (source.source_type === "annual_report_json" && hasAnnualReportError(source)) {
+          return null;
+        }
+        if (["financial_statement", "earnings_transcript", "annual_report_json"].includes(source.source_type)) {
+          return (
+            <button key={key} onClick={() => onOpenResource(source)} type="button">
+              {source.title || key}
+            </button>
+          );
+        }
+        if (source.url) {
+          return (
+            <a href={source.url} key={key} rel="noreferrer" target="_blank">
+              {source.title || key}
+            </a>
+          );
+        }
+        return null;
+      })}
+    </div>
+  );
+}
+
+function DeepResearchSections({ sections, sourceMap, onOpenResource }) {
+  const items = Array.isArray(sections) ? sections : [];
+  if (!items.length) {
+    return null;
+  }
+  return items.map((section, index) => (
+    <section className="research-card deep-section-card" key={`${section?.title || "section"}-${index}`}>
+      <div className="research-card-header">
+        <h3>{section?.title || `Section ${index + 1}`}</h3>
+      </div>
+      {section?.summary ? <p className="deep-section-summary">{stripSourceBrackets(section.summary)}</p> : null}
+      {Array.isArray(section?.bullets) && section.bullets.length ? (
+        <ul>
+          {section.bullets.map((item, itemIndex) => (
+            <li key={`${section?.title || "section"}-${itemIndex}`}>
+              <span className="research-list-index">{String(itemIndex + 1).padStart(2, "0")}</span>
+              <p>{stripSourceBrackets(item)}</p>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <DeepSourceChips onOpenResource={onOpenResource} sourceKeys={section?.source_keys} sourceMap={sourceMap} />
+    </section>
+  ));
+}
+
+function statementTableColumns(rows) {
+  return rows.slice(0, 3).map((row, index) => ({
+    key: `${row.date || row.calendarYear || index}`,
+    label: row.date || row.calendarYear || `Period ${index + 1}`,
+    row,
+  }));
+}
+
+function statementLineItems(rows) {
+  const groups = [
+    ["Revenue and gross profit", ["revenue", "costOfRevenue", "grossProfit", "grossProfitRatio"]],
+    ["Operating expenses", ["researchAndDevelopmentExpenses", "sellingGeneralAndAdministrativeExpenses", "generalAndAdministrativeExpenses", "sellingAndMarketingExpenses", "operatingExpenses", "operatingIncome", "operatingIncomeRatio"]],
+    ["Earnings", ["ebitda", "ebitdaratio", "interestExpense", "incomeBeforeTax", "incomeTaxExpense", "netIncome", "netIncomeRatio", "eps", "epsdiluted", "weightedAverageShsOut", "weightedAverageShsOutDil"]],
+    ["Current assets", ["cashAndCashEquivalents", "shortTermInvestments", "cashAndShortTermInvestments", "netReceivables", "inventory", "otherCurrentAssets", "totalCurrentAssets"]],
+    ["Long-term assets", ["propertyPlantEquipmentNet", "goodwill", "intangibleAssets", "longTermInvestments", "taxAssets", "totalNonCurrentAssets", "totalAssets"]],
+    ["Liabilities and equity", ["accountPayables", "shortTermDebt", "deferredRevenue", "totalCurrentLiabilities", "longTermDebt", "totalDebt", "totalNonCurrentLiabilities", "totalLiabilities", "retainedEarnings", "totalStockholdersEquity", "totalEquity"]],
+    ["Cash flow", ["netIncome", "depreciationAndAmortization", "stockBasedCompensation", "changeInWorkingCapital", "netCashProvidedByOperatingActivities", "operatingCashFlow", "capitalExpenditure", "freeCashFlow", "netCashUsedForInvestingActivites", "acquisitionsNet", "netCashUsedProvidedByFinancingActivities", "commonStockRepurchased", "dividendsPaid"]],
+  ];
+  const highlight = new Set(["revenue", "grossProfit", "operatingIncome", "ebitda", "netIncome", "totalCurrentAssets", "totalAssets", "totalCurrentLiabilities", "totalDebt", "totalLiabilities", "totalStockholdersEquity", "totalEquity", "operatingCashFlow", "netCashProvidedByOperatingActivities", "freeCashFlow"]);
+  const available = new Set(rows.flatMap((row) => Object.keys(row || {})));
+  const used = new Set();
+  const output = [];
+  groups.forEach(([title, keys]) => {
+    const items = keys.filter((key) => available.has(key) && !used.has(key));
+    if (!items.length) {
+      return;
+    }
+    output.push({ type: "category", label: title });
+    items.forEach((key) => {
+      used.add(key);
+      output.push({ type: "item", key, highlight: highlight.has(key) });
+    });
+  });
+  return output.slice(0, 80);
+}
+
+function DeepResourceModal({ resource, onClose }) {
+  if (!resource) {
+    return null;
+  }
+  const metadata = resource.metadata || {};
+  const rows = Array.isArray(metadata.rows) ? metadata.rows : [];
+  const columns = statementTableColumns(rows);
+  const lineItems = statementLineItems(rows);
+  const transcriptBlocks = splitTranscriptBySpeaker(metadata.content || resource.excerpt || "");
+  return (
+    <div className="modal-backdrop report-preview-backdrop" onMouseDown={onClose}>
+      <section className="modal-panel research-preview-panel long-modal-panel deep-resource-modal" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <div className="report-modal-header">
+          <div>
+            <p className="eyebrow">{researchHumanLabel(resource.source_type)}</p>
+            <h2>{resource.title}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Close" type="button">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="deep-resource-content">
+          {resource.source_type === "earnings_transcript" ? (
+            <article className="deep-transcript-body">
+              {transcriptBlocks.length ? (
+                transcriptBlocks.map((block, index) => (
+                  <section className="deep-transcript-speaker" key={`${block.speaker}-${index}`}>
+                    <h3>{block.speaker}</h3>
+                    <p>{block.text}</p>
+                  </section>
+                ))
+              ) : (
+                <p>Transcript content unavailable.</p>
+              )}
+            </article>
+          ) : null}
+          {resource.source_type === "financial_statement" ? (
+            <div className="deep-statement-table-wrap">
+              <table className="deep-statement-table">
+                <thead>
+                  <tr>
+                    <th>Line item</th>
+                    {columns.map((column) => <th key={column.key}>{column.label}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {lineItems.map((lineItem) => (
+                    lineItem.type === "category" ? (
+                      <tr className="statement-category-row" key={`category-${lineItem.label}`}>
+                        <td colSpan={columns.length + 1}>{lineItem.label}</td>
+                      </tr>
+                    ) : (
+                      <tr className={lineItem.highlight ? "statement-highlight-row" : ""} key={lineItem.key}>
+                        <td>{metricLabel(lineItem.key)}</td>
+                        {columns.map((column) => (
+                          <td key={column.key}>{formatStatementNumber(column.row?.[lineItem.key])}</td>
+                        ))}
+                      </tr>
+                    )
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+          {resource.source_type === "annual_report_json" ? (
+            metadata.extract ? (
+              <article className="annual-report-extract">
+                {metadata.extract.summary ? <p>{metadata.extract.summary}</p> : null}
+                {Array.isArray(metadata.extract.sections) ? metadata.extract.sections.map((section, index) => (
+                  <section key={`${section.title || "section"}-${index}`}>
+                    <h3>{section.title || `Section ${index + 1}`}</h3>
+                    {Array.isArray(section.bullets) && section.bullets.length ? (
+                      <ul>
+                        {section.bullets.map((item, itemIndex) => <li key={`${section.title || index}-${itemIndex}`}>{item}</li>)}
+                      </ul>
+                    ) : null}
+                  </section>
+                )) : null}
+              </article>
+            ) : (
+              <pre className="deep-json-report">{JSON.stringify(metadata.report || metadata, null, 2)}</pre>
+            )
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function splitTranscriptBySpeaker(content) {
+  const text = String(content || "").replace(/\r/g, "").trim();
+  if (!text) {
+    return [];
+  }
+  const speakerRegex = /(?:^|\n)([A-Z][A-Za-z .,'-]{1,80})(?:\s+-\s+[A-Za-z .,'-]{1,100})?:\s*/g;
+  const matches = [...text.matchAll(speakerRegex)];
+  if (matches.length < 2) {
+    return text.split(/\n{2,}/).filter(Boolean).map((paragraph, index) => ({ speaker: index === 0 ? "Transcript" : "Continued", text: paragraph.trim() }));
+  }
+  return matches.map((match, index) => {
+    const start = match.index + match[0].length;
+    const end = index + 1 < matches.length ? matches[index + 1].index : text.length;
+    return {
+      speaker: match[1].trim(),
+      text: text.slice(start, end).trim(),
+    };
+  }).filter((block) => block.text);
+}
+
+function insiderTransactionTone(item) {
+  const text = `${item?.transactionType || ""} ${item?.typeOfTransaction || ""} ${item?.transactionCode || ""}`.toLowerCase();
+  if (/\b(p|purchase|buy|acquisition|acquired)\b/.test(text)) {
+    return "buy";
+  }
+  if (/\b(s|sale|sell|sold|disposition|disposed)\b/.test(text)) {
+    return "sell";
+  }
+  return "neutral";
+}
+
+function hasCompleteInsiderTransaction(item) {
+  const tone = insiderTransactionTone(item);
+  const shares = item?.securitiesTransacted ?? item?.securitiesOwned ?? item?.transactionShares;
+  return tone !== "neutral" && item?.price !== null && item?.price !== undefined && item?.price !== "" && shares !== null && shares !== undefined && shares !== "";
+}
+
+function DeepResearchDataLibrary({ deep, onOpenResource }) {
+  const sources = Array.isArray(deep.sources) ? deep.sources : [];
+  const transcripts = Array.isArray(deep.transcripts) ? deep.transcripts : [];
+  const filings = Array.isArray(deep.filings) ? deep.filings : [];
+  const annualReportSources = sources.filter((source) => source.source_type === "annual_report_json" && !hasAnnualReportError(source));
+  const insider = Array.isArray(deep.insider_trading) ? deep.insider_trading : [];
+  const insiderRows = insider.filter(hasCompleteInsiderTransaction).slice(0, 8);
+  return (
+    <section className="research-card deep-library-card">
+      <div className="research-card-header">
+        <h3>Primary materials</h3>
+      </div>
+      <div className="deep-library-grid">
+        <div>
+          <strong>Financial statements</strong>
+          {["income_annual", "income_quarter", "balance_annual", "cashflow_annual", "cashflow_quarter"].map((key) => {
+            const source = sources.find((item) => item.source_key === key);
+            return source ? <button key={key} onClick={() => onOpenResource(source)} type="button">{source.title}</button> : null;
+          })}
+        </div>
+        <div>
+          <strong>Earnings transcripts</strong>
+          {transcripts.slice(0, 5).map((item, index) => {
+            const source = sources.find((candidate) => candidate.source_key === `transcript_${index + 1}`);
+            return source ? <button key={`${item.date || index}`} onClick={() => onOpenResource(source)} type="button">{source.title}</button> : null;
+          })}
+          {!transcripts.length ? <span>No transcripts available.</span> : null}
+        </div>
+        <div>
+          <strong>SEC filings / 10-K</strong>
+          {annualReportSources.slice(0, 1).map((source) => (
+            <button key={source.source_key} onClick={() => onOpenResource(source)} type="button">{source.title}</button>
+          ))}
+          {filings.slice(0, 6).map((item, index) => {
+            const url = item.finalLink || item.link || item.url || item.filingUrl;
+            const title = item.type || item.formType || item.title || `Filing ${index + 1}`;
+            return url ? <a href={url} key={`${title}-${index}`} rel="noreferrer" target="_blank">{title}</a> : <span key={`${title}-${index}`}>{title}</span>;
+          })}
+          {!filings.length && !annualReportSources.length ? <span>No filings available.</span> : null}
+        </div>
+        <div>
+          <strong>Insider buys / sells</strong>
+          {insiderRows.length ? insiderRows.map((item, index) => (
+            <small className={`insider-transaction insider-${insiderTransactionTone(item)}`} key={`insider-${item.transactionDate || index}`}>
+              {item.transactionDate || item.filingDate || "Date N/A"} - {item.reportingName || item.name || "Insider"}: {item.transactionType || item.typeOfTransaction || "transaction"}
+              {item.securitiesTransacted || item.securitiesOwned || item.transactionShares ? `, shares ${formatCompactNumber(item.securitiesTransacted || item.securitiesOwned || item.transactionShares)}` : ""}
+              {item.price ? ` at ${metricValue("price", item.price)}` : ""}
+            </small>
+          )) : <span>No complete insider buy/sell transactions returned.</span>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function DeepResearchContent({ payload }) {
+  const research = payload.research || {};
+  const deep = payload.deep_research || {};
+  const [resourceModal, setResourceModal] = useState(null);
+  const sourceMap = useMemo(() => sourceByKeyMap(deep.sources), [deep.sources]);
+  const hasStructuredSections = Array.isArray(research.sections) && research.sections.length > 0;
+  const earningsReports = Array.isArray(payload.market_data?.earnings_reports) ? payload.market_data.earnings_reports : [];
+  const hasEarningsReports = earningsReports.length > 0 || payload.market_data?.next_earnings_date;
+  return (
+    <>
+      <div className="research-section-grid deep-research-grid">
+        <ResearchSignal label="Deep research signal" value={research.signal} />
+        <ResearchMarketSnapshot marketData={payload.market_data} showEarnings={false} />
+        <DeepResearchDcfCalculator dcf={deep.dcf} />
+        <DeepResearchDataLibrary deep={deep} onOpenResource={setResourceModal} />
+        {hasEarningsReports ? (
+          <section className="research-card">
+            <EarningsReportsPanel reports={earningsReports} nextEarningsDate={payload.market_data?.next_earnings_date} />
+          </section>
+        ) : null}
+        <DeepResearchArtifacts artifacts={deep.artifacts} />
+        {hasStructuredSections ? (
+          <DeepResearchSections onOpenResource={setResourceModal} sections={research.sections} sourceMap={sourceMap} />
+        ) : (
+          <>
+            <DeepResearchList title="Business overview" items={research.business_overview} />
+            <DeepResearchList title="Products and segments" items={research.products_and_segments} />
+            <DeepResearchList title="Financial analysis" items={research.financial_analysis} />
+            <DeepResearchList title="Valuation" items={research.valuation} />
+            <DeepResearchList title="Risks" items={research.risks} />
+            <DeepResearchList title="Catalysts" items={research.catalysts} />
+            <DeepResearchList title="Monitoring checklist" items={research.watch_items} />
+          </>
+        )}
+      </div>
+      <DeepResourceModal onClose={() => setResourceModal(null)} resource={resourceModal} />
+    </>
+  );
+}
+
 function ResearchResultContent({ payload }) {
   const research = payload.research || {};
+  if (payload.mode === "deep_research") {
+    return <DeepResearchContent payload={payload} />;
+  }
   if (payload.mode === "portfolio") {
     return (
       <div className="research-section-grid">
@@ -3197,7 +3998,13 @@ function ResearchResultContent({ payload }) {
 }
 
 function researchHumanLabel(value) {
-  return String(value || "").replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
+  return String(value || "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replaceAll("_", " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function capitalizeFirst(value) {

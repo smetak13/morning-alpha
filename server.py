@@ -169,7 +169,7 @@ class CompanyResearchRequest(BaseModel):
     company_name: str | None = None
     date_from: str | None = None
     date_to: str | None = None
-    research_type: Literal["portfolio_check", "watchlist_check", "company_primer"] | None = None
+    research_type: Literal["portfolio_check", "watchlist_check", "company_primer", "deep_research"] | None = None
 
 
 class ShareResearchRequest(BaseModel):
@@ -1436,6 +1436,7 @@ def research_market_data(
     earnings_reports: dict[str, Any],
     price_history: list[dict[str, Any]],
     intraday_history: list[dict[str, Any]],
+    metric_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     next_eps = (
         analyst_estimate.get("estimatedEpsAvg")
@@ -1483,10 +1484,16 @@ def research_market_data(
     )
     pe = first_number(
         quote.get("pe"),
+        ratios.get("priceToEarningsRatioTTM"),
+        ratios.get("priceToEarningsRatio"),
         metrics.get("peRatioTTM"),
         metrics.get("priceEarningsRatioTTM"),
+        metrics.get("priceToEarningsRatioTTM"),
         metrics_latest.get("peRatio"),
+        metrics_latest.get("priceToEarningsRatio"),
         ratios.get("priceEarningsRatioTTM"),
+        ratios.get("priceEarningsRatio"),
+        ratios_latest.get("priceToEarningsRatio"),
         ratios_latest.get("priceEarningsRatio"),
     )
     if pe is None and price is not None and latest_eps not in (None, 0):
@@ -1498,12 +1505,20 @@ def research_market_data(
     fcf_yield = ratio_to_percent(metrics.get("freeCashFlowYieldTTM") or ratios.get("freeCashFlowYieldTTM"))
     if fcf_yield is None and free_cash_flow is not None and market_cap not in (None, 0):
         fcf_yield = (free_cash_flow / market_cap) * 100
-    roe = ratio_to_percent(ratios.get("returnOnEquityTTM") or metrics.get("roeTTM") or ratios_latest.get("returnOnEquity"))
+    roe = ratio_to_percent(ratios.get("returnOnEquityTTM") or ratios.get("returnOnEquity") or metrics.get("roeTTM") or ratios_latest.get("returnOnEquity"))
     if roe is None and net_income is not None and equity not in (None, 0):
         roe = (net_income / equity) * 100
     debt_to_equity = first_number(
         metrics.get("debtToEquityTTM"),
+        metrics.get("debtToEquityRatioTTM"),
+        ratios.get("debtToEquityRatioTTM"),
+        ratios.get("debtToEquityRatio"),
+        ratios.get("debtToEquityTTM"),
+        ratios.get("debtToEquity"),
         ratios.get("debtEquityRatioTTM"),
+        ratios.get("debtEquityRatio"),
+        ratios_latest.get("debtToEquityRatio"),
+        ratios_latest.get("debtToEquity"),
         ratios_latest.get("debtEquityRatio"),
         divide_or_none(total_debt, equity),
     )
@@ -1513,7 +1528,7 @@ def research_market_data(
         "intraday_history": intraday_history,
         "earnings_reports": earnings_reports.get("reports") or [],
         "next_earnings_date": earnings_reports.get("next_earnings_date"),
-        "metrics": {
+        "metrics": metric_snapshot or {
             "price": price,
             "market_cap": market_cap,
             "pe": pe,
@@ -1586,6 +1601,7 @@ def research_mode_from_type(research_type: str) -> str:
         "portfolio_check": "portfolio",
         "watchlist_check": "watchlist",
         "company_primer": "new",
+        "deep_research": "deep_research",
     }[research_type]
 
 
@@ -1599,6 +1615,75 @@ def requested_research_mode(research_type: str | None, relationship: str) -> str
     if mode == "watchlist" and relationship != "watchlist":
         raise HTTPException(status_code=422, detail="Watchlist check is only available for companies in your watchlist.")
     return mode
+
+
+def create_deep_research_run(
+    cursor: Any,
+    *,
+    user_id: str,
+    stock_id: str,
+    symbol: str,
+    company_name: str,
+    relationship: str,
+    model: str,
+) -> dict[str, Any]:
+    from psycopg.types.json import Json
+
+    cursor.execute(
+        """
+        insert into public.research_runs (
+            user_id,
+            stock_id,
+            research_type,
+            status,
+            progress_step,
+            progress_pct,
+            model,
+            request
+        )
+        values (
+            %(user_id)s,
+            %(stock_id)s,
+            'deep_research',
+            'queued',
+            'Queued for deep research',
+            0,
+            %(model)s,
+            %(request)s
+        )
+        returning
+            id::text as id,
+            user_id::text as user_id,
+            stock_id::text as stock_id,
+            research_item_id::text as research_item_id,
+            usage_id::text as usage_id,
+            research_type,
+            status,
+            progress_step,
+            progress_pct,
+            model,
+            request,
+            usage,
+            error,
+            created_at,
+            started_at,
+            completed_at,
+            updated_at
+        """,
+        {
+            "user_id": user_id,
+            "stock_id": stock_id,
+            "model": model,
+            "request": Json(
+                {
+                    "symbol": symbol,
+                    "company_name": company_name,
+                    "relationship": relationship,
+                }
+            ),
+        },
+    )
+    return dict(cursor.fetchone())
 
 
 def research_schema(mode: str) -> dict[str, Any]:
@@ -1673,6 +1758,34 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
         with conn.cursor() as cursor:
             relationship, item = research_stock_context(cursor, user_id, symbol)
             research_mode = requested_research_mode(payload.research_type, relationship)
+            if research_mode == "deep_research":
+                config = load_yaml(ROOT / "config.yaml")
+                model = config.get("openai", {}).get("deep_research_model", "gpt-5.4")
+                stock_id = item["stock_id"] if item else get_or_create_stock(cursor, symbol, company_name)
+                run = create_deep_research_run(
+                    cursor,
+                    user_id=user_id,
+                    stock_id=stock_id,
+                    symbol=symbol,
+                    company_name=company_name,
+                    relationship=relationship,
+                    model=model,
+                )
+                return {
+                    "mode": "deep_research",
+                    "relationship": relationship,
+                    "status": run["status"],
+                    "research_run_id": run["id"],
+                    "progress_step": run.get("progress_step"),
+                    "progress_pct": int(run.get("progress_pct") or 0),
+                    "stock": {
+                        "stock_id": stock_id,
+                        "symbol": symbol,
+                        "company_name": company_name,
+                        "logo_url": stock_logo_url(symbol),
+                    },
+                    "model": model,
+                }
 
     client = fmp_client_from_env()
     profile = first_item(try_fmp_get(client, "profile", {"symbol": symbol}))
@@ -1681,10 +1794,19 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
     metrics_latest = first_item(try_fmp_get(client, "key-metrics", {"symbol": symbol, "period": "annual", "limit": 1}))
     ratios = first_item(try_fmp_get(client, "ratios-ttm", {"symbol": symbol}))
     ratios_latest = first_item(try_fmp_get(client, "ratios", {"symbol": symbol, "period": "annual", "limit": 1}))
+    market_cap_row = first_item(try_fmp_get(client, "market-capitalization", {"symbol": symbol}))
+    metrics_annual = fmp_items(try_fmp_get(client, "key-metrics", {"symbol": symbol, "period": "annual", "limit": 10}))
+    ratios_annual = (
+        fmp_items(try_fmp_get(client, "ratios", {"symbol": symbol, "limit": 10}))
+        + fmp_items(try_fmp_get(client, "ratios", {"symbol": symbol, "period": "annual", "limit": 10}))
+    )
     income_ttm = first_item(try_fmp_get(client, "income-statement-ttm", {"symbol": symbol}))
     balance_ttm = first_item(try_fmp_get(client, "balance-sheet-statement-ttm", {"symbol": symbol}))
     cashflow_ttm = first_item(try_fmp_get(client, "cash-flow-statement-ttm", {"symbol": symbol}))
     income_rows = try_fmp_get(client, "income-statement", {"symbol": symbol, "period": "annual", "limit": 6})
+    balance_annual = fmp_items(try_fmp_get(client, "balance-sheet-statement", {"symbol": symbol, "period": "annual", "limit": 10}))
+    cashflow_annual = fmp_items(try_fmp_get(client, "cash-flow-statement", {"symbol": symbol, "period": "annual", "limit": 10}))
+    growth_annual = fmp_items(try_fmp_get(client, "financial-growth", {"symbol": symbol, "period": "annual", "limit": 10}))
     income = first_item(income_rows)
     analyst_estimate = fetch_first_available(
         client,
@@ -1697,6 +1819,26 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
     earnings_reports = fetch_research_earnings_reports(client, symbol, dt.date.today())
     price_history = fetch_price_history(client, symbol, date_to)
     intraday_history = fetch_intraday_history(client, symbol)
+    metric_snapshot = None
+    try:
+        from deep_research import build_metric_snapshot
+
+        metric_snapshot = build_metric_snapshot(
+            {
+                "quote": quote,
+                "market_cap": market_cap_row,
+                "metrics_ttm": metrics,
+                "ratios_ttm": ratios or first_item(ratios_annual),
+                "metrics_annual": metrics_annual,
+                "ratios_annual": ratios_annual,
+                "income_annual": fmp_items(income_rows),
+                "cashflow_annual": cashflow_annual,
+                "balance_annual": balance_annual,
+                "growth_annual": growth_annual,
+            }
+        )
+    except Exception:
+        metric_snapshot = None
     news: list[dict[str, Any]] = []
     if research_mode in {"portfolio", "watchlist"}:
         try:
@@ -1774,6 +1916,7 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
         earnings_reports=earnings_reports,
         price_history=price_history,
         intraday_history=intraday_history,
+        metric_snapshot=metric_snapshot,
     )
     if research_mode == "new":
         instructions = (
@@ -1911,6 +2054,7 @@ def research_type_for_mode(mode: str) -> str:
         "portfolio": "portfolio_check",
         "watchlist": "watchlist_check",
         "new": "company_primer",
+        "deep_research": "deep_research",
     }[mode]
 
 
@@ -1939,6 +2083,52 @@ def serialize_research_item_row(row: dict[str, Any], include_body: bool = False)
     }
     if include_body:
         payload["body"] = body or row.get("body")
+    return payload
+
+
+def serialize_research_run_row(row: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(row["symbol"]).upper()
+    payload = {
+        "id": str(row["id"]),
+        "research_run_id": str(row["id"]),
+        "user_id": str(row["user_id"]),
+        "stock_id": str(row["stock_id"]),
+        "research_item_id": str(row["research_item_id"]) if row.get("research_item_id") else None,
+        "usage_id": str(row["usage_id"]) if row.get("usage_id") else None,
+        "research_type": row.get("research_type"),
+        "status": row.get("status"),
+        "progress_step": row.get("progress_step"),
+        "progress_pct": int(row.get("progress_pct") or 0),
+        "model": row.get("model"),
+        "request": row.get("request") or {},
+        "usage": row.get("usage") or {},
+        "error": row.get("error"),
+        "created_at": row["created_at"].isoformat() if hasattr(row.get("created_at"), "isoformat") else row.get("created_at"),
+        "started_at": row["started_at"].isoformat() if row.get("started_at") and hasattr(row.get("started_at"), "isoformat") else row.get("started_at"),
+        "completed_at": row["completed_at"].isoformat() if row.get("completed_at") and hasattr(row.get("completed_at"), "isoformat") else row.get("completed_at"),
+        "updated_at": row["updated_at"].isoformat() if hasattr(row.get("updated_at"), "isoformat") else row.get("updated_at"),
+        "stock": {
+            "stock_id": str(row["stock_id"]),
+            "symbol": symbol,
+            "company_name": row["company_name"],
+            "logo_url": stock_logo_url(symbol),
+        },
+    }
+    if row.get("research_item_id"):
+        payload["research_item"] = {
+            "id": str(row["research_item_id"]),
+            "stock_id": str(row["stock_id"]),
+            "symbol": symbol,
+            "company_name": row["company_name"],
+            "logo_url": stock_logo_url(symbol),
+            "research_type": row.get("item_research_type") or row.get("research_type"),
+            "signal": row.get("item_signal"),
+            "date_from": row["item_date_from"].isoformat() if row.get("item_date_from") and hasattr(row.get("item_date_from"), "isoformat") else row.get("item_date_from"),
+            "date_to": row["item_date_to"].isoformat() if row.get("item_date_to") and hasattr(row.get("item_date_to"), "isoformat") else row.get("item_date_to"),
+            "created_at": row["item_created_at"].isoformat() if row.get("item_created_at") and hasattr(row.get("item_created_at"), "isoformat") else row.get("item_created_at"),
+            "note_count": int(row.get("note_count") or 0),
+            "body": row.get("item_body"),
+        }
     return payload
 
 
@@ -1980,6 +2170,7 @@ def research_email_label(value: str | None) -> str:
         "portfolio_check": "Portfolio thesis check",
         "watchlist_check": "Watchlist entry check",
         "company_primer": "Company primer",
+        "deep_research": "Deep research",
     }.get(value or "", py_human_label(value or "Research"))
 
 
@@ -2425,6 +2616,61 @@ RESEARCH_ITEM_SELECT = """
 """
 
 
+@app.get("/api/research-runs/{run_id}")
+def get_research_run(run_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select
+                    research_runs.id::text as id,
+                    research_runs.user_id::text as user_id,
+                    research_runs.stock_id::text as stock_id,
+                    research_runs.research_item_id::text as research_item_id,
+                    research_runs.usage_id::text as usage_id,
+                    research_runs.research_type,
+                    research_runs.status,
+                    research_runs.progress_step,
+                    research_runs.progress_pct,
+                    research_runs.model,
+                    research_runs.request,
+                    research_runs.usage,
+                    research_runs.error,
+                    research_runs.created_at,
+                    research_runs.started_at,
+                    research_runs.completed_at,
+                    research_runs.updated_at,
+                    stocks.symbol,
+                    stocks.company_name,
+                    research_items.body as item_body,
+                    research_items.research_type as item_research_type,
+                    research_items.signal as item_signal,
+                    research_items.date_from as item_date_from,
+                    research_items.date_to as item_date_to,
+                    research_items.created_at as item_created_at,
+                    count(notes.id)::int as note_count
+                from public.research_runs
+                join public.stocks on stocks.id = research_runs.stock_id
+                left join public.research_items on research_items.id = research_runs.research_item_id
+                left join public.notes
+                  on notes.research_item_id = research_items.id
+                 and notes.user_id = research_runs.user_id
+                where research_runs.id::text = %(id)s
+                  and research_runs.user_id = %(user_id)s
+                group by research_runs.id, stocks.id, research_items.id
+                """,
+                {"id": run_id, "user_id": user_id},
+            )
+            row = cursor.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Research run not found.")
+    return {"run": serialize_research_run_row(dict(row))}
+
+
 @app.get("/api/research-items")
 def list_research_items(
     request: Request,
@@ -2561,6 +2807,8 @@ def share_research_item(research_item_id: str, payload: ShareResearchRequest, re
             note_rows = cursor.fetchall()
 
     research_item = serialize_research_item_row(dict(research_row), include_body=True)
+    if research_item["research_type"] == "deep_research":
+        raise HTTPException(status_code=422, detail="Sharing deep research by email is not available yet.")
     notes = [serialize_note_row(dict(row)) for row in note_rows]
     sender = get_user_profile(user_id)
     sender_name = (sender or {}).get("display_name") or (sender or {}).get("email") or "Morning Alpha user"

@@ -1687,17 +1687,19 @@ def log_openai_usage(user_id: str, task: str, usage: dict[str, Any]) -> str | No
                 insert into public.usages (
                     user_id,
                     task,
+                    model,
                     input_tokens,
                     output_tokens,
                     total_tokens,
                     total_cost
                 )
-                values (%s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s)
                 returning id::text
                 """,
                 (
                     user_id,
                     task,
+                    str(usage.get("model") or "gpt-4.1-mini"),
                     int(usage.get("input_tokens", 0) or 0),
                     int(usage.get("output_tokens", 0) or 0),
                     int(usage.get("total_tokens", 0) or 0),
