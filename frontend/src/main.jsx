@@ -3382,6 +3382,9 @@ function DeepResearchDcfCalculator({ dcf }) {
   const result = recomputeDeepDcf(dcf.base || {}, assumptions);
   const sources = dcf.assumption_sources || {};
   const impliedGrowth = impliedGrowthForCurrentDcf(dcf.base || {}, assumptions);
+  const defaultGrowth = Number(assumptions.revenue_growth_pct);
+  const analystGrowth = Number(sources.analyst_revenue_growth_pct);
+  const showAnalystGrowth = Number.isFinite(analystGrowth) && (!Number.isFinite(defaultGrowth) || Math.abs(analystGrowth - defaultGrowth) > 0.05);
   const updateAssumption = (key, value) => {
     setAssumptions((current) => ({ ...current, [key]: Number(value) }));
   };
@@ -3414,11 +3417,13 @@ function DeepResearchDcfCalculator({ dcf }) {
           <strong>{formatMetricPercent(assumptions.revenue_growth_pct)}</strong>
           <small>{sources.revenue_growth_pct?.source_label || "Base assumption"}</small>
         </div>
-        <div>
-          <span>Analyst growth</span>
-          <strong>{formatMetricPercent(sources.analyst_revenue_growth_pct)}</strong>
-          <small>Nearest available estimate</small>
-        </div>
+        {showAnalystGrowth ? (
+          <div>
+            <span>Analyst growth</span>
+            <strong>{formatMetricPercent(sources.analyst_revenue_growth_pct)}</strong>
+            <small>Nearest available estimate</small>
+          </div>
+        ) : null}
         <div>
           <span>Market-implied growth</span>
           <strong>{formatMetricPercent(impliedGrowth ?? sources.market_implied_revenue_growth_pct)}</strong>

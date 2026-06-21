@@ -758,9 +758,9 @@ def chart_series(
             continue
         point = {"date": str(date_value)[:10], "value": value / scale}
         if period == "quarter":
-            label = fiscal_quarter_label(row)
-            if label:
-                point["label"] = label
+            point_label = fiscal_quarter_label(row)
+            if point_label:
+                point["label"] = point_label
         points.append(point)
     if len(points) < 2:
         return None

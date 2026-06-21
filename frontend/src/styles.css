@@ -1790,6 +1790,10 @@ textarea:focus {
   padding: 0 16px 16px;
 }
 
+.deep-dcf-projection {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .deep-dcf-summary div,
 .deep-dcf-projection div,
 .deep-artifact-tile {
