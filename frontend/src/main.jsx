@@ -2263,7 +2263,7 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
               {showResearchTypeSwitch ? (
                 <div className="research-type-switch" aria-label="Research type">
                   {researchTypeOptions.map(([value, label]) => (
-                    <button className={researchType === value ? "active" : ""} key={value} onClick={() => setResearchType(value)} type="button">
+                    <button className={`${researchType === value ? "active" : ""} ${value === "deep_research" ? "deep-research-option" : ""}`.trim()} key={value} onClick={() => setResearchType(value)} type="button">
                       {label}
                     </button>
                   ))}

@@ -1145,6 +1145,63 @@ textarea:focus {
   font-weight: 700;
 }
 
+.research-type-switch button.deep-research-option {
+  background:
+    linear-gradient(100deg, rgba(244, 196, 48, 0.12), rgba(255, 255, 255, 0.08), rgba(244, 196, 48, 0.2)),
+    #151515;
+  border: 1px solid rgba(244, 196, 48, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03), 0 0 18px rgba(244, 196, 48, 0.08);
+  color: #f4d86a;
+  overflow: hidden;
+  position: relative;
+}
+
+.research-type-switch button.deep-research-option::after {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.32), transparent);
+  content: "";
+  height: 100%;
+  left: -70%;
+  opacity: 0.34;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  transform: skewX(-18deg);
+  width: 52%;
+  animation: deepResearchSweep 4.8s ease-in-out infinite;
+}
+
+.research-type-switch button.deep-research-option.active {
+  background:
+    linear-gradient(100deg, #f4c430, #ffe68a 52%, #f4c430),
+    #f4c430;
+  border-color: rgba(255, 230, 138, 0.78);
+  box-shadow: 0 0 0 1px rgba(244, 196, 48, 0.28), 0 0 24px rgba(244, 196, 48, 0.22);
+  color: #111111;
+}
+
+.research-type-switch button.deep-research-option span,
+.research-type-switch button.deep-research-option {
+  z-index: 0;
+}
+
+@keyframes deepResearchSweep {
+  0%,
+  42% {
+    left: -70%;
+  }
+  72%,
+  100% {
+    left: 118%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .research-type-switch button.deep-research-option::after {
+    animation: none;
+    display: none;
+  }
+}
+
 .research-company-search {
   min-width: 310px;
   position: relative;
