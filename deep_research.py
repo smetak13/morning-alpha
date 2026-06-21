@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from report import FmpClient, load_yaml, log_openai_usage, openai_usage_summary, parse_model_json
 
@@ -120,6 +121,37 @@ def fmp_items(data: Any) -> list[dict[str, Any]]:
     else:
         return []
     return [item for item in items if isinstance(item, dict) and not fmp_error_row(item)]
+
+
+def domain_from_url(url: Any) -> str:
+    host = urlparse(str(url or "")).netloc.lower()
+    return host[4:] if host.startswith("www.") else host
+
+
+def domain_matches(domain: str, configured_domain: str) -> bool:
+    domain = domain.lower().strip()
+    configured_domain = configured_domain.lower().strip()
+    return bool(domain and configured_domain and (domain == configured_domain or domain.endswith(f".{configured_domain}")))
+
+
+def source_name_matches_domain(source: Any, configured_domain: str) -> bool:
+    source_key = str(source or "").lower().replace(" ", "").replace(".", "")
+    configured_key = configured_domain.lower().strip().replace("www.", "").split(".", 1)[0].replace(" ", "").replace(".", "")
+    return bool(source_key and configured_key and configured_key in source_key)
+
+
+def source_domain_is_excluded(item: dict[str, Any], config: dict[str, Any]) -> bool:
+    excluded = config.get("excluded_source_domains", [])
+    if not isinstance(excluded, list):
+        return False
+    url = get_any(item, "url", "link", "source_url", "sourceUrl")
+    domain = domain_from_url(url)
+    source = get_any(item, "site", "publisher", "source")
+    return any(
+        domain_matches(domain, str(configured)) or source_name_matches_domain(source, str(configured))
+        for configured in excluded
+        if configured
+    )
 
 
 def unique_rows(rows: list[dict[str, Any]], keys: tuple[str, ...]) -> list[dict[str, Any]]:
@@ -530,7 +562,12 @@ def fetch_annual_report_json(client: FmpClient, symbol: str) -> list[dict[str, A
     return reports
 
 
-def fetch_deep_research_context(client: FmpClient, symbol: str, progress: Callable[[str, int], None] | None = None) -> dict[str, Any]:
+def fetch_deep_research_context(
+    client: FmpClient,
+    symbol: str,
+    progress: Callable[[str, int], None] | None = None,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     today = dt.date.today()
     one_year_ago = today - dt.timedelta(days=365)
     six_months_ago = today - dt.timedelta(days=183)
@@ -623,6 +660,8 @@ def fetch_deep_research_context(client: FmpClient, symbol: str, progress: Callab
             symbol,
         )
     news = fmp_items(try_fmp_get(client, "news/stock", {"symbols": symbol, "from": six_months_ago.isoformat(), "to": today.isoformat(), "limit": 80}))
+    if config:
+        news = [item for item in news if not source_domain_is_excluded(item, config)]
 
     progress("Fetching price history", 58)
     price_history = normalize_price_history(
@@ -1393,7 +1432,7 @@ def generate_deep_research(
     )
     progress = progress or (lambda _step, _pct: None)
 
-    context = fetch_deep_research_context(client, symbol, progress)
+    context = fetch_deep_research_context(client, symbol, progress, config)
     progress("Preparing valuation and chart artifacts", 66)
     artifacts = build_artifacts(context)
     dcf = build_dcf(context)
