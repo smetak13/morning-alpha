@@ -357,7 +357,7 @@ input::placeholder {
   border-radius: 8px;
   display: inline-grid;
   gap: 4px;
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
   margin-bottom: 24px;
   padding: 4px;
 }
@@ -1832,6 +1832,127 @@ textarea:focus {
   padding: 0 16px 16px;
 }
 
+.feedback-view {
+  width: 100%;
+}
+
+.feedback-card {
+  overflow: hidden;
+}
+
+.feedback-card-header {
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(58, 58, 58, 0.68);
+}
+
+.feedback-card-header > div {
+  display: grid;
+  gap: 8px;
+}
+
+.feedback-form {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+}
+
+.feedback-form-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.65fr);
+}
+
+.feedback-form input[readonly] {
+  color: #d7d7d0;
+  cursor: default;
+}
+
+.feedback-form input[readonly]:focus {
+  border-color: #343434;
+  box-shadow: none;
+}
+
+.feedback-select {
+  position: relative;
+}
+
+.feedback-select-button {
+  align-items: center;
+  background: #0d0d0d;
+  border: 1px solid #343434;
+  border-radius: 8px;
+  color: #f4f4f0;
+  display: flex;
+  justify-content: space-between;
+  min-height: 44px;
+  padding: 10px 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.feedback-select-button:hover,
+.feedback-select-button[aria-expanded="true"] {
+  border-color: #f4c430;
+  box-shadow: 0 0 0 3px rgba(244, 196, 48, 0.16);
+}
+
+.feedback-select-button svg {
+  color: #f4c430;
+  flex: 0 0 auto;
+}
+
+.feedback-select-menu {
+  background: #111111;
+  border: 1px solid #343434;
+  border-radius: 8px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+  display: grid;
+  gap: 3px;
+  left: 0;
+  margin-top: 6px;
+  padding: 5px;
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+}
+
+.feedback-select-menu button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #d7d7d0;
+  justify-content: flex-start;
+  min-height: 38px;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.feedback-select-menu button:hover,
+.feedback-select-menu button.selected {
+  background: rgba(244, 196, 48, 0.12);
+  color: #ffffff;
+}
+
+.feedback-select-menu button.selected {
+  color: #f4c430;
+  font-weight: 750;
+}
+
+.feedback-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.success-message {
+  background: rgba(57, 121, 74, 0.16);
+  border: 1px solid rgba(92, 184, 112, 0.42);
+  border-radius: 8px;
+  color: #b7f0c1;
+  margin: 0;
+  padding: 10px 12px;
+}
+
 .deep-dcf-card,
 .deep-artifacts-card,
 .deep-sources-card {
@@ -3087,6 +3208,23 @@ input[type="range"] {
     border: 0;
     min-height: 38px;
     padding: 8px 10px;
+    width: 100%;
+  }
+
+  .feedback-form,
+  .feedback-card-header {
+    padding: 14px;
+  }
+
+  .feedback-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .feedback-actions {
+    justify-content: stretch;
+  }
+
+  .feedback-actions .primary-button {
     width: 100%;
   }
 

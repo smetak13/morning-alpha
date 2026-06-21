@@ -234,6 +234,9 @@ function currentRoute() {
   if (window.location.pathname === "/notes") {
     return { view: "notes", reportId: "", researchId: "" };
   }
+  if (window.location.pathname === "/feedback") {
+    return { view: "feedback", reportId: "", researchId: "" };
+  }
   const researchMatch = window.location.pathname.match(/^\/research\/([^/]+)\/?$/);
   if (researchMatch) {
     return { view: "research", reportId: "", researchId: decodeURIComponent(researchMatch[1]) };
@@ -639,13 +642,26 @@ function MainPage({ route, user, onLogout }) {
     setBrowserRoute("/notes");
   };
 
+  const showFeedback = () => {
+    setActiveView("feedback");
+    setBrowserRoute("/feedback");
+  };
+
   const showResearch = () => {
     setActiveView("research");
     setBrowserRoute("/research");
   };
 
   const pageTitle =
-    activeView === "portfolio" ? "Portfolio workspace" : activeView === "reports" ? "Reports" : activeView === "notes" ? "Notes" : "Research";
+    activeView === "portfolio"
+      ? "Portfolio workspace"
+      : activeView === "reports"
+        ? "Reports"
+        : activeView === "notes"
+          ? "Notes"
+          : activeView === "feedback"
+            ? "Feedback"
+            : "Research";
 
   const updateUserSettings = async (patch) => {
     setSettings((current) => ({ ...current, ...patch }));
@@ -812,6 +828,13 @@ function MainPage({ route, user, onLogout }) {
           >
             Notes
           </button>
+          <button
+            className={activeView === "feedback" ? "view-tab active" : "view-tab"}
+            onClick={showFeedback}
+            type="button"
+          >
+            Feedback
+          </button>
         </div>
 
         {activeView === "portfolio" ? (
@@ -858,6 +881,8 @@ function MainPage({ route, user, onLogout }) {
           <ReportsView routeReportId={route.reportId} />
         ) : activeView === "notes" ? (
           <NotesView />
+        ) : activeView === "feedback" ? (
+          <FeedbackView user={user} />
         ) : (
           <ResearchView
             portfolioItems={portfolio}
@@ -911,6 +936,172 @@ function MainPage({ route, user, onLogout }) {
         />
       ) : null}
     </main>
+  );
+}
+
+const FEEDBACK_CATEGORY_OPTIONS = [
+  { value: "bug", label: "Bug" },
+  { value: "feature_request", label: "Feature request" },
+  { value: "small_improvement", label: "Small improvement" },
+  { value: "data_quality", label: "Data or calculation issue" },
+  { value: "usability", label: "Usability / UX" },
+  { value: "other", label: "Other" },
+];
+
+function FeedbackView({ user }) {
+  const accountEmail = user?.email || "";
+  const categoryDropdownRef = useRef(null);
+  const [form, setForm] = useState({
+    email: accountEmail,
+    category: "bug",
+    message: "",
+  });
+  const [status, setStatus] = useState("idle");
+  const [error, setError] = useState("");
+  const [categoryOpen, setCategoryOpen] = useState(false);
+  const selectedCategory = FEEDBACK_CATEGORY_OPTIONS.find((option) => option.value === form.category) ?? FEEDBACK_CATEGORY_OPTIONS[0];
+
+  useEffect(() => {
+    setForm((current) => ({ ...current, email: accountEmail }));
+  }, [accountEmail]);
+
+  useEffect(() => {
+    if (!categoryOpen) {
+      return undefined;
+    }
+    const handlePointerDown = (event) => {
+      if (categoryDropdownRef.current && !categoryDropdownRef.current.contains(event.target)) {
+        setCategoryOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [categoryOpen]);
+
+  const updateField = (event) => {
+    const { name, value } = event.target;
+    setForm((current) => ({ ...current, [name]: value }));
+    setError("");
+    if (status === "sent") {
+      setStatus("idle");
+    }
+  };
+
+  const selectCategory = (value) => {
+    setForm((current) => ({ ...current, category: value }));
+    setCategoryOpen(false);
+    setError("");
+    if (status === "sent") {
+      setStatus("idle");
+    }
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    const email = accountEmail.trim();
+    const message = form.message.trim();
+    if (!email || !message) {
+      setError("Your account email and feedback message are required.");
+      return;
+    }
+    setStatus("sending");
+    setError("");
+    try {
+      await requestJson("/api/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          email,
+          category: form.category,
+          message,
+        }),
+      });
+      setStatus("sent");
+      setForm((current) => ({ ...current, message: "" }));
+    } catch (err) {
+      setStatus("idle");
+      setError(err instanceof Error ? err.message : "Unable to send feedback.");
+    }
+  };
+
+  return (
+    <section className="feedback-view">
+      <div className="research-card feedback-card">
+        <div className="research-card-header feedback-card-header">
+          <div>
+            <h3>Send feedback</h3>
+            <p className="muted">
+              Share bugs, product ideas, small improvements, or data issues. The message goes directly to the founder.
+            </p>
+          </div>
+        </div>
+        <form className="feedback-form" onSubmit={submit}>
+          <div className="feedback-form-grid">
+            <label className="note-field">
+              <span className="note-field-label">Email</span>
+              <input
+                autoComplete="email"
+                name="email"
+                placeholder="you@example.com"
+                readOnly
+                required
+                type="email"
+                value={accountEmail}
+              />
+            </label>
+            <div className="note-field" ref={categoryDropdownRef}>
+              <span className="note-field-label">Category</span>
+              <div className="feedback-select">
+                <button
+                  aria-expanded={categoryOpen}
+                  className="feedback-select-button"
+                  onClick={() => setCategoryOpen((current) => !current)}
+                  type="button"
+                >
+                  <span>{selectedCategory.label}</span>
+                  <ChevronDown size={17} aria-hidden="true" />
+                </button>
+                {categoryOpen ? (
+                  <div className="feedback-select-menu" role="listbox">
+                    {FEEDBACK_CATEGORY_OPTIONS.map((option) => (
+                      <button
+                        aria-selected={form.category === option.value}
+                        className={form.category === option.value ? "selected" : ""}
+                        key={option.value}
+                        onClick={() => selectCategory(option.value)}
+                        role="option"
+                        type="button"
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+          <label className="note-field">
+            <span className="note-field-label">Message</span>
+            <textarea
+              minLength={10}
+              name="message"
+              onChange={updateField}
+              placeholder="Describe what happened, what you expected, or what would make the app better."
+              required
+              rows={9}
+              value={form.message}
+            />
+          </label>
+          {error ? <p className="error">{error}</p> : null}
+          {status === "sent" ? <p className="success-message">Feedback sent. Thank you.</p> : null}
+          <div className="feedback-actions">
+            <button className="primary-button" disabled={status === "sending"} type="submit">
+              <Mail size={18} aria-hidden="true" />
+              {status === "sending" ? "Sending..." : "Send feedback"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </section>
   );
 }
 
@@ -3459,7 +3650,6 @@ function DeepResearchDcfCalculator({ dcf }) {
           </div>
         ))}
       </div>
-      <p className="muted">{dcf.methodology || "Interactive revenue-to-FCF DCF. Provider DCF is shown separately when available, because methodology and assumptions can differ materially."}</p>
     </section>
   );
 }

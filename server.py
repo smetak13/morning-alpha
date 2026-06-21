@@ -177,6 +177,12 @@ class ShareResearchRequest(BaseModel):
     message: str | None = None
 
 
+class FeedbackRequest(BaseModel):
+    email: str
+    category: str
+    message: str
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Morning Alpha API", lifespan=lifespan)
 
@@ -2270,11 +2276,46 @@ def serialize_research_run_row(row: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def validate_share_email(value: str) -> str:
+def validate_email_address(value: str, detail: str) -> str:
     email_value = (value or "").strip()
     if not email_value or "@" not in email_value or "." not in email_value.rsplit("@", 1)[-1]:
-        raise HTTPException(status_code=422, detail="Enter a valid recipient email.")
+        raise HTTPException(status_code=422, detail=detail)
     return email_value
+
+
+def validate_share_email(value: str) -> str:
+    return validate_email_address(value, "Enter a valid recipient email.")
+
+
+def validate_feedback_email(value: str) -> str:
+    return validate_email_address(value, "Enter a valid email.")
+
+
+FEEDBACK_RECIPIENT_EMAIL = "simon.smejkal@seznam.cz"
+FEEDBACK_CATEGORY_LABELS = {
+    "bug": "Bug",
+    "feature_request": "Feature request",
+    "small_improvement": "Small improvement",
+    "data_quality": "Data or calculation issue",
+    "usability": "Usability / UX",
+    "other": "Other",
+}
+
+
+def validate_feedback_category(value: str) -> str:
+    category = (value or "").strip()
+    if category not in FEEDBACK_CATEGORY_LABELS:
+        raise HTTPException(status_code=422, detail="Select a valid feedback category.")
+    return category
+
+
+def validate_feedback_message(value: str) -> str:
+    message = (value or "").strip()
+    if len(message) < 10:
+        raise HTTPException(status_code=422, detail="Feedback message must be at least 10 characters.")
+    if len(message) > 10000:
+        raise HTTPException(status_code=422, detail="Feedback message is too long.")
+    return message
 
 
 def app_public_url() -> str:
@@ -2910,6 +2951,56 @@ def delete_research_item(research_item_id: str, request: Request) -> dict[str, A
             if cursor.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Research item not found.")
     return {"deleted": True}
+
+
+@app.post("/api/feedback")
+def send_feedback(payload: FeedbackRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    sender_profile = get_user_profile(user_id) or {}
+    sender_email = validate_feedback_email(payload.email)
+    category = validate_feedback_category(payload.category)
+    message = validate_feedback_message(payload.message)
+    category_label = FEEDBACK_CATEGORY_LABELS[category]
+
+    from report import send_email
+
+    subject = f"Morning Alpha feedback: {category_label}"
+    email_html = f"""
+    <div style="background:#0d0d0d;color:#eeeeea;font-family:Arial,sans-serif;padding:24px;">
+      <div style="max-width:720px;margin:0 auto;background:#181818;border:1px solid #2a2a2a;border-radius:12px;padding:22px;">
+        <h1 style="color:#ffffff;font-size:22px;margin:0 0 18px;">Morning Alpha Feedback</h1>
+        <table style="border-collapse:collapse;width:100%;margin-bottom:18px;">
+          <tr>
+            <td style="color:#a7a7a0;padding:6px 0;width:150px;">Category</td>
+            <td style="color:#ffffff;padding:6px 0;">{html_email_text(category_label)}</td>
+          </tr>
+          <tr>
+            <td style="color:#a7a7a0;padding:6px 0;">Contact email</td>
+            <td style="color:#ffffff;padding:6px 0;">{html_email_text(sender_email)}</td>
+          </tr>
+          <tr>
+            <td style="color:#a7a7a0;padding:6px 0;">Account email</td>
+            <td style="color:#ffffff;padding:6px 0;">{html_email_text(sender_profile.get("email") or "")}</td>
+          </tr>
+          <tr>
+            <td style="color:#a7a7a0;padding:6px 0;">User ID</td>
+            <td style="color:#ffffff;padding:6px 0;">{html_email_text(user_id)}</td>
+          </tr>
+        </table>
+        <div style="border-top:1px solid #303030;padding-top:18px;">
+          <h2 style="color:#f4c430;font-size:16px;margin:0 0 10px;">Message</h2>
+          <p style="color:#eeeeea;font-size:15px;line-height:1.6;margin:0;white-space:pre-wrap;">{html_email_text(message)}</p>
+        </div>
+      </div>
+    </div>
+    """
+    try:
+        send_email(subject, email_html, recipient_email=FEEDBACK_RECIPIENT_EMAIL, from_email="report@morning-alpha.com")
+    except SystemExit as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Unable to send feedback email: {exc}") from exc
+    return {"sent": True}
 
 
 @app.post("/api/research-items/{research_item_id}/share")

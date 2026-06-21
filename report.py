@@ -2411,11 +2411,11 @@ def email_asset_src(filename: str) -> str | None:
     return f"data:image/png;base64,{encoded}"
 
 
-def send_email(subject: str, html: str, recipient_email: str | None = None) -> None:
+def send_email(subject: str, html: str, recipient_email: str | None = None, from_email: str | None = None) -> None:
     resend = require_dependency("resend")
 
     api_key = os.getenv("RESEND_API_KEY")
-    from_address = os.getenv("RESEND_FROM", "onboarding@resend.dev")
+    from_address = (from_email or os.getenv("RESEND_FROM", "onboarding@resend.dev")).strip()
     if recipient_email:
         recipient = recipient_email.strip()
         to_addresses = [recipient] if recipient else []
