@@ -163,6 +163,18 @@ def filter_rows_for_symbol(rows: list[dict[str, Any]], symbol: str) -> list[dict
     return [row for row in rows if row_matches_symbol(row, symbol)]
 
 
+def rows_for_symbol_or_without_symbol(rows: list[dict[str, Any]], symbol: str) -> list[dict[str, Any]]:
+    filtered = []
+    symbol_keys = ("symbol", "ticker", "securitySymbol", "issuerTradingSymbol", "companyTicker", "issuerTicker", "stockSymbol", "issuerSymbol", "tradingSymbol")
+    for row in rows:
+        if row_matches_symbol(row, symbol):
+            filtered.append(row)
+            continue
+        if not any(get_any(row, key) not in (None, "", []) for key in symbol_keys):
+            filtered.append(row)
+    return filtered
+
+
 def first_item(data: Any) -> dict[str, Any]:
     items = fmp_items(data)
     return items[0] if items else {}
@@ -195,11 +207,50 @@ def parse_fmp_date(value: Any) -> dt.date | None:
         return None
 
 
+def fiscal_quarter_number(row: dict[str, Any]) -> int | None:
+    value = get_any(row, "quarter", "fiscalQuarter", "fiscal_quarter", "fiscalQ", "q")
+    if value in (None, "", []):
+        value = get_any(row, "period")
+    if value in (None, "", []):
+        return None
+    text = str(value).strip().upper()
+    if not text or text in {"FY", "ANNUAL"}:
+        return None
+    if text.startswith("Q"):
+        text = text[1:].split()[0]
+    number = safe_float(text)
+    if number is None:
+        return None
+    quarter = int(number)
+    return quarter if 1 <= quarter <= 4 else None
+
+
+def fiscal_year_value(row: dict[str, Any]) -> str | None:
+    year = get_any(row, "calendarYear", "fiscalYear", "fiscal_year", "year")
+    if year not in (None, "", []):
+        number = safe_float(year)
+        return str(int(number)) if number else str(year)
+    date_value = get_any(row, "fiscalDateEnding", "date", "publishedDate")
+    if date_value:
+        return str(date_value)[:4]
+    return None
+
+
+def fiscal_quarter_label(row: dict[str, Any]) -> str | None:
+    quarter = fiscal_quarter_number(row)
+    if not quarter:
+        return None
+    year = fiscal_year_value(row)
+    return f"Q{quarter} {year}" if year else f"Q{quarter}"
+
+
 def normalize_earnings_report(row: dict[str, Any], report_type: str) -> dict[str, Any]:
     return {
         "symbol": row.get("symbol"),
         "date": row.get("date") or row.get("fiscalDateEnding"),
         "report_type": report_type,
+        "fiscal_quarter": fiscal_quarter_label(row),
+        "fiscal_year": fiscal_year_value(row),
         "eps_actual": row.get("epsActual") or row.get("eps"),
         "eps_estimated": row.get("epsEstimated") or row.get("epsEstimate"),
         "revenue_actual": row.get("revenueActual") or row.get("revenue"),
@@ -208,30 +259,116 @@ def normalize_earnings_report(row: dict[str, Any], report_type: str) -> dict[str
     }
 
 
+def enrich_earnings_row_with_statement_period(row: dict[str, Any], quarter_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if fiscal_quarter_label(row):
+        return row
+    report_date = parse_fmp_date(row.get("date"))
+    fiscal_date = parse_fmp_date(row.get("fiscalDateEnding"))
+    matches: list[tuple[int, dict[str, Any]]] = []
+    for statement in quarter_rows:
+        statement_date = parse_fmp_date(statement.get("date") or statement.get("fiscalDateEnding"))
+        if not statement_date:
+            continue
+        if fiscal_date and statement_date == fiscal_date:
+            matches.append((0, statement))
+            continue
+        if report_date and statement_date <= report_date:
+            days = (report_date - statement_date).days
+            if 0 <= days <= 140:
+                matches.append((days, statement))
+    if not matches:
+        return row
+    statement = sorted(matches, key=lambda item: item[0])[0][1]
+    enriched = dict(row)
+    for key in ("period", "quarter", "calendarYear", "fiscalYear"):
+        if enriched.get(key) in (None, "", []):
+            enriched[key] = statement.get(key)
+    if enriched.get("fiscalDateEnding") in (None, "", []):
+        enriched["fiscalDateEnding"] = statement.get("fiscalDateEnding") or statement.get("date")
+    return enriched
+
+
+def advance_fiscal_quarter(row: dict[str, Any]) -> tuple[int, str | None] | None:
+    quarter = fiscal_quarter_number(row)
+    year = fiscal_year_value(row)
+    if not quarter:
+        return None
+    next_quarter = 1 if quarter == 4 else quarter + 1
+    next_year = year
+    if quarter == 4 and year:
+        year_number = safe_float(year)
+        next_year = str(int(year_number) + 1) if year_number else year
+    return next_quarter, next_year
+
+
+def apply_fiscal_quarter(row: dict[str, Any], quarter: int, year: str | None) -> dict[str, Any]:
+    enriched = dict(row)
+    enriched["quarter"] = quarter
+    enriched["period"] = f"Q{quarter}"
+    if year:
+        enriched["calendarYear"] = year
+        enriched["fiscalYear"] = year
+    return enriched
+
+
+def unique_earnings_reports(reports: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for report in reports:
+        marker = report.get("fiscal_quarter") or report.get("date") or str(len(unique))
+        if marker in seen:
+            continue
+        seen.add(marker)
+        unique.append(report)
+        if limit and len(unique) >= limit:
+            break
+    return unique
+
+
 def build_earnings_reports(context: dict[str, Any], today: dt.date) -> dict[str, Any]:
+    quarter_rows = context.get("income_quarter") or []
     dated_rows = [
         (parsed_date, row)
         for row in (context.get("earnings_calendar") or [])
         if (parsed_date := parse_fmp_date(row.get("date") or row.get("fiscalDateEnding"))) is not None
     ]
     dated_rows.sort(key=lambda item: item[0], reverse=True)
-    current_year_quarters = [
-        normalize_earnings_report(row, "quarter")
-        for report_date, row in dated_rows
-        if report_date.year == today.year
-    ]
+    actual_quarters = unique_earnings_reports(
+        [
+            normalize_earnings_report(enrich_earnings_row_with_statement_period(row, quarter_rows), "quarter")
+            for report_date, row in dated_rows
+            if report_date <= today
+        ],
+        limit=5,
+    )
+    if len(actual_quarters) < 5:
+        supplemental = [
+            normalize_earnings_report(row, "quarter")
+            for row in sorted(
+                quarter_rows,
+                key=lambda item: str(item.get("date") or item.get("fiscalDateEnding") or ""),
+                reverse=True,
+            )
+            if (parse_fmp_date(row.get("date") or row.get("fiscalDateEnding")) or today) <= today
+        ]
+        actual_quarters = unique_earnings_reports([*actual_quarters, *supplemental], limit=5)
     next_earnings_date = next(
         (report_date.isoformat() for report_date, _ in sorted(dated_rows, key=lambda item: item[0]) if report_date > today),
         None,
     )
-    latest_income = first_item(context.get("income_annual") or [])
-    latest_fy = None
-    if latest_income:
-        latest_fy = normalize_earnings_report(latest_income, "fy")
-        latest_fy["fiscal_year"] = str(latest_income.get("calendarYear") or "") or None
+    upcoming = None
+    future_rows = [(report_date, row) for report_date, row in sorted(dated_rows, key=lambda item: item[0]) if report_date > today]
+    if future_rows:
+        _, future_row = future_rows[0]
+        enriched_future = dict(future_row)
+        if not fiscal_quarter_label(enriched_future) and actual_quarters:
+            next_period = advance_fiscal_quarter(actual_quarters[0])
+            if next_period:
+                enriched_future = apply_fiscal_quarter(enriched_future, *next_period)
+        upcoming = normalize_earnings_report(enriched_future, "upcoming")
     return {
         "next_earnings_date": next_earnings_date,
-        "reports": [*current_year_quarters, *([latest_fy] if latest_fy else [])],
+        "reports": [*([upcoming] if upcoming else []), *actual_quarters],
     }
 
 
@@ -273,11 +410,10 @@ def filing_url(item: dict[str, Any]) -> str | None:
 
 
 def transcript_title(symbol: str, item: dict[str, Any], fallback_index: int) -> str:
-    quarter = item.get("quarter") or item.get("q")
-    year = item.get("year") or str(item.get("date") or "")[:4]
+    quarter_label = fiscal_quarter_label(item)
     date_value = item.get("date") or item.get("publishedDate")
-    if quarter and year:
-        return f"{symbol} Q{quarter} {year} earnings call transcript"
+    if quarter_label:
+        return f"{symbol} {quarter_label} earnings call transcript"
     if date_value:
         return f"{symbol} earnings call transcript {str(date_value)[:10]}"
     return f"{symbol} earnings call transcript {fallback_index}"
@@ -293,9 +429,8 @@ def fetch_transcripts(client: FmpClient, symbol: str, earnings_calendar: list[di
         transcripts.extend(fmp_items(try_fmp_get(client, endpoint, params)))
     quarter_candidates: list[tuple[int, int]] = []
     for item in earnings_calendar[:8]:
-        date_value = str(item.get("date") or item.get("fiscalDateEnding") or "")
-        year = safe_float(item.get("year") or date_value[:4])
-        quarter = safe_float(item.get("quarter") or item.get("period", "").replace("Q", ""))
+        year = safe_float(fiscal_year_value(item))
+        quarter = safe_float(fiscal_quarter_number(item))
         if year and quarter:
             quarter_candidates.append((int(year), int(quarter)))
     current_year = dt.date.today().year
@@ -398,6 +533,7 @@ def fetch_annual_report_json(client: FmpClient, symbol: str) -> list[dict[str, A
 def fetch_deep_research_context(client: FmpClient, symbol: str, progress: Callable[[str, int], None] | None = None) -> dict[str, Any]:
     today = dt.date.today()
     one_year_ago = today - dt.timedelta(days=365)
+    six_months_ago = today - dt.timedelta(days=183)
     five_years_ago = today - dt.timedelta(days=365 * 5 + 10)
     progress = progress or (lambda _step, _pct: None)
 
@@ -420,6 +556,7 @@ def fetch_deep_research_context(client: FmpClient, symbol: str, progress: Callab
     income_annual = fmp_items(try_fmp_get(client, "income-statement", {"symbol": symbol, "period": "annual", "limit": 10}))
     income_quarter = fmp_items(try_fmp_get(client, "income-statement", {"symbol": symbol, "period": "quarter", "limit": 12}))
     balance_annual = fmp_items(try_fmp_get(client, "balance-sheet-statement", {"symbol": symbol, "period": "annual", "limit": 10}))
+    balance_quarter = fmp_items(try_fmp_get(client, "balance-sheet-statement", {"symbol": symbol, "period": "quarter", "limit": 12}))
     cashflow_annual = fmp_items(try_fmp_get(client, "cash-flow-statement", {"symbol": symbol, "period": "annual", "limit": 10}))
     cashflow_quarter = fmp_items(try_fmp_get(client, "cash-flow-statement", {"symbol": symbol, "period": "quarter", "limit": 12}))
     income_as_reported = fetch_first_non_empty(
@@ -432,13 +569,13 @@ def fetch_deep_research_context(client: FmpClient, symbol: str, progress: Callab
 
     progress("Fetching ratios, metrics, and estimates", 34)
     metrics_ttm = first_item(try_fmp_get(client, "key-metrics-ttm", {"symbol": symbol}))
-    ratios_annual_latest = fmp_items(try_fmp_get(client, "ratios", {"symbol": symbol, "limit": 10}))
-    ratios_annual_period = fmp_items(try_fmp_get(client, "ratios", {"symbol": symbol, "period": "annual", "limit": 10}))
+    ratios_annual_latest = fmp_items(try_fmp_get(client, "ratios", {"symbol": symbol, "limit": 20}))
+    ratios_annual_period = fmp_items(try_fmp_get(client, "ratios", {"symbol": symbol, "period": "annual", "limit": 20}))
     ratios_annual = unique_rows(ratios_annual_latest + ratios_annual_period, ("date", "calendarYear", "period"))
     ratios_ttm = first_item(try_fmp_get(client, "ratios-ttm", {"symbol": symbol})) or first_item(ratios_annual)
-    metrics_annual = fmp_items(try_fmp_get(client, "key-metrics", {"symbol": symbol, "period": "annual", "limit": 10}))
-    metrics_quarter = fmp_items(try_fmp_get(client, "key-metrics", {"symbol": symbol, "period": "quarter", "limit": 16}))
-    ratios_quarter = fmp_items(try_fmp_get(client, "ratios", {"symbol": symbol, "period": "quarter", "limit": 16}))
+    metrics_annual = fmp_items(try_fmp_get(client, "key-metrics", {"symbol": symbol, "period": "annual", "limit": 20}))
+    metrics_quarter = fmp_items(try_fmp_get(client, "key-metrics", {"symbol": symbol, "period": "quarter", "limit": 32}))
+    ratios_quarter = fmp_items(try_fmp_get(client, "ratios", {"symbol": symbol, "period": "quarter", "limit": 32}))
     growth_annual = fmp_items(try_fmp_get(client, "financial-growth", {"symbol": symbol, "period": "annual", "limit": 10}))
     growth_quarter = fmp_items(try_fmp_get(client, "financial-growth", {"symbol": symbol, "period": "quarter", "limit": 16}))
     analyst_estimates = fmp_items(try_fmp_get(client, "analyst-estimates", {"symbol": symbol, "period": "annual", "limit": 6}))
@@ -456,6 +593,10 @@ def fetch_deep_research_context(client: FmpClient, symbol: str, progress: Callab
             ("analyst-ratings", {"symbol": symbol, "limit": 12}),
         ],
     )
+    stock_grades = rows_for_symbol_or_without_symbol(
+        fmp_items(try_fmp_get(client, "grades", {"symbol": symbol, "limit": 20})),
+        symbol,
+    )[:10]
 
     progress("Fetching filings, transcripts, and news", 48)
     earnings_calendar = fmp_items(try_fmp_get(client, "earnings", {"symbol": symbol, "limit": 8}))
@@ -481,7 +622,7 @@ def fetch_deep_research_context(client: FmpClient, symbol: str, progress: Callab
             ),
             symbol,
         )
-    news = fmp_items(try_fmp_get(client, "news/stock", {"symbols": symbol, "from": one_year_ago.isoformat(), "to": today.isoformat(), "limit": 80}))
+    news = fmp_items(try_fmp_get(client, "news/stock", {"symbols": symbol, "from": six_months_ago.isoformat(), "to": today.isoformat(), "limit": 80}))
 
     progress("Fetching price history", 58)
     price_history = normalize_price_history(
@@ -497,6 +638,7 @@ def fetch_deep_research_context(client: FmpClient, symbol: str, progress: Callab
         ("income_annual", f"{symbol} income statement, annual", "income", "annual", income_annual),
         ("income_quarter", f"{symbol} income statement, quarterly", "income", "quarter", income_quarter),
         ("balance_annual", f"{symbol} balance sheet, annual", "balance", "annual", balance_annual),
+        ("balance_quarter", f"{symbol} balance sheet, quarterly", "balance", "quarter", balance_quarter),
         ("cashflow_annual", f"{symbol} cash flow statement, annual", "cashflow", "annual", cashflow_annual),
         ("cashflow_quarter", f"{symbol} cash flow statement, quarterly", "cashflow", "quarter", cashflow_quarter),
     ):
@@ -572,6 +714,7 @@ def fetch_deep_research_context(client: FmpClient, symbol: str, progress: Callab
         "income_annual": income_annual,
         "income_quarter": income_quarter,
         "balance_annual": balance_annual,
+        "balance_quarter": balance_quarter,
         "cashflow_annual": cashflow_annual,
         "cashflow_quarter": cashflow_quarter,
         "income_as_reported": income_as_reported,
@@ -585,6 +728,7 @@ def fetch_deep_research_context(client: FmpClient, symbol: str, progress: Callab
         "growth_quarter": growth_quarter,
         "analyst_estimates": analyst_estimates,
         "analyst_recommendations": analyst_recommendations,
+        "stock_grades": stock_grades,
         "earnings_calendar": earnings_calendar,
         "transcripts": transcripts,
         "sec_filings": sec_filings,
@@ -612,7 +756,12 @@ def chart_series(
         date_value = row.get("date") or row.get("calendarYear") or row.get("fiscalDateEnding")
         if value is None or not date_value:
             continue
-        points.append({"date": str(date_value)[:10], "value": value / scale})
+        point = {"date": str(date_value)[:10], "value": value / scale}
+        if period == "quarter":
+            label = fiscal_quarter_label(row)
+            if label:
+                point["label"] = label
+        points.append(point)
     if len(points) < 2:
         return None
     values = [point["value"] for point in points]
@@ -632,6 +781,31 @@ def chart_series(
     }
 
 
+def add_current_point(artifact: dict[str, Any] | None, value: Any, date_value: Any | None = None) -> dict[str, Any] | None:
+    current = safe_float(value)
+    if not artifact or current is None:
+        return artifact
+    data = artifact.get("data") or {}
+    series = list(data.get("series") or [])
+    if not series:
+        return artifact
+    latest_date = str(date_value or dt.date.today().isoformat())[:10]
+    if series[-1].get("date") == latest_date and series[-1].get("label") == "Current":
+        return artifact
+    series.append({"date": latest_date, "value": current, "label": "Current"})
+    values = [point["value"] for point in series if safe_float(point.get("value")) is not None]
+    if not values:
+        return artifact
+    next_artifact = dict(artifact)
+    next_data = dict(data)
+    next_data["series"] = series
+    next_data["min"] = min(values)
+    next_data["max"] = max(values)
+    next_data["average"] = sum(values) / len(values)
+    next_artifact["data"] = next_data
+    return next_artifact
+
+
 def build_artifacts(context: dict[str, Any]) -> list[dict[str, Any]]:
     income = context["income_annual"]
     income_q = context["income_quarter"]
@@ -642,6 +816,8 @@ def build_artifacts(context: dict[str, Any]) -> list[dict[str, Any]]:
     ratios_q = context["ratios_quarter"]
     growth = context["growth_annual"]
     growth_q = context["growth_quarter"]
+    metric_snapshot = build_metric_snapshot(context)
+    current_date = (context.get("quote") or {}).get("date") or dt.date.today().isoformat()
     artifacts = [
         chart_series(income, "revenue", "Revenue", 1_000_000, period="annual"),
         chart_series(income_q, "revenue", "Revenue", 1_000_000, period="quarter"),
@@ -663,13 +839,25 @@ def build_artifacts(context: dict[str, Any]) -> list[dict[str, Any]]:
         chart_series(ratios_q, "operatingProfitMargin", "Operating margin", 0.01, period="quarter", value_suffix="%"),
         chart_series(ratios, "netProfitMargin", "Net margin", 0.01, period="annual", value_suffix="%"),
         chart_series(ratios_q, "netProfitMargin", "Net margin", 0.01, period="quarter", value_suffix="%"),
-        chart_series(ratios, ["priceToEarningsRatio", "priceToEarningsRatioTTM", "priceEarningsRatio", "priceEarningsRatioTTM", "peRatio", "peRatioTTM"], "P/E ratio", period="annual", chart_type="line")
-        or chart_series(metrics, ["peRatio", "peRatioTTM", "priceToEarningsRatio", "priceEarningsRatio"], "P/E ratio", period="annual", chart_type="line"),
+        add_current_point(
+            chart_series(ratios, ["priceToEarningsRatio", "priceToEarningsRatioTTM", "priceEarningsRatio", "priceEarningsRatioTTM", "peRatio", "peRatioTTM"], "P/E ratio", period="annual", chart_type="line")
+            or chart_series(metrics, ["peRatio", "peRatioTTM", "priceToEarningsRatio", "priceEarningsRatio"], "P/E ratio", period="annual", chart_type="line"),
+            metric_snapshot.get("pe"),
+            current_date,
+        ),
         chart_series(ratios_q, ["priceToEarningsRatio", "priceToEarningsRatioTTM", "priceEarningsRatio", "priceEarningsRatioTTM", "peRatio", "peRatioTTM"], "P/E ratio", period="quarter", chart_type="line")
         or chart_series(metrics_q, ["peRatio", "peRatioTTM", "priceToEarningsRatio", "priceEarningsRatio"], "P/E ratio", period="quarter", chart_type="line"),
-        chart_series(metrics, ["enterpriseValueOverEBITDA", "enterpriseValueOverEBITDATTM", "evToEBITDA"], "EV/EBITDA", period="annual", chart_type="line"),
+        add_current_point(
+            chart_series(metrics, ["enterpriseValueOverEBITDA", "enterpriseValueOverEBITDATTM", "evToEBITDA"], "EV/EBITDA", period="annual", chart_type="line"),
+            metric_snapshot.get("ev_to_ebitda"),
+            current_date,
+        ),
         chart_series(metrics_q, ["enterpriseValueOverEBITDA", "enterpriseValueOverEBITDATTM", "evToEBITDA"], "EV/EBITDA", period="quarter", chart_type="line"),
-        chart_series(metrics, ["freeCashFlowYield", "freeCashFlowYieldTTM"], "FCF yield", 0.01, period="annual", chart_type="line", value_suffix="%"),
+        add_current_point(
+            chart_series(metrics, ["freeCashFlowYield", "freeCashFlowYieldTTM"], "FCF yield", 0.01, period="annual", chart_type="line", value_suffix="%"),
+            safe_float(metric_snapshot.get("fcf_yield_pct")),
+            current_date,
+        ),
         chart_series(metrics_q, ["freeCashFlowYield", "freeCashFlowYieldTTM"], "FCF yield", 0.01, period="quarter", chart_type="line", value_suffix="%"),
         chart_series(metrics, ["pbRatio", "pbRatioTTM", "priceToBookRatio"], "P/B ratio", period="annual", chart_type="line"),
         chart_series(metrics_q, ["pbRatio", "pbRatioTTM", "priceToBookRatio"], "P/B ratio", period="quarter", chart_type="line"),
@@ -957,6 +1145,7 @@ def build_model_context(symbol: str, company_name: str, relationship: str, conte
             "income_annual": compact_rows(context["income_annual"], ["date", "revenue", "grossProfit", "operatingIncome", "netIncome", "eps", "ebitda"], 8),
             "cashflow_annual": compact_rows(context["cashflow_annual"], ["date", "operatingCashFlow", "capitalExpenditure", "freeCashFlow"], 8),
             "balance_annual": compact_rows(context["balance_annual"], ["date", "cashAndCashEquivalents", "totalDebt", "totalAssets", "totalLiabilities", "totalStockholdersEquity"], 8),
+            "balance_quarter": compact_rows(context.get("balance_quarter") or [], ["date", "cashAndCashEquivalents", "totalDebt", "totalAssets", "totalLiabilities", "totalStockholdersEquity"], 8),
             "ratios_annual": compact_rows(context["ratios_annual"], ["date", "priceToEarningsRatio", "priceEarningsRatio", "priceToSalesRatio", "priceToBookRatio", "grossProfitMargin", "operatingProfitMargin", "netProfitMargin", "returnOnEquity", "returnOnInvestedCapital", "debtToEquityRatio", "debtEquityRatio"], 8),
             "ratios_quarter": compact_rows(context["ratios_quarter"], ["date", "priceToEarningsRatio", "priceEarningsRatio", "priceToSalesRatio", "priceToBookRatio", "grossProfitMargin", "operatingProfitMargin", "netProfitMargin", "returnOnEquity", "returnOnInvestedCapital", "debtToEquityRatio", "debtEquityRatio"], 8),
             "metrics_annual": compact_rows(context["metrics_annual"], ["date", "peRatio", "pbRatio", "evToSales", "enterpriseValueOverEBITDA", "freeCashFlowYield"], 8),
@@ -966,6 +1155,23 @@ def build_model_context(symbol: str, company_name: str, relationship: str, conte
         },
         "analyst_estimates": compact_rows(context["analyst_estimates"], ["date", "estimatedRevenueAvg", "estimatedEpsAvg", "estimatedEbitdaAvg"], 6),
         "analyst_recommendations": compact_rows(context["analyst_recommendations"], ["date", "rating", "ratingRecommendation", "analystRatingsBuy", "analystRatingsHold", "analystRatingsSell"], 8),
+        "stock_grades": compact_rows(
+            context.get("stock_grades") or [],
+            [
+                "date",
+                "gradingCompany",
+                "previousGrade",
+                "newGrade",
+                "action",
+                "symbol",
+                "price",
+                "priceTarget",
+                "targetPrice",
+                "newPriceTarget",
+                "priceWhenPosted",
+            ],
+            10,
+        ),
         "insider_trading": compact_rows(context["insider_trading"], ["transactionDate", "reportingName", "transactionType", "securitiesTransacted", "price", "typeOfOwner"], 20),
         "earnings": compact_rows(context["earnings_calendar"], ["date", "eps", "epsEstimated", "revenue", "revenueEstimated"], 8),
         "filings": compact_rows(context["sec_filings"], ["fillingDate", "acceptedDate", "type", "formType", "finalLink", "link"], 10),
@@ -1061,6 +1267,7 @@ def build_financial_statement_payload(context: dict[str, Any]) -> dict[str, Any]
         "income_annual": context.get("income_annual") or [],
         "income_quarter": context.get("income_quarter") or [],
         "balance_annual": context.get("balance_annual") or [],
+        "balance_quarter": context.get("balance_quarter") or [],
         "cashflow_annual": context.get("cashflow_annual") or [],
         "cashflow_quarter": context.get("cashflow_quarter") or [],
         "as_reported": context.get("income_as_reported") or [],
@@ -1228,16 +1435,17 @@ def generate_deep_research(
         "task": "Create a comprehensive deep research report for one public company.",
         "requirements": [
             "Return one coherent report in sections only; do not duplicate sections or create primer-style top-level summaries.",
-            "Use this exact section order when applicable: Business overview; Products and segments; Revenue model and customers; Competitive position; Financial statements and profitability; Balance sheet and cash flow; Valuation and DCF; Risks; Catalysts and monitoring checklist.",
+            "Use this exact section order when applicable: Business overview; Products and segments; Revenue model and customers; Competitive position; Recent developments; Financial statements and profitability; Balance sheet and cash flow; Valuation and DCF; Risks; Catalysts and monitoring checklist.",
             "Start broad and then go deeper: explain what the company does before analyzing the financials.",
-            "Use earnings transcripts, filings, financial statements, analyst estimates, insider data, and news when they are supplied.",
+            "Use earnings transcripts, filings, financial statements, analyst estimates, stock grades, and news when they are supplied.",
             "Do not say transcripts or filings are missing if transcript_samples, filings, or annual_report_extracts contain data.",
             "For each section, put relevant openable source keys into source_keys instead of inline bracket citations.",
             "Do not write about source inconsistencies, data conflicts, or internal limitations. Choose the most relevant values from the supplied structured context.",
             "Write premium long-form analysis. Each major section should be useful on its own, with a substantial paragraph summary and detailed subpoints.",
             "Use fewer one-sentence bullets. For products and segments, use product/segment names followed by deeper explanatory paragraphs.",
             "Synthesize source material directly in the report; sources are for verification, not a substitute for analysis.",
-            "Discuss transcript commentary, annual report / 10-K disclosures, financial statement trends, analyst/insider context, and recent news wherever relevant.",
+            "Discuss transcript commentary, annual report / 10-K disclosures, financial statement trends, stock grades, analyst context, and recent news wherever relevant.",
+            "Create a substantial Recent developments section from the last six months of news and current company context. Cover what the company is dealing with now: opportunities, pressure points, customer or product momentum, major contracts, regulatory issues, strategic changes, and near-term monitoring items.",
             "Do not mention the name of the data provider in prose.",
             "Return detailed JSON that can be rendered into a multi-section report.",
         ],
@@ -1296,6 +1504,7 @@ def generate_deep_research(
             "annual_report_extracts": context.get("annual_report_extracts") or [],
             "analyst_estimates": context.get("analyst_estimates") or [],
             "analyst_recommendations": context.get("analyst_recommendations") or [],
+            "stock_grades": context.get("stock_grades") or [],
             "insider_trading": context.get("insider_trading") or [],
             "news": context.get("news") or [],
         },

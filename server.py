@@ -1299,6 +1299,56 @@ def parse_fmp_date(value: Any) -> dt.date | None:
         return None
 
 
+def row_any(row: dict[str, Any], *names: str) -> Any:
+    lower_map = {str(key).lower(): value for key, value in row.items()} if isinstance(row, dict) else {}
+    for name in names:
+        if name in row and row.get(name) not in (None, "", []):
+            return row.get(name)
+        value = lower_map.get(str(name).lower())
+        if value not in (None, "", []):
+            return value
+    return None
+
+
+def fiscal_quarter_number(row: dict[str, Any]) -> int | None:
+    value = row_any(row, "quarter", "fiscalQuarter", "fiscal_quarter", "fiscalQ", "q")
+    if value in (None, "", []):
+        value = row_any(row, "period")
+    if value in (None, "", []):
+        return None
+    text = str(value).strip().upper()
+    if not text or text in {"FY", "ANNUAL"}:
+        return None
+    if text.startswith("Q"):
+        text = text[1:].split()[0]
+    try:
+        quarter = int(float(text))
+    except (TypeError, ValueError):
+        return None
+    return quarter if 1 <= quarter <= 4 else None
+
+
+def fiscal_year_value(row: dict[str, Any]) -> str | None:
+    year = row_any(row, "calendarYear", "fiscalYear", "fiscal_year", "year")
+    if year not in (None, "", []):
+        try:
+            return str(int(float(year)))
+        except (TypeError, ValueError):
+            return str(year)
+    date_value = row_any(row, "fiscalDateEnding", "date", "publishedDate")
+    if date_value:
+        return str(date_value)[:4]
+    return None
+
+
+def fiscal_quarter_label(row: dict[str, Any]) -> str | None:
+    quarter = fiscal_quarter_number(row)
+    if not quarter:
+        return None
+    year = fiscal_year_value(row)
+    return f"Q{quarter} {year}" if year else f"Q{quarter}"
+
+
 def fetch_latest_actual_earnings(client: Any, symbol: str, today: dt.date) -> dict[str, Any]:
     for endpoint, params in (
         ("earnings", {"symbol": symbol, "limit": 12}),
@@ -1321,6 +1371,8 @@ def normalize_earnings_report(row: dict[str, Any], report_type: str) -> dict[str
         "symbol": row.get("symbol"),
         "date": row.get("date") or row.get("fiscalDateEnding"),
         "report_type": report_type,
+        "fiscal_quarter": fiscal_quarter_label(row),
+        "fiscal_year": fiscal_year_value(row),
         "eps_actual": row.get("epsActual") or row.get("eps"),
         "eps_estimated": row.get("epsEstimated") or row.get("epsEstimate"),
         "revenue_actual": row.get("revenueActual") or row.get("revenue"),
@@ -1329,8 +1381,77 @@ def normalize_earnings_report(row: dict[str, Any], report_type: str) -> dict[str
     }
 
 
+def enrich_earnings_row_with_statement_period(row: dict[str, Any], quarter_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if fiscal_quarter_label(row):
+        return row
+    report_date = parse_fmp_date(row.get("date"))
+    fiscal_date = parse_fmp_date(row.get("fiscalDateEnding"))
+    matches: list[tuple[int, dict[str, Any]]] = []
+    for statement in quarter_rows:
+        statement_date = parse_fmp_date(statement.get("date") or statement.get("fiscalDateEnding"))
+        if not statement_date:
+            continue
+        if fiscal_date and statement_date == fiscal_date:
+            matches.append((0, statement))
+            continue
+        if report_date and statement_date <= report_date:
+            days = (report_date - statement_date).days
+            if 0 <= days <= 140:
+                matches.append((days, statement))
+    if not matches:
+        return row
+    statement = sorted(matches, key=lambda item: item[0])[0][1]
+    enriched = dict(row)
+    for key in ("period", "quarter", "calendarYear", "fiscalYear"):
+        if enriched.get(key) in (None, "", []):
+            enriched[key] = statement.get(key)
+    if enriched.get("fiscalDateEnding") in (None, "", []):
+        enriched["fiscalDateEnding"] = statement.get("fiscalDateEnding") or statement.get("date")
+    return enriched
+
+
+def advance_fiscal_quarter(row: dict[str, Any]) -> tuple[int, str | None] | None:
+    quarter = fiscal_quarter_number(row)
+    year = fiscal_year_value(row)
+    if not quarter:
+        return None
+    next_quarter = 1 if quarter == 4 else quarter + 1
+    next_year = year
+    if quarter == 4 and year:
+        try:
+            next_year = str(int(float(year)) + 1)
+        except (TypeError, ValueError):
+            next_year = year
+    return next_quarter, next_year
+
+
+def apply_fiscal_quarter(row: dict[str, Any], quarter: int, year: str | None) -> dict[str, Any]:
+    enriched = dict(row)
+    enriched["quarter"] = quarter
+    enriched["period"] = f"Q{quarter}"
+    if year:
+        enriched["calendarYear"] = year
+        enriched["fiscalYear"] = year
+    return enriched
+
+
+def unique_earnings_reports(reports: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for report in reports:
+        marker = report.get("fiscal_quarter") or report.get("date") or str(len(unique))
+        if marker in seen:
+            continue
+        seen.add(marker)
+        unique.append(report)
+        if limit and len(unique) >= limit:
+            break
+    return unique
+
+
 def fetch_research_earnings_reports(client: Any, symbol: str, today: dt.date) -> dict[str, Any]:
     rows = fmp_items(try_fmp_get(client, "earnings", {"symbol": symbol, "limit": 100, "includeReportTimes": True}))
+    quarter_rows = fmp_items(try_fmp_get(client, "income-statement", {"symbol": symbol, "period": "quarter", "limit": 12}))
     dated_rows = [
         (parsed_date, row)
         for row in rows
@@ -1338,27 +1459,44 @@ def fetch_research_earnings_reports(client: Any, symbol: str, today: dt.date) ->
     ]
     dated_rows.sort(key=lambda item: item[0], reverse=True)
 
-    current_year_quarters = [
-        normalize_earnings_report(row, "quarter")
-        for report_date, row in dated_rows
-        if report_date.year == today.year
-    ]
+    actual_quarters = unique_earnings_reports(
+        [
+            normalize_earnings_report(enrich_earnings_row_with_statement_period(row, quarter_rows), "quarter")
+            for report_date, row in dated_rows
+            if report_date <= today
+        ],
+        limit=5,
+    )
+    if len(actual_quarters) < 5:
+        supplemental = [
+            normalize_earnings_report(row, "quarter")
+            for row in sorted(
+                quarter_rows,
+                key=lambda item: str(item.get("date") or item.get("fiscalDateEnding") or ""),
+                reverse=True,
+            )
+            if (parse_fmp_date(row.get("date") or row.get("fiscalDateEnding")) or today) <= today
+        ]
+        actual_quarters = unique_earnings_reports([*actual_quarters, *supplemental], limit=5)
     next_earnings_date = next(
         (report_date.isoformat() for report_date, _ in sorted(dated_rows, key=lambda item: item[0]) if report_date > today),
         None,
     )
 
-    annual_rows = fmp_items(
-        try_fmp_get(client, "income-statement", {"symbol": symbol, "period": "annual", "limit": 1})
-    )
-    latest_fy = None
-    if annual_rows:
-        latest_fy = normalize_earnings_report(annual_rows[0], "fy")
-        latest_fy["fiscal_year"] = str(annual_rows[0].get("calendarYear") or "") or None
+    upcoming = None
+    future_rows = [(report_date, row) for report_date, row in sorted(dated_rows, key=lambda item: item[0]) if report_date > today]
+    if future_rows:
+        _, future_row = future_rows[0]
+        enriched_future = dict(future_row)
+        if not fiscal_quarter_label(enriched_future) and actual_quarters:
+            next_period = advance_fiscal_quarter(actual_quarters[0])
+            if next_period:
+                enriched_future = apply_fiscal_quarter(enriched_future, *next_period)
+        upcoming = normalize_earnings_report(enriched_future, "upcoming")
 
     return {
         "next_earnings_date": next_earnings_date,
-        "reports": [*current_year_quarters, *([latest_fy] if latest_fy else [])],
+        "reports": [*([upcoming] if upcoming else []), *actual_quarters],
     }
 
 

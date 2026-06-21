@@ -2982,17 +2982,31 @@ function formatDateOnly(value) {
 
 function earningsReportLabel(report, index) {
   if (report.report_type === "fy") {
-    return report.fiscal_year ? `FY ${report.fiscal_year}` : "Last FY";
+    return report.fiscal_year ? `FY ${report.fiscal_year}` : "Fiscal year";
   }
-  const date = parseDateOnlyStrict(report.date);
-  if (date) {
-    return `Q${Math.floor(date.getMonth() / 3) + 1} ${date.getFullYear()}`;
+  const explicitQuarter = report.fiscal_quarter || report.fiscalQuarter || report.period || report.quarter;
+  const quarterText = explicitQuarter ? String(explicitQuarter).trim().toUpperCase() : "";
+  const fiscalYear = report.fiscal_year || report.fiscalYear || report.calendarYear || report.year;
+  if (quarterText && !["FY", "ANNUAL"].includes(quarterText)) {
+    if (/^Q[1-4]\s+\d{4}$/.test(quarterText)) {
+      return quarterText;
+    }
+    const quarterMatch = quarterText.match(/^Q?([1-4])$/);
+    if (quarterMatch) {
+      return fiscalYear ? `Q${quarterMatch[1]} ${fiscalYear}` : `Q${quarterMatch[1]}`;
+    }
+    if (quarterText.startsWith("Q")) {
+      return fiscalYear && !quarterText.includes(String(fiscalYear)) ? `${quarterText} ${fiscalYear}` : quarterText;
+    }
+  }
+  if (report.report_type === "upcoming") {
+    return "Upcoming";
   }
   return `Quarter ${index + 1}`;
 }
 
 function EarningsReportsPanel({ reports = [], nextEarningsDate }) {
-  const items = Array.isArray(reports) ? reports.filter(Boolean) : [];
+  const items = Array.isArray(reports) ? reports.filter((report) => report && report.report_type !== "fy") : [];
   const defaultActiveIndex = useMemo(() => {
     const today = new Date();
     today.setHours(23, 59, 59, 999);
@@ -3044,7 +3058,7 @@ function EarningsReportsPanel({ reports = [], nextEarningsDate }) {
           {activeReport ? (
             <div className="earnings-report-detail">
               <div className="earnings-report-date">
-                <span>{activeReport.report_type === "fy" ? "Fiscal year report" : "Quarterly report"}</span>
+                <span>{activeReport.report_type === "upcoming" ? "Upcoming report" : activeReport.report_type === "fy" ? "Fiscal year report" : "Quarterly report"}</span>
                 <strong>{formatDateOnly(activeReport.date)}</strong>
               </div>
               <div className="earnings-detail-grid">
@@ -3478,8 +3492,13 @@ function SimpleDeepChart({ artifact }) {
   const hoveredCoord = hovered ? coordinate(hovered, hoverIndex) : null;
   const handleHover = (event) => {
     const bounds = event.currentTarget.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
-    setHoverIndex(Math.round(ratio * (series.length - 1)));
+    const svgX = ((event.clientX - bounds.left) / bounds.width) * width;
+    const ratio = Math.min(1, Math.max(0, (svgX - left) / plotWidth));
+    if ((artifact?.data?.chart_type || "bar") === "line") {
+      setHoverIndex(Math.round(ratio * (series.length - 1)));
+    } else {
+      setHoverIndex(Math.min(series.length - 1, Math.floor(ratio * series.length)));
+    }
   };
   const path = series.map((point, index) => {
     const { x, y } = coordinate(point, index);
@@ -3528,7 +3547,7 @@ function SimpleDeepChart({ artifact }) {
           }
           const { x } = coordinate(point, index);
           return (
-            <text className="chart-axis-label" key={`${point.date}-label`} textAnchor={index === 0 ? "start" : index === series.length - 1 ? "end" : "middle"} x={x} y={height - 8}>
+            <text className="chart-axis-label-charts" key={`${point.date}-label`} textAnchor="middle" x={x} y={height - 8}>
               {formatDeepPeriodLabel(point, artifact?.data?.period)}
             </text>
           );
@@ -3540,13 +3559,19 @@ function SimpleDeepChart({ artifact }) {
 }
 
 function formatDeepPeriodLabel(point, period) {
+  if (point?.label) {
+    if (period === "quarter") {
+      const [quarter, year] = point.label.split(" ");
+      return `${quarter} ${year.slice(-2)}`;
+    }
+    return point.label;
+  }
+  if (period === "quarter") {
+    return point?.period || point?.date || "";
+  }
   const date = parseChartDate(point?.date);
   if (Number.isNaN(date.getTime())) {
     return point?.date || "";
-  }
-  if (period === "quarter") {
-    const quarter = Math.floor(date.getMonth() / 3) + 1;
-    return `Q${quarter} ${date.getFullYear()}`;
   }
   return String(date.getFullYear());
 }
@@ -3784,7 +3809,7 @@ function DeepResourceModal({ resource, onClose }) {
                       <tr className={lineItem.highlight ? "statement-highlight-row" : ""} key={lineItem.key}>
                         <td>{metricLabel(lineItem.key)}</td>
                         {columns.map((column) => (
-                          <td key={column.key}>{formatStatementNumber(column.row?.[lineItem.key])}</td>
+                          <td data-period={column.label} key={column.key}>{formatStatementNumber(column.row?.[lineItem.key])}</td>
                         ))}
                       </tr>
                     )
@@ -3838,75 +3863,142 @@ function splitTranscriptBySpeaker(content) {
   }).filter((block) => block.text);
 }
 
-function insiderTransactionTone(item) {
-  const text = `${item?.transactionType || ""} ${item?.typeOfTransaction || ""} ${item?.transactionCode || ""}`.toLowerCase();
-  if (/\b(p|purchase|buy|acquisition|acquired)\b/.test(text)) {
+function stockGradeTone(item) {
+  const text = `${item?.newGrade || ""} ${item?.grade || ""} ${item?.rating || ""} ${item?.action || ""}`.toLowerCase();
+  if (/\b(strong buy|buy|outperform|overweight|positive|accumulate)\b/.test(text)) {
     return "buy";
   }
-  if (/\b(s|sale|sell|sold|disposition|disposed)\b/.test(text)) {
+  if (/\b(sell|underperform|underweight|negative|reduce)\b/.test(text)) {
     return "sell";
   }
-  return "neutral";
+  return "hold";
 }
 
-function hasCompleteInsiderTransaction(item) {
-  const tone = insiderTransactionTone(item);
-  const shares = item?.securitiesTransacted ?? item?.securitiesOwned ?? item?.transactionShares;
-  return tone !== "neutral" && item?.price !== null && item?.price !== undefined && item?.price !== "" && shares !== null && shares !== undefined && shares !== "";
+function stockGradeLabel(item) {
+  return item?.newGrade || item?.grade || item?.rating || item?.ratingRecommendation || "Hold";
 }
 
-function DeepResearchDataLibrary({ deep, onOpenResource }) {
+function stockGradePrice(item) {
+  const value =
+    item?.price ??
+    item?.priceTarget ??
+    item?.targetPrice ??
+    item?.newPriceTarget ??
+    item?.previousPriceTarget ??
+    item?.priceTargetNew ??
+    item?.priceTargetCurrent ??
+    item?.priceWhenPosted ??
+    item?.publishedPrice ??
+    item?.currentPrice;
+  return value === null || value === undefined || value === "" ? "" : metricValue("price", value);
+}
+
+function DeepResearchDataLibrary({ deep, earningsReports = [], nextEarningsDate, stockGrades = [], onOpenResource }) {
+  const [statementPeriod, setStatementPeriod] = useState("annual");
   const sources = Array.isArray(deep.sources) ? deep.sources : [];
   const transcripts = Array.isArray(deep.transcripts) ? deep.transcripts : [];
   const filings = Array.isArray(deep.filings) ? deep.filings : [];
   const annualReportSources = sources.filter((source) => source.source_type === "annual_report_json" && !hasAnnualReportError(source));
-  const insider = Array.isArray(deep.insider_trading) ? deep.insider_trading : [];
-  const insiderRows = insider.filter(hasCompleteInsiderTransaction).slice(0, 8);
+  const transcriptSources = transcripts.slice(0, 5).map((item, index) => sources.find((candidate) => candidate.source_key === `transcript_${index + 1}`)).filter(Boolean);
+  const hasEarningsReports = Array.isArray(earningsReports) && (earningsReports.some((report) => report && report.report_type !== "fy") || nextEarningsDate);
+  const statementItems = [
+    { label: "Income statement", annual: "income_annual", quarter: "income_quarter" },
+    { label: "Balance sheet", annual: "balance_annual", quarter: "balance_quarter" },
+    { label: "Cash flow", annual: "cashflow_annual", quarter: "cashflow_quarter" },
+  ];
+  const activeStatementSources = statementItems
+    .map((item) => ({ ...item, source: sources.find((source) => source.source_key === item[statementPeriod]) }))
+    .filter((item) => item.source);
   return (
-    <section className="research-card deep-library-card">
-      <div className="research-card-header">
-        <h3>Primary materials</h3>
-      </div>
-      <div className="deep-library-grid">
-        <div>
-          <strong>Financial statements</strong>
-          {["income_annual", "income_quarter", "balance_annual", "cashflow_annual", "cashflow_quarter"].map((key) => {
-            const source = sources.find((item) => item.source_key === key);
-            return source ? <button key={key} onClick={() => onOpenResource(source)} type="button">{source.title}</button> : null;
-          })}
+    <div className="deep-material-layout">
+      <div className="deep-library-grid deep-material-row">
+        <div className="deep-material-panel deep-material-statements">
+          <div className="deep-material-heading">
+            <strong>Financial statements</strong>
+            <div className="deep-material-tabs compact" aria-label="Statement period">
+              {[
+                ["annual", "Annual"],
+                ["quarter", "Quarterly"],
+              ].map(([key, label]) => (
+                <button className={statementPeriod === key ? "active" : ""} key={key} onClick={() => setStatementPeriod(key)} type="button">
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {activeStatementSources.length ? (
+            <div className="deep-material-list">
+              {activeStatementSources.map((item) => (
+                <button key={item.source.source_key} onClick={() => onOpenResource(item.source)} type="button">
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <span>No statement available for this period.</span>
+          )}
+          <div className="deep-material-subsection">
+            <strong>SEC filings / 10-K</strong>
+            <div className="deep-material-list">
+              {annualReportSources.slice(0, 1).map((source) => (
+                <button key={source.source_key} onClick={() => onOpenResource(source)} type="button">{source.title}</button>
+              ))}
+              {filings.slice(0, 6).map((item, index) => {
+                const url = item.finalLink || item.link || item.url || item.filingUrl;
+                const title = item.type || item.formType || item.title || `Filing ${index + 1}`;
+                return url ? <a href={url} key={`${title}-${index}`} rel="noreferrer" target="_blank">{title}</a> : <span key={`${title}-${index}`}>{title}</span>;
+              })}
+            </div>
+            {!filings.length && !annualReportSources.length ? <span>No filings available.</span> : null}
+          </div>
         </div>
-        <div>
+        <StockGradesPanel stockGrades={stockGrades} />
+      </div>
+      <div className="deep-library-grid deep-material-row">
+        {hasEarningsReports ? (
+          <div className="deep-material-panel deep-earnings-report-panel">
+            <EarningsReportsPanel reports={earningsReports} nextEarningsDate={nextEarningsDate} />
+          </div>
+        ) : (
+          <div className="deep-material-panel deep-earnings-report-panel">
+            <strong>Earnings reports</strong>
+            <span>No earnings reports available.</span>
+          </div>
+        )}
+        <div className="deep-material-panel">
           <strong>Earnings transcripts</strong>
-          {transcripts.slice(0, 5).map((item, index) => {
-            const source = sources.find((candidate) => candidate.source_key === `transcript_${index + 1}`);
-            return source ? <button key={`${item.date || index}`} onClick={() => onOpenResource(source)} type="button">{source.title}</button> : null;
-          })}
-          {!transcripts.length ? <span>No transcripts available.</span> : null}
-        </div>
-        <div>
-          <strong>SEC filings / 10-K</strong>
-          {annualReportSources.slice(0, 1).map((source) => (
-            <button key={source.source_key} onClick={() => onOpenResource(source)} type="button">{source.title}</button>
-          ))}
-          {filings.slice(0, 6).map((item, index) => {
-            const url = item.finalLink || item.link || item.url || item.filingUrl;
-            const title = item.type || item.formType || item.title || `Filing ${index + 1}`;
-            return url ? <a href={url} key={`${title}-${index}`} rel="noreferrer" target="_blank">{title}</a> : <span key={`${title}-${index}`}>{title}</span>;
-          })}
-          {!filings.length && !annualReportSources.length ? <span>No filings available.</span> : null}
-        </div>
-        <div>
-          <strong>Insider buys / sells</strong>
-          {insiderRows.length ? insiderRows.map((item, index) => (
-            <small className={`insider-transaction insider-${insiderTransactionTone(item)}`} key={`insider-${item.transactionDate || index}`}>
-              {item.transactionDate || item.filingDate || "Date N/A"} - {item.reportingName || item.name || "Insider"}: {item.transactionType || item.typeOfTransaction || "transaction"}
-              {item.securitiesTransacted || item.securitiesOwned || item.transactionShares ? `, shares ${formatCompactNumber(item.securitiesTransacted || item.securitiesOwned || item.transactionShares)}` : ""}
-              {item.price ? ` at ${metricValue("price", item.price)}` : ""}
-            </small>
-          )) : <span>No complete insider buy/sell transactions returned.</span>}
+          <div className="deep-material-list deep-material-list-stacked">
+            {transcriptSources.map((source) => (
+              <button key={source.source_key} onClick={() => onOpenResource(source)} type="button">{source.title}</button>
+            ))}
+          </div>
+          {!transcriptSources.length ? <span>No transcripts available.</span> : null}
         </div>
       </div>
-    </section>
+    </div>
+  );
+}
+
+function StockGradesPanel({ stockGrades = [] }) {
+  const items = Array.isArray(stockGrades) ? stockGrades.slice(0, 10) : [];
+  return (
+    <div className="deep-material-panel deep-stock-grades-panel">
+      <strong>Stock grades</strong>
+      {items.length ? (
+        <div className="stock-grade-list stock-grade-list-scroll">
+          {items.map((item, index) => (
+            <small className={`stock-grade-row stock-grade-${stockGradeTone(item)}`} key={`grade-${item.date || index}`}>
+              <span>{item.date || item.publishedDate || "Date N/A"}</span>
+              <b>{stockGradeLabel(item)}</b>
+              <em>{item.gradingCompany || item.analystCompany || item.firm || item.action || "Analyst grade"}</em>
+              {stockGradePrice(item) ? <strong>{stockGradePrice(item)}</strong> : null}
+            </small>
+          ))}
+        </div>
+      ) : (
+        <span>No stock grades returned.</span>
+      )}
+    </div>
   );
 }
 
@@ -3917,20 +4009,21 @@ function DeepResearchContent({ payload }) {
   const sourceMap = useMemo(() => sourceByKeyMap(deep.sources), [deep.sources]);
   const hasStructuredSections = Array.isArray(research.sections) && research.sections.length > 0;
   const earningsReports = Array.isArray(payload.market_data?.earnings_reports) ? payload.market_data.earnings_reports : [];
-  const hasEarningsReports = earningsReports.length > 0 || payload.market_data?.next_earnings_date;
+  const stockGrades = Array.isArray(deep.stock_grades) ? deep.stock_grades.slice(0, 10) : [];
   return (
     <>
       <div className="research-section-grid deep-research-grid">
         <ResearchSignal label="Deep research signal" value={research.signal} />
         <ResearchMarketSnapshot marketData={payload.market_data} showEarnings={false} />
-        <DeepResearchDcfCalculator dcf={deep.dcf} />
-        <DeepResearchDataLibrary deep={deep} onOpenResource={setResourceModal} />
-        {hasEarningsReports ? (
-          <section className="research-card">
-            <EarningsReportsPanel reports={earningsReports} nextEarningsDate={payload.market_data?.next_earnings_date} />
-          </section>
-        ) : null}
         <DeepResearchArtifacts artifacts={deep.artifacts} />
+        <DeepResearchDcfCalculator dcf={deep.dcf} />
+        <DeepResearchDataLibrary
+          deep={deep}
+          earningsReports={earningsReports}
+          nextEarningsDate={payload.market_data?.next_earnings_date}
+          onOpenResource={setResourceModal}
+          stockGrades={stockGrades}
+        />
         {hasStructuredSections ? (
           <DeepResearchSections onOpenResource={setResourceModal} sections={research.sections} sourceMap={sourceMap} />
         ) : (
