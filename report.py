@@ -50,6 +50,60 @@ LABEL_DESCRIPTIONS = {
     "unclear": "The impact on the thesis is not clear from this item alone.",
 }
 
+LOW_MATERIALITY_LEGAL_RE = re.compile(
+    r"\b("
+    r"class action|shareholder alert|investor alert|investors? may have been misled|"
+    r"securities fraud investigation|law firm|contact .* law|pending securities fraud|"
+    r"investigation commenced|investigation by|investigation on behalf of investors|"
+    r"deadline|lead plaintiff|bronstein|portnoy|bfa law|rosen law|levi & korsinsky|"
+    r"glancy prongay|pomerantz|faruqi|kessler topaz"
+    r")\b",
+    re.IGNORECASE,
+)
+
+MATERIAL_LEGAL_RE = re.compile(
+    r"\b("
+    r"sec investigation|doj|department of justice|ftc|federal trade commission|antitrust|"
+    r"criminal|subpoena|consent decree|settlement|fine|penalty|regulatory action|"
+    r"accounting|restatement|fraud charge|charged by|sued by regulator"
+    r")\b",
+    re.IGNORECASE,
+)
+
+ROUTINE_ANALYST_RE = re.compile(
+    r"\b(analyst downgrade|downgraded|price target cut|price target lowered|rating cut|rating lowered)\b",
+    re.IGNORECASE,
+)
+
+FUNDAMENTAL_DETERIORATION_RE = re.compile(
+    r"\b("
+    r"guidance cut|cuts guidance|lowered guidance|demand weakness|revenue slowdown|slowing revenue|"
+    r"margin compression|competitive deterioration|customer loss|lost customer|accounting concern|"
+    r"regulatory action|management credibility|churn|pricing pressure|subscription growth"
+    r")\b",
+    re.IGNORECASE,
+)
+
+POSITIVE_OR_SUPPORTIVE_RE = re.compile(
+    r"\b("
+    r"pay off|bigger than wall street expects|beat|beats|raised|raises|growth driven|"
+    r"revenue rose|revenue increased|expands|signed|new deal|partnership|strong demand|"
+    r"accelerating|record revenue|better than expected"
+    r")\b",
+    re.IGNORECASE,
+)
+
+NEGATIVE_THESIS_TRIGGER_RE = re.compile(
+    r"\b("
+    r"miss|missed|guidance cut|cuts guidance|lowered guidance|demand weakness|revenue slowdown|"
+    r"margin compression|regulatory action|antitrust|sec investigation|accounting|restatement|"
+    r"customer loss|competitive pressure|pricing pressure|fraud charge"
+    r")\b",
+    re.IGNORECASE,
+)
+
+VALUATION_RE = re.compile(r"\b(valuation|price target|multiple|capex|free cash flow|cash flow|margin|expectations?)\b", re.IGNORECASE)
+
 EVENT_KEYWORDS = {
     "earnings": ("earnings", "results", "quarter", "eps", "revenue", "profit", "margin"),
     "guidance": ("guidance", "forecast", "outlook", "raises forecast", "cuts forecast"),
@@ -1815,11 +1869,22 @@ def generate_report_with_openai(
             "Create a daily investment morning report from this prefiltered context. "
             "For the top_market_themes section, create a short list of notable market reads from context.market_theme_candidates. "
             "Each item must use exactly one candidate and exactly that candidate's single supporting article. "
-            "Do not turn a single article into a broad trend."
+            "Do not turn a single article into a broad trend. "
+            "Prefer the single most relevant article per portfolio/watchlist company; omit weaker duplicate items for the same ticker."
         ),
         "writing_guidance": [
             "Write for beginner investors: explain financial implications plainly and avoid unexplained jargon.",
-            "For portfolio_news and watchlist_news, keep why_it_matters short, then add article_summary with 3-5 factual bullet points based only on the supplied snippet/title/source metadata.",
+            "Write like an investor brief, not like a source audit. State the business implication directly in your own words.",
+            "Do not use meta phrases such as 'the article says', 'the report says', 'the snippet says', 'the article frames', 'the supplied context', 'the snippet does not provide', or 'per instruction'. The source link is already shown separately.",
+            "If a detail is not available, do not write that the article does not provide it. Instead, omit the missing detail or say what the investor should monitor next in concrete terms.",
+            "Keep prose concise and direct. Avoid padding, caveats, and source-process commentary unless uncertainty materially changes the investment interpretation.",
+            "Before assigning any attention label, internally assess whether the item is low, medium, or high materiality for the specific company and the user's thesis. Do not output this materiality score.",
+            "Use review_thesis sparingly. It is reserved for medium/high materiality portfolio items that could plausibly change the user's business thesis, action trigger, red flag, growth outlook, margin outlook, guidance, competitive position, regulatory risk, accounting trust, or management trust.",
+            "Routine shareholder class action press releases, generic law firm investigation alerts, ambulance-chaser lawsuit notices, and ordinary legal PR are usually low materiality for large companies. Omit them from portfolio_news and watchlist_news unless they show a specific material regulatory, financial, customer, accounting, or operational impact.",
+            "Analyst downgrades, price target cuts, and rating changes are not review_thesis by themselves. Escalate them only when the supplied article gives a concrete fundamental reason such as guidance cuts, demand weakness, revenue growth slowdown, margin compression, competitive deterioration, customer loss, accounting concern, regulatory action, or management credibility issue.",
+            "Do not give a minor legal PR item, routine analyst note, or generic shareholder alert the same urgency as a major product, customer, regulatory, earnings, guidance, or strategic event.",
+            "For portfolio_news and watchlist_news, include at most one item per ticker: choose the highest-materiality item and omit the rest.",
+            "For portfolio_news and watchlist_news, keep why_it_matters short and implication-focused, then add article_summary with 2-4 factual bullet points based on the snippet/title/source metadata.",
             "For portfolio_news and watchlist_news, include only articles whose context.ranked_news ticker exactly matches that section item ticker.",
             "Never include portfolio tickers in watchlist_news.",
             "For watchlist_news, judge whether the news is a good or bad signal for eventually owning the company by comparing it to the watchlist thesis entry_conditions, red_flags, key_metrics, bull_case, and bear_case.",
@@ -1828,11 +1893,13 @@ def generate_report_with_openai(
             "For watchlist_news why_it_matters, explicitly mention which entry condition, red flag, or key metric the article relates to. Do not say the user should buy the stock.",
             "For thesis_impact, explain how the news could affect the user's stated thesis, key metrics, red flags, and action triggers.",
             "Only include portfolio holdings in thesis_impact; do not include watchlist-only companies there.",
+            "For attention_flags, do not create a separate contradictory interpretation. Use them only to highlight the most important follow-ups from portfolio_news or thesis_impact, and make the label consistent with the highest-urgency portfolio_news attention_label for that ticker. If the relevant portfolio_news item is no_action or monitor, do not escalate the attention_flag to review_thesis.",
             "Use top_market_themes as notable market reads outside the user's portfolio and watchlist.",
             "For top_market_themes, do not combine articles from different market_theme_candidates into one item.",
             "Do not reuse the same source article URL across multiple top_market_themes.",
             "For top_market_themes, set theme_type to notable_article, use the article title or a very close paraphrase as theme, and summarize only that article's actual topic.",
             "Do not add macro, geopolitical, regulatory, or sector claims to a notable market read unless directly supported by its single source article.",
+            "If top_market_themes is empty, do not mention that it is empty anywhere in executive_summary or any other section.",
             "When impact is uncertain, say what is unknown and what evidence would clarify it.",
             "Do not give buy, sell, hold, position sizing, price target, or trading advice.",
         ],
@@ -1925,7 +1992,10 @@ def generate_report_with_openai(
         "context": context,
     }
     if not context.get("market_theme_candidates"):
-        user["task"] = "Create a daily investment morning report from this prefiltered context. Return top_market_themes as an empty list."
+        user["task"] = (
+            "Create a daily investment morning report from this prefiltered context. "
+            "Focus only on executive_summary, portfolio_news, thesis_impact, watchlist_news, attention_flags, and sources."
+        )
         user["writing_guidance"] = [
             item for item in user["writing_guidance"] if "top_market_themes" not in item
         ]
@@ -2330,11 +2400,108 @@ def normalize_interest_label(theme: dict[str, Any]) -> None:
         theme["theme"] = sector_label(raw_theme)
 
 
+def report_item_text(item: dict[str, Any]) -> str:
+    parts = [
+        item.get("title"),
+        item.get("headline"),
+        item.get("why_it_matters"),
+        item.get("reason"),
+        item.get("source"),
+        item.get("source_url"),
+        item.get("url"),
+    ]
+    parts.extend(item.get("article_summary") if isinstance(item.get("article_summary"), list) else [])
+    return clean_text(" ".join(str(part or "") for part in parts))
+
+
+def normalize_portfolio_attention_label(item: dict[str, Any]) -> None:
+    if item.get("attention_label") != "review_thesis":
+        return
+    text = report_item_text(item)
+    if LOW_MATERIALITY_LEGAL_RE.search(text) and not MATERIAL_LEGAL_RE.search(text):
+        item["attention_label"] = "monitor"
+        return
+    if ROUTINE_ANALYST_RE.search(text) and not FUNDAMENTAL_DETERIORATION_RE.search(text):
+        item["attention_label"] = "monitor"
+        return
+    if POSITIVE_OR_SUPPORTIVE_RE.search(text) and not NEGATIVE_THESIS_TRIGGER_RE.search(text):
+        item["attention_label"] = "review_valuation" if VALUATION_RE.search(text) else "monitor"
+
+
+def normalize_attention_flags(report: dict[str, Any]) -> None:
+    portfolio_label_by_ticker: dict[str, str] = {}
+    for item in report.get("portfolio_news", []):
+        ticker = str(item.get("ticker") or "").upper()
+        if ticker and item.get("attention_label"):
+            portfolio_label_by_ticker[ticker] = str(item["attention_label"])
+
+    for item in report.get("attention_flags", []):
+        item["label"] = validate_label(item.get("label"))
+        ticker = str(item.get("ticker") or "").upper()
+        related_label = portfolio_label_by_ticker.get(ticker)
+        if item["label"] == "review_thesis":
+            text = report_item_text(item)
+            if related_label in {"no_action", "monitor"}:
+                item["label"] = related_label
+            elif LOW_MATERIALITY_LEGAL_RE.search(text) and not MATERIAL_LEGAL_RE.search(text):
+                item["label"] = "monitor"
+            elif POSITIVE_OR_SUPPORTIVE_RE.search(text) and not NEGATIVE_THESIS_TRIGGER_RE.search(text):
+                item["label"] = "review_valuation" if VALUATION_RE.search(text) else "monitor"
+
+
+def is_low_materiality_legal_item(item: dict[str, Any]) -> bool:
+    text = report_item_text(item)
+    return bool(LOW_MATERIALITY_LEGAL_RE.search(text) and not MATERIAL_LEGAL_RE.search(text))
+
+
+def label_priority(label: Any) -> int:
+    return {
+        "review_thesis": 60,
+        "deeper_analysis_needed": 50,
+        "review_valuation": 45,
+        "negative_signal": 40,
+        "positive_signal": 38,
+        "mixed_signal": 35,
+        "monitor": 30,
+        "needs_more_evidence": 25,
+        "no_material_change": 10,
+        "no_action": 5,
+    }.get(str(label or ""), 0)
+
+
+def keep_best_item_per_ticker(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    best_by_ticker: dict[str, tuple[int, int, dict[str, Any]]] = {}
+    passthrough: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        ticker = str(item.get("ticker") or "").upper()
+        if not ticker:
+            passthrough.append(item)
+            continue
+        score = label_priority(item.get("attention_label") or item.get("label"))
+        current = best_by_ticker.get(ticker)
+        if current is None or score > current[0]:
+            best_by_ticker[ticker] = (score, index, item)
+    return passthrough + [item for _score, _index, item in sorted(best_by_ticker.values(), key=lambda entry: entry[1])]
+
+
+def remove_meta_report_phrases(items: list[Any]) -> list[Any]:
+    blocked = re.compile(
+        r"\b("
+        r"top_market_themes .*empty|intentionally empty|per instruction|"
+        r"snippet does not provide|article does not provide|source does not provide|"
+        r"the supplied context|supplied article|supplied snippet"
+        r")\b",
+        re.IGNORECASE,
+    )
+    return [item for item in items if not blocked.search(str(item or ""))]
+
+
 def validate_report(report: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     report["report_date"] = str(report.get("report_date") or context["report_date"])
     for key in ("executive_summary", "portfolio_news", "thesis_impact", "watchlist_news", "top_market_themes", "attention_flags", "sources"):
         if not isinstance(report.get(key), list):
             report[key] = []
+    report["executive_summary"] = remove_meta_report_phrases(report["executive_summary"])
     if context.get("market_theme_candidates"):
         normalize_market_themes(report, context)
     else:
@@ -2348,20 +2515,32 @@ def validate_report(report: dict[str, Any], context: dict[str, Any]) -> dict[str
             elif not isinstance(item.get("article_summary"), list):
                 item["article_summary"] = []
         enrich_report_item_sources(report[section], context)
+    for item in report["portfolio_news"]:
+        normalize_portfolio_attention_label(item)
+    for section in ("portfolio_news", "watchlist_news"):
+        report[section] = keep_best_item_per_ticker(
+            [item for item in report[section] if not is_low_materiality_legal_item(item)]
+    )
     filter_news_sections_to_context(report, context)
     fill_missing_watchlist_news(report, context)
+    report["watchlist_news"] = keep_best_item_per_ticker(
+        [item for item in report["watchlist_news"] if not is_low_materiality_legal_item(item)]
+    )
     for item in report["thesis_impact"]:
         if isinstance(item.get("thesis_points_affected"), str):
             item["thesis_points_affected"] = [item["thesis_points_affected"]]
         elif not isinstance(item.get("thesis_points_affected"), list):
             item["thesis_points_affected"] = []
-    for item in report["attention_flags"]:
-        item["label"] = validate_label(item.get("label"))
+    normalize_attention_flags(report)
+    report["attention_flags"] = [
+        item for item in keep_best_item_per_ticker(report["attention_flags"]) if not is_low_materiality_legal_item(item)
+    ]
     if not report["sources"]:
         report["sources"] = [
             {"title": item.get("title", ""), "source": item.get("source", ""), "url": item.get("url", "")}
             for item in context.get("ranked_news", [])[:12]
         ]
+    report["sources"] = [item for item in report["sources"] if not is_low_materiality_legal_item(item)]
     return report
 
 

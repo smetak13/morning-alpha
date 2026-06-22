@@ -9,7 +9,7 @@ fmp:
   request_timeout_seconds: 20
 
 openai:
-  model: gpt-4.1-mini
+  model: gpt-5.4
   deep_research_model: gpt-5.4
   max_input_items: 35
   pricing_per_1m_tokens:
