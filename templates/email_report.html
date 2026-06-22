@@ -35,6 +35,7 @@
       .thesis-card { margin: 18px 0; }
       .sector-article { border-top: 1px solid #303030; margin-top: 14px; padding-top: 12px; }
       .flag { background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase; }
+      .importance-badge { border-radius: 4px; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; margin-left: 6px; padding: 4px 8px; text-transform: uppercase; }
       .source { color: #a7a7a0; font-size: 12px; }
       .empty { color: #a7a7a0; }
       .disclaimer { border-top: 1px solid #343434; color: #a7a7a0; font-size: 12px; margin-top: 30px; padding-top: 16px; }
@@ -102,6 +103,8 @@
               {% endif %}
               <p>
                 <span class="flag" title="{{ item.attention_label|label_description }}" style="background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase;">{{ item.attention_label|human_label }}</span>
+                {% set importance_color = "#f4c430" if item.importance == "high" else "#a7a7a0" if item.importance == "medium" else "#5f5f58" %}
+                <span class="importance-badge" style="background: rgba(255,255,255,0.04); border: 1px solid {{ importance_color }}; border-radius: 4px; color: {{ importance_color }}; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; margin-left: 6px; padding: 4px 8px; text-transform: uppercase;">{{ item.importance|human_label }}</span>
                 {% if item.source_url %}
                   <span class="source"> | <a href="{{ item.source_url }}" style="color: #f4c430; text-decoration: none;">Full article{% if item.source %} - {{ item.source }}{% endif %}</a></span>
                 {% endif %}
@@ -153,6 +156,8 @@
               {% endif %}
               <p>
                 <span class="flag" title="{{ item.attention_label|label_description }}" style="background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase;">{{ item.attention_label|human_label }}</span>
+                {% set importance_color = "#f4c430" if item.importance == "high" else "#a7a7a0" if item.importance == "medium" else "#5f5f58" %}
+                <span class="importance-badge" style="background: rgba(255,255,255,0.04); border: 1px solid {{ importance_color }}; border-radius: 4px; color: {{ importance_color }}; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; margin-left: 6px; padding: 4px 8px; text-transform: uppercase;">{{ item.importance|human_label }}</span>
                 {% if item.source_url %}
                   <span class="source"> | <a href="{{ item.source_url }}" style="color: #f4c430; text-decoration: none;">Full article{% if item.source %} - {{ item.source }}{% endif %}</a></span>
                 {% endif %}
