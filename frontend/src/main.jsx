@@ -224,6 +224,9 @@ function calendarDays(monthDate) {
 }
 
 function currentRoute() {
+  if (window.location.pathname === "/landing") {
+    return { view: "landing", reportId: "", researchId: "" };
+  }
   const reportMatch = window.location.pathname.match(/^\/reports\/([^/]+)\/?$/);
   if (reportMatch) {
     return { view: "reports", reportId: decodeURIComponent(reportMatch[1]), researchId: "" };
@@ -398,8 +401,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    refreshSession();
-  }, [refreshSession]);
+    if (route.view !== "landing") {
+      refreshSession();
+    }
+  }, [refreshSession, route.view]);
 
   useEffect(() => {
     const syncRoute = () => setRoute(currentRoute());
@@ -412,6 +417,10 @@ function App() {
     setSession({ status: "anonymous", user: null });
   }, []);
 
+  if (route.view === "landing") {
+    return <LandingPage />;
+  }
+
   if (session.status === "checking") {
     return <LoadingScreen />;
   }
@@ -421,6 +430,89 @@ function App() {
   }
 
   return <MainPage route={route} user={session.user} onLogout={handleLogout} />;
+}
+
+const LANDING_SECTIONS = [
+  {
+    title: "Personalized Morning Reports",
+    text: "Start each market day with a concise report built around your portfolio and watchlist. Morning Alpha highlights the news that actually matters to the companies you follow, filters out low-quality noise, and explains why each event may be relevant.",
+  },
+  {
+    title: "Thesis Impact",
+    text: "Don't just read what happened. Understand whether it affects your investment thesis. Morning Alpha connects news to your thesis points, red flags, key metrics, and follow-up questions so you can quickly see what deserves attention.",
+  },
+  {
+    title: "Watchlist Monitoring",
+    text: "Track potential investments before you buy. Morning Alpha watches your watchlist for signals that support or weaken your entry conditions, helping you notice when a company becomes more interesting or when the setup deteriorates.",
+  },
+  {
+    title: "Deep Company Research",
+    text: "Go beyond surface-level summaries. Deep Research brings together financial statements, historical metrics, valuation tools, earnings transcripts, filings, stock grades, recent developments, and AI analysis into one comprehensive company view.",
+  },
+  {
+    title: "Built For Long-Term Investors",
+    text: "Morning Alpha is not a trading signal tool. It is designed for investors who think in years, track business quality, monitor thesis changes, and want a calmer, more structured way to follow the market.",
+  },
+  {
+    title: "From News To Action",
+    text: "Each report helps you separate what to ignore, what to monitor, and what may deserve a deeper review. The goal is simple: fewer tabs, less noise, better investment focus.",
+  },
+];
+
+function ScreenshotPlaceholder({ label }) {
+  return (
+    <div className="landing-screenshot" aria-label={`${label} screenshot placeholder`}>
+      <div className="landing-window-bar">
+        <span />
+        <span />
+        <span />
+      </div>
+      <div className="landing-window-body">
+        <div className="landing-line landing-line-wide" />
+        <div className="landing-line" />
+        <div className="landing-line landing-line-short" />
+        <div className="landing-grid-preview">
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LandingPage() {
+  return (
+    <main className="landing-page">
+      <header className="landing-header">
+        <img className="landing-logo" src="/ma-logo.png" alt="Morning Alpha" />
+      </header>
+
+      <section className="landing-hero" aria-labelledby="landing-title">
+        <div className="landing-hero-copy">
+          <h1 id="landing-title">Wake up to what matters.</h1>
+          <p>Personalized investment intelligence for long-term investors who want signal, not noise.</p>
+          <a className="landing-cta" href="/">
+            Get Started
+          </a>
+        </div>
+        <ScreenshotPlaceholder label="Morning Alpha app" />
+      </section>
+
+      <section className="landing-sections" aria-label="Product overview">
+        {LANDING_SECTIONS.map((section) => (
+          <article className="landing-feature" key={section.title}>
+            <div className="landing-feature-copy">
+              <h2>{section.title}</h2>
+              <p>{section.text}</p>
+            </div>
+            <ScreenshotPlaceholder label={section.title} />
+          </article>
+        ))}
+      </section>
+    </main>
+  );
 }
 
 function LoadingScreen() {
