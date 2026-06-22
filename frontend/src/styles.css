@@ -124,6 +124,7 @@ button:disabled {
 
 .landing-hero-copy {
   max-width: 650px;
+  transform: translateY(-24px);
 }
 
 .landing-hero-copy h1 {
@@ -193,6 +194,193 @@ button:disabled {
 
 .landing-feature .landing-grid-preview span {
   min-height: 68px;
+}
+
+.hero-report-stage {
+  min-height: clamp(360px, 36vw, 540px);
+  perspective: 1400px;
+  position: relative;
+  transform: translateY(-50px) scale(0.86);
+  transform-origin: center;
+}
+
+.hero-report-shadow {
+  background: radial-gradient(ellipse, rgba(244, 196, 48, 0.28), transparent 62%);
+  bottom: 4%;
+  filter: blur(18px);
+  height: 30%;
+  left: 8%;
+  position: absolute;
+  right: 10%;
+  transform: rotate(-6deg);
+}
+
+.hero-report-card {
+  background:
+    linear-gradient(135deg, rgba(244, 196, 48, 0.08), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 44%),
+    #141414;
+  border: 1px solid rgba(244, 196, 48, 0.26);
+  border-radius: 8px;
+  box-shadow:
+    0 44px 110px rgba(0, 0, 0, 0.58),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+    0 0 48px rgba(244, 196, 48, 0.12);
+  display: grid;
+  gap: 16px;
+  padding: clamp(18px, 2.8vw, 30px);
+  position: relative;
+  transform: rotateX(7deg) rotateY(-12deg) rotateZ(1deg);
+  transform-origin: center;
+  transition: transform 260ms ease, box-shadow 260ms ease;
+  z-index: 2;
+}
+
+.hero-report-stage:hover .hero-report-card {
+  box-shadow:
+    0 54px 130px rgba(0, 0, 0, 0.64),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+    0 0 62px rgba(244, 196, 48, 0.16);
+  transform: rotateX(5deg) rotateY(-9deg) rotateZ(0.5deg) translateY(-4px);
+}
+
+.hero-report-card::before {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.16), transparent);
+  content: "";
+  height: 1px;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 76px;
+}
+
+.hero-report-header {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.hero-report-header img {
+  height: 34px;
+  object-fit: contain;
+  object-position: left center;
+  width: auto;
+}
+
+.hero-report-header div {
+  color: #a7a7a0;
+  display: grid;
+  font-size: 0.76rem;
+  gap: 3px;
+  justify-items: end;
+  text-align: right;
+}
+
+.hero-report-header strong {
+  color: #ffffff;
+  font-size: 0.86rem;
+}
+
+.hero-report-summary,
+.hero-report-news,
+.hero-report-attention {
+  background: #181818;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+}
+
+.hero-report-summary {
+  border-left: 4px solid #f4c430;
+  margin-top: 8px;
+  padding: 16px 18px;
+}
+
+.hero-report-card h3 {
+  color: #f4c430;
+  font-size: 0.84rem;
+  letter-spacing: 0;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.hero-report-card p {
+  color: #d7d7d0;
+  font-size: 0.9rem;
+  line-height: 1.48;
+  margin: 8px 0 0;
+}
+
+.hero-report-section {
+  display: grid;
+  gap: 12px;
+}
+
+.hero-report-title-row {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.hero-report-title-row span {
+  color: #a7a7a0;
+  font-size: 0.78rem;
+}
+
+.hero-report-news-list {
+  display: grid;
+  gap: 10px;
+}
+
+.hero-report-news {
+  align-items: start;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 13px 14px;
+}
+
+.hero-report-news strong {
+  color: #ffffff;
+  font-size: 0.92rem;
+}
+
+.hero-report-tags {
+  display: grid;
+  gap: 7px;
+  justify-items: end;
+}
+
+.hero-report-tags span,
+.hero-report-tags em {
+  background: #080808;
+  border-radius: 4px;
+  color: #ffffff;
+  font-size: 0.66rem;
+  font-style: normal;
+  font-weight: 800;
+  padding: 5px 7px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.hero-report-tags em {
+  border: 1px solid #f4c430;
+  color: #f4c430;
+}
+
+.hero-report-tags .hero-report-importance-medium {
+  border-color: #a7a7a0;
+  color: #a7a7a0;
+}
+
+.hero-report-tags .hero-report-importance-low {
+  border-color: #5f5f58;
+  color: #7d7d76;
+}
+
+.hero-report-attention {
+  padding: 14px;
 }
 
 .landing-screenshot::after {
@@ -315,6 +503,20 @@ button:disabled {
   .landing-feature:nth-child(even) .landing-feature-copy {
     order: initial;
   }
+
+  .hero-report-stage {
+    min-height: auto;
+    transform: none;
+  }
+
+  .hero-report-card {
+    transform: rotateX(0) rotateY(0) rotateZ(0);
+  }
+
+  .hero-report-stage:hover .hero-report-card {
+    transform: translateY(-2px);
+  }
+
 }
 
 .shell-centered {
@@ -3382,6 +3584,10 @@ input[type="range"] {
     padding-top: 42px;
   }
 
+  .landing-hero-copy {
+    transform: none;
+  }
+
   .landing-hero-copy h1 {
     font-size: 3rem;
     line-height: 1;
@@ -3394,6 +3600,61 @@ input[type="range"] {
 
   .landing-screenshot {
     min-height: 260px;
+  }
+
+  .hero-report-stage {
+    margin-top: 6px;
+  }
+
+  .hero-report-card {
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .hero-report-card::before {
+    top: 64px;
+  }
+
+  .hero-report-header {
+    gap: 12px;
+  }
+
+  .hero-report-header img {
+    height: 28px;
+    max-width: 150px;
+  }
+
+  .hero-report-header div {
+    font-size: 0.68rem;
+  }
+
+  .hero-report-header strong {
+    font-size: 0.75rem;
+  }
+
+  .hero-report-summary {
+    padding: 12px;
+  }
+
+  .hero-report-card h3 {
+    font-size: 0.74rem;
+  }
+
+  .hero-report-card p {
+    font-size: 0.8rem;
+    line-height: 1.42;
+  }
+
+  .hero-report-news {
+    gap: 10px;
+    grid-template-columns: 1fr;
+    padding: 11px;
+  }
+
+  .hero-report-tags {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-start;
   }
 
   .landing-grid-preview {

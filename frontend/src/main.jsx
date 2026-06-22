@@ -482,6 +482,76 @@ function ScreenshotPlaceholder({ label }) {
   );
 }
 
+function HeroReportMockup() {
+  const portfolioItems = [
+    {
+      ticker: "META",
+      label: "MONITOR",
+      importance: "HIGH",
+      text: "AI infrastructure spending increases opportunity while keeping free cash flow execution in focus.",
+    },
+    {
+      ticker: "MELI",
+      label: "REVIEW THESIS",
+      importance: "HIGH",
+      text: "Commerce margin pressure and higher credit losses directly test the profitability thesis.",
+    },
+    {
+      ticker: "AMZN",
+      label: "MONITOR",
+      importance: "MEDIUM",
+      text: "Custom AI chips could deepen AWS differentiation if external customer adoption grows.",
+    },
+  ];
+
+  return (
+    <div className="hero-report-stage" aria-label="Morning Alpha email report preview">
+      <div className="hero-report-shadow" />
+      <section className="hero-report-card">
+        <header className="hero-report-header">
+          <img src="/ma-logo.png" alt="Morning Alpha" />
+          <div>
+            <span>Morning Report</span>
+            <strong>June 22, 2026</strong>
+          </div>
+        </header>
+
+        <div className="hero-report-summary">
+          <h3>Executive Summary</h3>
+          <p>Portfolio news is focused on AI infrastructure, profitability quality, and thesis-level follow-up items.</p>
+        </div>
+
+        <div className="hero-report-section">
+          <div className="hero-report-title-row">
+            <h3>Thesis Impact</h3>
+            <span>Signal, not noise</span>
+          </div>
+          <div className="hero-report-news-list">
+            {portfolioItems.map((item) => (
+              <article className="hero-report-news" key={item.ticker}>
+                <div>
+                  <strong>{item.ticker}</strong>
+                  <p>{item.text}</p>
+                </div>
+                <div className="hero-report-tags">
+                  <span>{item.label}</span>
+                  <em className={`hero-report-importance-${item.importance.toLowerCase()}`}>{item.importance}</em>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+
+        <article className="hero-report-attention">
+          <h3>Attention Flags</h3>
+          <p>Review management commentary on lending losses, capex intensity, and customer adoption.</p>
+        </article>
+      </section>
+
+    </div>
+  );
+}
+
 function LandingPage() {
   return (
     <main className="landing-page">
@@ -497,7 +567,7 @@ function LandingPage() {
             Get Started
           </a>
         </div>
-        <ScreenshotPlaceholder label="Morning Alpha app" />
+        <HeroReportMockup />
       </section>
 
       <section className="landing-sections" aria-label="Product overview">
