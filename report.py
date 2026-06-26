@@ -395,6 +395,7 @@ class Holding:
     ticker: str
     position_size_pct: float
     thesis: dict[str, Any]
+    stock_id: str | None = None
     company_name: str | None = None
 
 
@@ -516,6 +517,7 @@ def load_portfolio_from_db(user_id: str) -> dict[str, Holding]:
             cursor.execute(
                 """
                 select
+                    stocks.id::text as stock_id,
                     stocks.symbol,
                     stocks.company_name,
                     portfolio_items.position_size_pct,
@@ -543,6 +545,7 @@ def load_portfolio_from_db(user_id: str) -> dict[str, Holding]:
         holdings[symbol] = Holding(
             ticker=symbol,
             position_size_pct=float(row["position_size_pct"] or 0),
+            stock_id=str(row["stock_id"]) if row.get("stock_id") else None,
             company_name=str(row["company_name"]).strip() or None,
             thesis={
                 "why_i_own_it": normalize_text_array(row["why_i_own_it"]),
@@ -572,6 +575,7 @@ def load_watchlist_from_db(user_id: str) -> dict[str, Holding]:
             cursor.execute(
                 """
                 select
+                    stocks.id::text as stock_id,
                     stocks.symbol,
                     stocks.company_name,
                     watchlist_items.why_i_watch_it,
@@ -598,6 +602,7 @@ def load_watchlist_from_db(user_id: str) -> dict[str, Holding]:
         holdings[symbol] = Holding(
             ticker=symbol,
             position_size_pct=0,
+            stock_id=str(row["stock_id"]) if row.get("stock_id") else None,
             company_name=str(row["company_name"]).strip() or None,
             thesis={
                 "why_i_watch_it": normalize_text_array(row["why_i_watch_it"]),
@@ -1644,6 +1649,7 @@ def compact_context(
         "portfolio": [
             {
                 "ticker": holding.ticker,
+                "stock_id": holding.stock_id,
                 "position_size_pct": holding.position_size_pct,
                 "thesis": holding.thesis,
             }
@@ -1652,6 +1658,7 @@ def compact_context(
         "watchlist": [
             {
                 "ticker": holding.ticker,
+                "stock_id": holding.stock_id,
                 "thesis": holding.thesis,
             }
             for holding in watchlist.values()
@@ -1930,6 +1937,11 @@ def generate_report_with_openai(
             "For portfolio_news and watchlist_news, keep why_it_matters short and implication-focused, then add article_summary with 2-4 factual bullet points based on the snippet/title/source metadata.",
             "For portfolio_news and watchlist_news, include only articles whose context.ranked_news ticker exactly matches that section item ticker.",
             "Never include portfolio tickers in watchlist_news.",
+            "Use context.company_memory only as historical context for today's articles. Memory is not evidence by itself.",
+            "If a memory item clearly describes the same business issue as today's article and today's article adds no new facts, treat the article as duplicate/follow-up coverage and lower urgency or omit it.",
+            "If today's article adds new numbers, earnings evidence, guidance, management commentary, or reported financial impact to a remembered issue, treat it as a development and explain the continuity briefly.",
+            "Do not claim that a prior thesis was confirmed unless today's article or reported financial data directly supports that link.",
+            "If company_memory is unrelated to today's article, ignore it.",
             "Separate importance from action. importance means how much the item matters today: high, medium, or low. attention_label means what the user should do: no_action, monitor, review_thesis, review_valuation, or deeper_analysis_needed.",
             "Use high importance selectively. Routine product news, early-stage talks, analyst opinions, normal AI infrastructure updates, or generic growth commentary are usually medium unless they include guidance changes, material financial impact, major customer loss, regulatory action, accounting issues, or thesis-changing evidence.",
             "High importance can still have attention_label monitor. For example, strong revenue growth plus materially higher AI capex is usually high importance but monitor unless it truly requires thesis or valuation review.",
@@ -2890,6 +2902,13 @@ def run_report_for_user(
         max_items=int(config.get("openai", {}).get("max_input_items", 35)),
         config=config,
     )
+    try:
+        from company_memory import build_company_memory_context
+
+        context["company_memory"] = build_company_memory_context(user_id=user_id, context=context, config=config)
+    except Exception as exc:
+        print(f"Company memory context skipped: {exc}")
+        context["company_memory"] = []
 
     if skip_openai:
         report = validate_report(default_report(context), context)
@@ -2907,6 +2926,21 @@ def run_report_for_user(
         html=html,
         report_date=report_date,
     )
+
+    memory_summary: dict[str, Any] | None = None
+    try:
+        from company_memory import update_company_memory_from_report
+
+        memory_summary = update_company_memory_from_report(
+            user_id=user_id,
+            report=report,
+            context=context,
+            config=config,
+            report_id=report_id,
+            report_date=report_date,
+        )
+    except Exception as exc:
+        print(f"Company memory update skipped: {exc}")
 
     email_html = render_email(report, subject, open_app_url=report_app_url(report_id))
 
@@ -2932,6 +2966,7 @@ def run_report_for_user(
         "report_date": report_date.isoformat(),
         "report_id": report_id,
         "usage": usage,
+        "company_memory": memory_summary,
         "output_html": str(output_html),
         "output_json": str(output_json),
         "context_json": str(context_json),

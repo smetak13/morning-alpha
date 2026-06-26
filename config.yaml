@@ -22,6 +22,14 @@ openai:
       cached_input: 0.25
       output: 15
 
+company_memory:
+  enabled: true
+  model: gpt-4.1-mini
+  lookback_days: 365
+  shortlist_size: 8
+  max_context_items_per_ticker: 3
+  max_memory_items_per_stock: 30
+
 email:
   subject_prefix: "📈 Personalized investment morning report"
 
