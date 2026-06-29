@@ -3,6 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="supported-color-schemes" content="dark">
     <base target="_blank">
     <title>{{ subject }}</title>
     <style>
@@ -12,17 +14,20 @@
       *::-webkit-scrollbar-thumb { background: #3a3a3a; border: 2px solid #111111; border-radius: 999px; }
       *::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
       body { margin: 0; padding: 0; background: #080808; color: #f4f4f0; font-family: Arial, Helvetica, sans-serif; }
-      .page { background: #080808; padding: 28px 12px; }
-      .container { max-width: 760px; margin: 0 auto; background: #111111; border: 1px solid #2a2a2a; border-radius: 8px; overflow: hidden; }
-      .header { background: #151515; border-bottom: 1px solid #2a2a2a; padding: 26px 28px 22px; }
-      .brand { margin-bottom: 26px; }
+      .page { background: #080808; padding: 24px 10px; }
+      .container { max-width: 980px; margin: 0 auto; background: #111111; border: 1px solid #2a2a2a; border-radius: 8px; overflow: hidden; }
+      .header { background: #151515; border-bottom: 1px solid #2a2a2a; padding: 26px 24px 22px; }
       .logo { border: 0; display: block; height: auto; line-height: 0; max-width: 270px; width: 270px; }
-      .open-app-row { margin-top: 22px; }
+      .report-kicker { color: #8f8f87; display: block; font-size: 10px; font-weight: bold; letter-spacing: 0.08em; line-height: 1.2; text-transform: uppercase; }
+      .report-date-main { color: #ffffff; display: block; font-size: 13px; font-weight: bold; line-height: 1.35; margin-top: 3px; text-align: left; }
+      .brand-logo-table { max-width: 100%; width: 100%; }
+      .report-meta-table { max-width: 100%; width: 100%; }
+      .open-app-row { margin-top: 26px; }
       .open-app-button-img { border: 0; display: block; height: 40px; line-height: 0; max-width: 112px; width: 112px; }
-      .body { padding: 24px 28px 28px; }
-      h1 { color: #ffffff; font-size: 28px; line-height: 1.12; margin: 0 0 10px; }
+      .body { padding: 24px; }
+      h1 { color: #ffffff; font-size: 28px; line-height: 1.12; margin: 0 0 20px; }
       h2 { border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px; }
-      h3 { color: #ffffff; font-size: 16px; margin: 18px 0 8px; }
+      h3 { color: #ffffff; font-size: 17px; line-height: 1.25; margin: 0; }
       h4 { color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 8px; }
       p, li { color: #d7d7d0; font-size: 14px; line-height: 1.55; }
       p { margin: 8px 0; }
@@ -31,37 +36,104 @@
       a { color: #f4c430; text-decoration: none; }
       strong { color: #ffffff; }
       .meta { color: #a7a7a0; font-size: 12px; line-height: 1.5; margin: 0; }
-      .card { background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 14px 0; padding: 16px; }
-      .thesis-card { margin: 18px 0; }
-      .sector-article { border-top: 1px solid #303030; margin-top: 14px; padding-top: 12px; }
-      .flag { background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase; }
-      .importance-badge { border-radius: 4px; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; margin-left: 6px; padding: 4px 8px; text-transform: uppercase; }
+      .summary-box { background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; margin: 0 0 18px; padding: 14px 16px; }
+      .company-nav { margin: 18px 0 0; }
+      .company-chip { background: #1a1a1a; border: 1px solid #343434; border-radius: 999px; color: #f4f4f0; display: inline-block; font-size: 12px; font-weight: bold; margin: 0 6px 8px 0; padding: 7px 11px; text-decoration: none; }
+      .company-card { background: #181818; border: 1px solid #2a2a2a; border-radius: 8px; margin: 14px 0 18px; overflow: hidden; }
+      .company-head { background: #151515; border-bottom: 1px solid #2a2a2a; padding: 14px 16px; }
+      .company-body { padding: 16px; }
+      .logo-tile { background: #222222; border: 0; border-radius: 7px; height: 38px; width: 38px; }
+      .company-logo { border: 0; display: block; height: 28px; line-height: 28px; max-height: 28px; max-width: 28px; min-height: 28px; min-width: 28px; object-fit: contain; width: 28px; }
+      .ticker-fallback { background: #242424; border: 1px solid #2a2a2a; border-radius: 8px; color: #ffffff; display: inline-block; font-size: 12px; font-weight: bold; height: 36px; line-height: 36px; text-align: center; width: 36px; }
+      .signal { border-radius: 999px; display: inline-block; font-size: 9px; font-weight: bold; letter-spacing: 0; padding: 6px 10px; text-transform: uppercase; white-space: nowrap; }
+      .signal-positive { background: rgba(74, 222, 128, 0.12); border: 1px solid #4ade80; color: #86efac; }
+      .signal-negative { background: rgba(248, 113, 113, 0.12); border: 1px solid #f87171; color: #fca5a5; }
+      .signal-mixed { background: rgba(244, 196, 48, 0.12); border: 1px solid #f4c430; color: #f4d76b; }
+      .signal-neutral { background: rgba(255, 255, 255, 0.05); border: 1px solid #5f5f58; color: #d7d7d0; }
+      .subpanel { background: #111111; border: 1px solid #2a2a2a; border-radius: 8px; margin-top: 12px; padding: 12px; }
+      .subpanel-title { color: #f4c430; display: block; font-size: 11px; font-weight: bold; letter-spacing: 0.04em; margin-bottom: 5px; text-transform: uppercase; }
+      .company-title-table { max-width: 100%; width: 100%; }
+      .company-signal-table { max-width: 100%; width: 100%; }
+      .report-meta-cell, .signal-cell { text-align: left !important; }
       .source { color: #a7a7a0; font-size: 12px; }
       .empty { color: #a7a7a0; }
+      .sector-article { border-top: 1px solid #303030; margin-top: 14px; padding-top: 12px; }
+      .card { background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 14px 0; padding: 16px; }
       .disclaimer { border-top: 1px solid #343434; color: #a7a7a0; font-size: 12px; margin-top: 30px; padding-top: 16px; }
-      @media (max-width: 560px) {
-        .page { padding: 0; }
-        .container { border-left: 0; border-right: 0; border-radius: 0; }
-        .header, .body { padding-left: 18px; padding-right: 18px; }
-        .logo { max-width: 230px; width: 230px; }
+      @media only screen and (min-width: 761px) {
+        .report-meta-table, .company-signal-table { float: none !important; }
+      }
+      @media only screen and (max-width: 760px), only screen and (max-device-width: 760px) {
+        .page { padding: {% if is_email_delivery %}0{% else %}0 18px{% endif %} !important; }
+        .container { border-left: 0 !important; border-right: 0 !important; border-radius: 0 !important; max-width: 100% !important; width: 100% !important; }
+        .body { padding: {% if is_email_delivery %}16px 0 20px{% else %}16px 18px 20px{% endif %} !important; }
+        .logo { max-width: 220px !important; width: 220px !important; }
+        .brand-report-row, .brand-report-row tbody { display: block !important; width: 100% !important; }
+        .brand-report-row > tbody > tr { display: block !important; width: 100% !important; }
+        .brand-report-row td { display: block !important; text-align: left !important; width: 100% !important; }
+        .report-meta-table { margin-top: 11px !important; float: none !important; }
+        .report-meta-table .report-meta-cell { padding-top: 15px !important; text-align: left !important; }
+        .report-meta-cell { padding-top: 15px !important; text-align: left !important; }
+        .report-kicker { font-size: 9px !important; text-align: left !important; }
+        .report-date-main { font-size: 13px !important; text-align: left !important; }
+        .open-app-row { margin-top: 22px !important; }
+        .company-card-table, .company-card-table tbody { display: block !important; width: 100% !important; }
+        .company-card-table > tbody > tr { display: block !important; width: 100% !important; }
+        .company-title-table, .company-signal-table { display: block !important; float: none !important; width: 100% !important; }
+        .report-meta-table, .company-signal-table { float: none !important; }
+        .company-signal-table { margin-top: 10px !important; }
+        .company-signal-table .signal-cell { padding-top: 0 !important; text-align: left !important; }
+        .report-meta-cell, .signal-cell { text-align: left !important; }
+        .company-title-cell { display: block !important; width: 100% !important; }
+        .signal { font-size: 9px !important; line-height: 1.2 !important; padding: 4px 7px !important; white-space: normal !important; }
+        .memory-action-cell { padding-top: 12px !important; text-align: left !important; }
+        .source-cell, .memory-action-cell { display: block !important; width: 100% !important; }
+      }
+      @media only screen and (max-width: 760px), only screen and (max-device-width: 760px) {
+        u + .email-body .brand-report-row, u + .email-body .brand-report-row tbody, u + .email-body .brand-report-row > tbody > tr { display: block !important; width: 100% !important; }
+        u + .email-body .brand-report-row td { display: block !important; text-align: left !important; width: 100% !important; }
+        u + .email-body .brand-logo-table, u + .email-body .report-meta-table { display: block !important; float: none !important; width: 100% !important; }
+        u + .email-body .report-meta-table { margin-top: 11px !important; }
+        u + .email-body .report-meta-table .report-meta-cell, u + .email-body .report-date-main, u + .email-body .report-kicker { padding-top: 0 !important; text-align: left !important; }
+        u + .email-body .company-card-table, u + .email-body .company-card-table tbody, u + .email-body .company-card-table > tbody > tr { display: block !important; width: 100% !important; }
+        u + .email-body .company-title-table, u + .email-body .company-signal-table { display: block !important; float: none !important; width: 100% !important; }
+        u + .email-body .company-signal-table { margin-top: 10px !important; }
+        u + .email-body .company-signal-table .signal-cell { padding-top: 0 !important; text-align: left !important; }
+        u + .email-body .company-title-cell { display: block !important; width: 100% !important; }
       }
     </style>
   </head>
-  <body style="margin: 0; padding: 0; background: #080808; color: #f4f4f0; font-family: Arial, Helvetica, sans-serif;">
+  <body class="email-body" style="margin: 0; padding: 0; background: #080808; color: #f4f4f0; font-family: Arial, Helvetica, sans-serif;">
     <div class="page" style="background: #080808; padding: 28px 12px;">
-      <div class="container" style="max-width: 760px; margin: 0 auto; background: #111111; border: 1px solid #2a2a2a; border-radius: 8px; overflow: hidden;">
-        <div class="header" style="background: #151515; border-bottom: 1px solid #2a2a2a; padding: 26px 28px 22px;">
-          <div class="brand" style="margin-bottom: 26px;">
-            {% if logo_src %}
-              <img class="logo" src="{{ logo_src }}" width="270" height="50" alt="Morning Alpha">
-            {% else %}
-              <strong>Morning Alpha</strong>
-            {% endif %}
-          </div>
-          <h1 style="color: #ffffff; font-size: 28px; line-height: 1.12; margin: 0 0 20px;">{{ display_title }}</h1>
-          <p class="meta" style="color: #a7a7a0; font-size: 12px; line-height: 1.5; margin: 0;">Report date: {{ report.report_date }}<br>Generated: {{ generated_at }}</p>
+      <div class="container" style="max-width: 980px; margin: 0 auto; background: #111111; border: 1px solid #2a2a2a; border-radius: 8px; overflow: hidden;">
+        <div class="header" style="background: #151515; border-bottom: 1px solid #2a2a2a; padding: 26px 24px 22px;">
+          <table class="brand-report-row" border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%">
+            <tr>
+              <td style="font-size: 0; line-height: 0; text-align: left; vertical-align: top;">
+                <table class="brand-logo-table" align="left" border="0" cellpadding="0" cellspacing="0" role="presentation" width="270" style="border-collapse: collapse; max-width: 100%; width: 270px;">
+                  <tr>
+                    <td style="line-height: normal; text-align: left; vertical-align: top;">
+                      {% if logo_src %}
+                        <img class="logo" src="{{ logo_src }}" width="270" height="50" alt="Morning Alpha">
+                      {% else %}
+                        <strong>Morning Alpha</strong>
+                      {% endif %}
+                    </td>
+                  </tr>
+                </table>
+                <table class="report-meta-table" border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse: collapse; max-width: 100%; width: 100%;">
+                  <tr>
+                    <td class="report-meta-cell" style="line-height: normal; padding-top: 15px; text-align: left; vertical-align: top;">
+                      <span class="report-kicker" style="color: #8f8f87; display: block; font-size: 10px; font-weight: bold; letter-spacing: 0.08em; line-height: 1.2; text-transform: uppercase;">Morning Report</span>
+                      <strong class="report-date-main" style="color: #ffffff; display: block; font-size: 13px; font-weight: bold; line-height: 1.35; margin-top: 3px; text-align: left;">{{ report_date_display }}</strong>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
           {% if open_app_url %}
-            <div class="open-app-row" style="margin-top: 22px;">
+            <div class="open-app-row" style="margin-top: 26px;">
               {% if open_app_button_src %}
                 <a href="{{ open_app_url }}" style="border: 0; display: inline-block; text-decoration: none;">
                   <img class="open-app-button-img" src="{{ open_app_button_src }}" width="112" height="40" alt="Open in App" style="border: 0; display: block; height: 40px; line-height: 0; max-width: 112px; width: 112px;">
@@ -81,88 +153,45 @@
           {% endif %}
         </div>
 
-        <div class="body" style="padding: 24px 28px 28px;">
+        <div class="body" style="padding: 24px;">
           <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Executive Summary</h2>
-          <ul>
-            {% for item in report.executive_summary %}
-              <li>{{ item }}</li>
-            {% endfor %}
-          </ul>
+          <div class="summary-box" style="background: #161616; border: 1px solid #2a2a2a; border-radius: 8px; margin: 0 0 18px; padding: 14px 16px;">
+            <ul style="margin: 0; padding-left: 20px;">
+              {% for item in report.executive_summary %}
+                <li>{{ item }}</li>
+              {% endfor %}
+            </ul>
+          </div>
 
-          <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Portfolio News</h2>
-          {% for item in report.portfolio_news %}
-            <div class="card" style="background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 14px 0; padding: 16px;">
-              <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 8px;">{{ item.ticker }}: {{ item.headline }}</h4>
-              <p>{{ item.why_it_matters }}</p>
-              {% if item.article_summary %}
-                <ul>
-                  {% for point in item.article_summary %}
-                    <li>{{ point }}</li>
-                  {% endfor %}
-                </ul>
+          {% if company_view.portfolio or company_view.watchlist %}
+            <div class="company-nav" style="margin: 18px 0 0;">
+              {% if company_view.portfolio %}
+                <p class="meta" style="color: #a7a7a0; font-size: 12px; line-height: 1.5; margin: 0 0 8px;">Portfolio</p>
+                {% for company in company_view.portfolio %}
+                  {% set company_href = (open_app_url ~ "#" ~ company.anchor) if open_app_url else ("#" ~ company.anchor) %}
+                  <a class="company-chip" data-company-anchor="{{ company.anchor }}" href="{{ company_href }}" target="{{ '_blank' if open_app_url else '_self' }}" style="background: #1a1a1a; border: 1px solid #343434; border-radius: 999px; color: #f4f4f0; display: inline-block; font-size: 12px; font-weight: bold; margin: 0 6px 8px 0; padding: 7px 11px; text-decoration: none;">{{ company.ticker }}</a>
+                {% endfor %}
               {% endif %}
-              <p>
-                <span class="flag" title="{{ item.attention_label|label_description }}" style="background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase;">{{ item.attention_label|human_label }}</span>
-                {% set importance_color = "#f4c430" if item.importance == "high" else "#a7a7a0" if item.importance == "medium" else "#5f5f58" %}
-                <span class="importance-badge" style="background: rgba(255,255,255,0.04); border: 1px solid {{ importance_color }}; border-radius: 4px; color: {{ importance_color }}; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; margin-left: 6px; padding: 4px 8px; text-transform: uppercase;">{{ item.importance|human_label }}</span>
-                {% if item.source_url %}
-                  <span class="source"> | <a href="{{ item.source_url }}" style="color: #f4c430; text-decoration: none;">Full article{% if item.source %} - {{ item.source }}{% endif %}</a></span>
-                {% endif %}
-              </p>
+              {% if company_view.watchlist %}
+                <p class="meta" style="color: #a7a7a0; font-size: 12px; line-height: 1.5; margin: 10px 0 8px;">Watchlist</p>
+                {% for company in company_view.watchlist %}
+                  {% set company_href = (open_app_url ~ "#" ~ company.anchor) if open_app_url else ("#" ~ company.anchor) %}
+                  <a class="company-chip" data-company-anchor="{{ company.anchor }}" href="{{ company_href }}" target="{{ '_blank' if open_app_url else '_self' }}" style="background: #1a1a1a; border: 1px solid #343434; border-radius: 999px; color: #f4f4f0; display: inline-block; font-size: 12px; font-weight: bold; margin: 0 6px 8px 0; padding: 7px 11px; text-decoration: none;">{{ company.ticker }}</a>
+                {% endfor %}
+              {% endif %}
             </div>
+          {% endif %}
+
+          <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Portfolio</h2>
+          {% for company in company_view.portfolio %}
+            {% include "email_company_card.html" %}
           {% else %}
             <p class="empty">No material portfolio-specific news found in the selected window.</p>
           {% endfor %}
 
-          <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Thesis Impact</h2>
-          {% for item in report.thesis_impact %}
-            <div class="card thesis-card" style="background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 18px 0 22px; padding: 16px;">
-                <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 12px; display: flex; align-items: center">{{ item.ticker }} <span class="flag" title="{{ item.impact|label_description }}" style="background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase; margin-left: 8px;">{{ item.impact|human_label }}</span></h4>
-              <p>{{ item.rationale }}</p>
-              {% if item.portfolio_relevance %}
-                <p><strong>Portfolio relevance:</strong> {{ item.portfolio_relevance }}</p>
-              {% endif %}
-              {% if item.thesis_points_affected %}
-                <p><strong>Thesis points affected:</strong></p>
-                <ul>
-                  {% for point in item.thesis_points_affected %}
-                    <li>{{ point }}</li>
-                  {% endfor %}
-                </ul>
-              {% endif %}
-              {% if item.possible_positive_readthrough %}
-                <p><strong>Possible positive read-through:</strong> {{ item.possible_positive_readthrough }}</p>
-              {% endif %}
-              {% if item.possible_negative_readthrough %}
-                <p><strong>Possible negative read-through:</strong> {{ item.possible_negative_readthrough }}</p>
-              {% endif %}
-              <p><strong>Monitor next:</strong> {{ item.monitor_next }}</p>
-            </div>
-          {% else %}
-            <p class="empty">No thesis-impacting items were identified.</p>
-          {% endfor %}
-
-          <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Watchlist News</h2>
-          {% for item in report.watchlist_news %}
-            <div class="card" style="background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 14px 0; padding: 16px;">
-              <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 8px;">{{ item.ticker }}: {{ item.headline }}</h4>
-              <p>{{ item.why_it_matters }}</p>
-              {% if item.article_summary %}
-                <ul>
-                  {% for point in item.article_summary %}
-                    <li>{{ point }}</li>
-                  {% endfor %}
-                </ul>
-              {% endif %}
-              <p>
-                <span class="flag" title="{{ item.attention_label|label_description }}" style="background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase;">{{ item.attention_label|human_label }}</span>
-                {% set importance_color = "#f4c430" if item.importance == "high" else "#a7a7a0" if item.importance == "medium" else "#5f5f58" %}
-                <span class="importance-badge" style="background: rgba(255,255,255,0.04); border: 1px solid {{ importance_color }}; border-radius: 4px; color: {{ importance_color }}; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; margin-left: 6px; padding: 4px 8px; text-transform: uppercase;">{{ item.importance|human_label }}</span>
-                {% if item.source_url %}
-                  <span class="source"> | <a href="{{ item.source_url }}" style="color: #f4c430; text-decoration: none;">Full article{% if item.source %} - {{ item.source }}{% endif %}</a></span>
-                {% endif %}
-              </p>
-            </div>
+          <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Watchlist</h2>
+          {% for company in company_view.watchlist %}
+            {% include "email_company_card.html" %}
           {% else %}
             <p class="empty">No material watchlist-specific news found in the selected window.</p>
           {% endfor %}
@@ -171,14 +200,13 @@
             <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Market Interests</h2>
             {% for item in report.top_market_themes %}
               <div class="card" style="background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 14px 0; padding: 16px;">
-                <h3 style="color: #ffffff; font-size: 16px; margin: 18px 0 8px;">{{ item.theme }}</h3>
+                <h3 style="color: #ffffff; font-size: 16px; margin: 0 0 8px;">{{ item.theme }}</h3>
                 {% if item.why_you_see_this %}
                   <p><strong>Why you see this:</strong> {{ item.why_you_see_this }}</p>
                 {% endif %}
                 {% if item.today_signals %}
-                  <p><strong>Today's signals:</strong></p>
                   <ul>
-                    {% for signal in item.today_signals %}
+                    {% for signal in item.today_signals[:3] %}
                       <li>{{ signal }}</li>
                     {% endfor %}
                   </ul>
@@ -187,7 +215,7 @@
                   <p><strong>Read-through:</strong> {{ item.read_through }}</p>
                 {% endif %}
                 {% if item.articles %}
-                  {% for article in item.articles[:3] %}
+                  {% for article in item.articles[:2] %}
                     <div class="sector-article">
                       <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 8px;">{{ article.headline }}</h4>
                       {% if article.summary %}
@@ -197,7 +225,7 @@
                     </div>
                   {% endfor %}
                 {% elif item.source_articles %}
-                  {% for article in item.source_articles[:3] %}
+                  {% for article in item.source_articles[:2] %}
                     <div class="sector-article">
                       <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 8px;">{{ article.title }}</h4>
                       <p class="source"><a href="{{ article.url }}" style="color: #f4c430; text-decoration: none;">Full article{% if article.source %} - {{ article.source }}{% endif %}</a></p>
@@ -208,15 +236,15 @@
             {% endfor %}
           {% endif %}
 
-          <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Attention Flags</h2>
-          {% for item in report.attention_flags %}
-            <div class="card" style="background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 14px 0; padding: 16px;">
-              <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 12px; display: flex; align-items: center">{{ item.ticker }} <span class="flag" title="{{ item.label|label_description }}" style="background: #080808; border-radius: 4px; color: #ffffff; display: inline-block; font-size: 11px; font-weight: bold; letter-spacing: 0; padding: 4px 8px; text-transform: uppercase; margin-left: 8px">{{ item.label|human_label }}</span></h4>
-              <p>{{ item.reason }}</p>
-            </div>
-          {% else %}
-            <p class="empty">No attention flags.</p>
-          {% endfor %}
+          {% if company_view.standalone_flags %}
+            <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Other Attention Flags</h2>
+            {% for item in company_view.standalone_flags %}
+              <div class="card" style="background: #181818; border: 1px solid #2a2a2a; border-left: 4px solid #f4c430; border-radius: 8px; margin: 14px 0; padding: 16px;">
+                <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 8px;">{{ item.ticker }}: {{ item.label|human_label }}</h4>
+                <p>{{ item.reason }}</p>
+              </div>
+            {% endfor %}
+          {% endif %}
 
           <h2 style="border-bottom: 1px solid #343434; color: #f4c430; font-size: 18px; letter-spacing: 0; margin: 30px 0 14px; padding-bottom: 8px;">Sources</h2>
           <ul>

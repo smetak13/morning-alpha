@@ -2774,6 +2774,109 @@ def get_report(report_id: str, request: Request) -> dict[str, Any]:
     return {"report": serialize_report_row(dict(row), include_html=True)}
 
 
+@app.get("/api/company-memory/{memory_id}")
+def get_company_memory(memory_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select
+                    company_memory_items.id::text as id,
+                    company_memory_items.stock_id::text as stock_id,
+                    stocks.symbol,
+                    stocks.company_name,
+                    company_memory_items.theme,
+                    company_memory_items.description,
+                    company_memory_items.latest_development,
+                    company_memory_items.thesis_points,
+                    company_memory_items.thesis_linked,
+                    company_memory_items.importance,
+                    company_memory_items.status,
+                    company_memory_items.evidence_count,
+                    company_memory_items.first_seen_at,
+                    company_memory_items.last_seen_at,
+                    company_memory_items.created_at,
+                    company_memory_items.updated_at
+                from public.company_memory_items
+                join public.stocks on stocks.id = company_memory_items.stock_id
+                where company_memory_items.id::text = %(id)s
+                  and company_memory_items.user_id = %(user_id)s
+                """,
+                {"id": memory_id, "user_id": user_id},
+            )
+            memory_row = cursor.fetchone()
+            if not memory_row:
+                raise HTTPException(status_code=404, detail="Company memory not found.")
+
+            cursor.execute(
+                """
+                select
+                    company_memory_events.id::text as id,
+                    company_memory_events.report_id::text as report_id,
+                    company_memory_events.event_date,
+                    company_memory_events.event_type,
+                    company_memory_events.relationship,
+                    company_memory_events.headline,
+                    company_memory_events.summary,
+                    company_memory_events.source_url,
+                    company_memory_events.source,
+                    company_memory_events.importance,
+                    company_memory_events.thesis_points,
+                    company_memory_events.metadata,
+                    company_memory_events.created_at
+                from public.company_memory_events
+                where company_memory_events.company_memory_item_id::text = %(id)s
+                  and company_memory_events.user_id = %(user_id)s
+                order by company_memory_events.event_date asc, company_memory_events.created_at asc
+                """,
+                {"id": memory_id, "user_id": user_id},
+            )
+            event_rows = cursor.fetchall()
+
+    memory = dict(memory_row)
+    symbol = str(memory["symbol"]).upper()
+    return {
+        "memory": {
+            "id": str(memory["id"]),
+            "stock_id": str(memory["stock_id"]),
+            "symbol": symbol,
+            "company_name": memory.get("company_name"),
+            "logo_url": stock_logo_url(symbol),
+            "theme": memory.get("theme"),
+            "description": memory.get("description"),
+            "latest_development": memory.get("latest_development"),
+            "thesis_points": memory.get("thesis_points") or [],
+            "thesis_linked": bool(memory.get("thesis_linked")),
+            "importance": memory.get("importance"),
+            "status": memory.get("status"),
+            "evidence_count": int(memory.get("evidence_count") or 0),
+            "first_seen_at": memory["first_seen_at"].isoformat() if hasattr(memory["first_seen_at"], "isoformat") else memory["first_seen_at"],
+            "last_seen_at": memory["last_seen_at"].isoformat() if hasattr(memory["last_seen_at"], "isoformat") else memory["last_seen_at"],
+            "events": [
+                {
+                    "id": str(row["id"]),
+                    "report_id": str(row["report_id"]) if row.get("report_id") else None,
+                    "event_date": row["event_date"].isoformat() if hasattr(row["event_date"], "isoformat") else row["event_date"],
+                    "event_type": row.get("event_type"),
+                    "relationship": row.get("relationship"),
+                    "headline": row.get("headline"),
+                    "summary": row.get("summary"),
+                    "source_url": row.get("source_url"),
+                    "source": row.get("source"),
+                    "importance": row.get("importance"),
+                    "thesis_points": row.get("thesis_points") or [],
+                    "metadata": row.get("metadata") or {},
+                    "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
+                }
+                for row in event_rows
+            ],
+        }
+    }
+
+
 RESEARCH_ITEM_SELECT = """
     select
         research_items.id::text as id,

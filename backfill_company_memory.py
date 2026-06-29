@@ -96,7 +96,7 @@ def main() -> None:
     if not reports:
         raise SystemExit("No reports found for the selected filters.")
 
-    totals = {"created": 0, "updated": 0, "ignored": 0}
+    totals = {"created": 0, "updated": 0, "ignored": 0, "events": 0}
     for index, row in enumerate(reports, start=1):
         report_date = row["report_date"] if isinstance(row["report_date"], dt.date) else dt.date.fromisoformat(str(row["report_date"]))
         print(f"[{index}/{len(reports)}] Processing report {row['id']} date={report_date.isoformat()}")
@@ -123,11 +123,14 @@ def main() -> None:
             usage_note = f" extraction_tokens={extraction_usage.get('total_tokens', 0)}"
         print(
             f"  created={summary.get('created', 0)} updated={summary.get('updated', 0)} "
-            f"ignored={summary.get('ignored', 0)}{usage_note}"
+            f"ignored={summary.get('ignored', 0)} events={summary.get('events', 0)}{usage_note}"
         )
 
     mode = "DRY RUN " if args.dry_run else ""
-    print(f"{mode}Done. created={totals['created']} updated={totals['updated']} ignored={totals['ignored']}")
+    print(
+        f"{mode}Done. created={totals['created']} updated={totals['updated']} "
+        f"ignored={totals['ignored']} events={totals['events']}"
+    )
 
 
 if __name__ == "__main__":

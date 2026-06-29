@@ -4,6 +4,7 @@ import argparse
 import base64
 import datetime as dt
 import html
+import io
 import json
 import math
 import os
@@ -1040,8 +1041,8 @@ def score_news_item(
     item.matched_thesis_terms = sorted(matched_terms)[:12]
 
 
-def truncate(text: str, max_chars: int) -> str:
-    clean = re.sub(r"\s+", " ", text).strip()
+def truncate(text: Any, max_chars: int) -> str:
+    clean = re.sub(r"\s+", " ", str(text or "")).strip()
     if len(clean) <= max_chars:
         return clean
     return clean[: max_chars - 1].rstrip() + "..."
@@ -2668,11 +2669,185 @@ def validate_report(report: dict[str, Any], context: dict[str, Any]) -> dict[str
     return report
 
 
+def label_tone(label: Any) -> str:
+    value = str(label or "").strip().lower()
+    if value in {"positive_signal", "supports"}:
+        return "positive"
+    if value in {"negative_signal", "challenges", "review_thesis", "review_valuation", "deeper_analysis_needed"}:
+        return "negative"
+    if value in {"mixed_signal", "unclear", "needs_more_evidence"}:
+        return "mixed"
+    return "neutral"
+
+
+def company_logo_url(ticker: str) -> str:
+    symbol = re.sub(r"[^A-Z0-9.\-]", "", str(ticker or "").upper())
+    return f"https://financialmodelingprep.com/image-stock/{symbol}.png" if symbol else ""
+
+
+def company_logo_cid(ticker: str) -> str:
+    symbol = re.sub(r"[^A-Z0-9.\-]", "", str(ticker or "").upper())
+    safe_symbol = re.sub(r"[^a-z0-9-]+", "-", symbol.lower().replace(".", "-")).strip("-")
+    return f"company-logo-{safe_symbol}-dark-v3" if safe_symbol else ""
+
+
+def company_logo_src(ticker: str, inline: bool = False) -> str:
+    cid = company_logo_cid(ticker)
+    if inline and cid:
+        return f"cid:{cid}"
+    return company_logo_url(ticker)
+
+
+def prepare_email_company_logo(content: bytes) -> bytes:
+    try:
+        from PIL import Image
+    except ImportError:
+        return content
+
+    try:
+        with Image.open(io.BytesIO(content)) as source:
+            image = source.convert("RGBA")
+
+        normalized_pixels = []
+        for red, green, blue, alpha in image.getdata():
+            luminance = (0.2126 * red) + (0.7152 * green) + (0.0722 * blue)
+            chroma = max(red, green, blue) - min(red, green, blue)
+            is_dark_neutral = alpha >= 16 and luminance < 172 and chroma < 72
+            if is_dark_neutral:
+                normalized_pixels.append((255, 255, 255, alpha))
+            else:
+                normalized_pixels.append((red, green, blue, alpha))
+        image.putdata(normalized_pixels)
+
+        canvas = Image.new("RGBA", image.size, (34, 34, 34, 255))
+        canvas.alpha_composite(image)
+        output = io.BytesIO()
+        canvas.convert("RGB").save(output, format="PNG", optimize=True)
+        return output.getvalue()
+    except Exception:
+        return content
+
+
+def concise_points(values: Any, limit: int = 2, max_length: int = 170) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    output = []
+    for value in values:
+        text = truncate(value, max_length)
+        if text:
+            output.append(text)
+        if len(output) >= limit:
+            break
+    return output
+
+
+def build_company_report_view(report: dict[str, Any], inline_company_logos: bool = False) -> dict[str, Any]:
+    thesis_by_ticker = {
+        str(item.get("ticker") or "").upper(): item
+        for item in report.get("thesis_impact", [])
+        if isinstance(item, dict) and item.get("ticker")
+    }
+    flags_by_ticker = {
+        str(item.get("ticker") or "").upper(): item
+        for item in report.get("attention_flags", [])
+        if isinstance(item, dict) and item.get("ticker")
+    }
+    memory_links_by_ticker: dict[str, list[dict[str, Any]]] = {}
+    for item in report.get("_company_memory_links", []):
+        relationship = str(item.get("relationship") or "").lower() if isinstance(item, dict) else ""
+        event_type = str(item.get("event_type") or "").lower() if isinstance(item, dict) else ""
+        confidence = str(item.get("confidence") or "medium").lower() if isinstance(item, dict) else "low"
+        has_relevant_context = (
+            event_type != "created"
+            and relationship not in {"duplicate_coverage", "unrelated"}
+            and confidence != "low"
+        )
+        if isinstance(item, dict) and item.get("ticker") and item.get("memory_id") and has_relevant_context:
+            memory_links_by_ticker.setdefault(str(item["ticker"]).upper(), []).append(item)
+
+    def build_company(item: dict[str, Any], section: str) -> dict[str, Any]:
+        ticker = str(item.get("ticker") or "").upper()
+        thesis = thesis_by_ticker.get(ticker) if section == "portfolio" else None
+        flag = flags_by_ticker.get(ticker)
+        primary_label = item.get("attention_label") or (flag or {}).get("label") or (thesis or {}).get("impact") or "monitor"
+        source_url = item.get("source_url") or item.get("url") or ""
+        attention_reason = truncate((flag or {}).get("reason"), 260) if flag else ""
+        memory_links = memory_links_by_ticker.get(ticker, [])
+        memory = next((link for link in memory_links if link.get("source_url") and link.get("source_url") == source_url), None)
+        memory = memory or (memory_links[0] if memory_links else None)
+        return {
+            "anchor": f"{section}-{re.sub(r'[^a-z0-9]+', '-', ticker.lower()).strip('-')}",
+            "section": section,
+            "ticker": ticker,
+            "name": item.get("company") or item.get("company_name") or ticker,
+            "logo_url": company_logo_src(ticker, inline=inline_company_logos),
+            "headline": truncate(item.get("headline"), 180),
+            "why_it_matters": truncate(item.get("why_it_matters"), 380),
+            "article_summary": concise_points(item.get("article_summary"), limit=2),
+            "source": item.get("source") or "",
+            "source_url": source_url,
+            "primary_label": primary_label,
+            "primary_label_text": human_label(primary_label),
+            "primary_label_description": label_description(primary_label),
+            "tone": label_tone(primary_label),
+            "thesis": thesis,
+            "thesis_summary": truncate((thesis or {}).get("rationale"), 360),
+            "thesis_monitor_next": truncate((thesis or {}).get("monitor_next"), 240),
+            "thesis_points": concise_points((thesis or {}).get("thesis_points_affected"), limit=2, max_length=120),
+            "attention_reason": attention_reason,
+            "memory": memory,
+        }
+
+    portfolio = [
+        build_company(item, "portfolio")
+        for item in report.get("portfolio_news", [])
+        if isinstance(item, dict) and item.get("ticker")
+    ]
+    watchlist = [
+        build_company(item, "watchlist")
+        for item in report.get("watchlist_news", [])
+        if isinstance(item, dict) and item.get("ticker")
+    ]
+    retained_tickers = {company["ticker"] for company in portfolio}
+    standalone_flags = [
+        item
+        for item in report.get("attention_flags", [])
+        if isinstance(item, dict) and str(item.get("ticker") or "").upper() not in retained_tickers
+    ]
+    return {
+        "portfolio": portfolio,
+        "watchlist": watchlist,
+        "standalone_flags": standalone_flags,
+        "portfolio_count": len(portfolio),
+        "watchlist_count": len(watchlist),
+    }
+
+
+def display_date(value: Any) -> str:
+    if hasattr(value, "strftime"):
+        return value.strftime("%d.%m.%Y")
+    try:
+        return dt.date.fromisoformat(str(value)).strftime("%d.%m.%Y")
+    except (TypeError, ValueError):
+        return str(value or "")
+
+
+def display_long_date(value: Any) -> str:
+    if hasattr(value, "strftime"):
+        return value.strftime("%B %-d, %Y") if os.name != "nt" else value.strftime("%B %#d, %Y")
+    try:
+        parsed = dt.date.fromisoformat(str(value))
+        return parsed.strftime("%B %-d, %Y") if os.name != "nt" else parsed.strftime("%B %#d, %Y")
+    except (TypeError, ValueError):
+        return str(value or "")
+
+
 def render_email(
     report: dict[str, Any],
     subject: str,
     open_app_url: str | None = None,
     display_title: str = "Investment morning report",
+    inline_company_logos: bool = False,
 ) -> str:
     jinja2 = require_dependency("jinja2", "Jinja2")
     env = jinja2.Environment(
@@ -2684,13 +2859,65 @@ def render_email(
     template = env.get_template("email_report.html")
     return template.render(
         report=report,
+        company_view=build_company_report_view(report, inline_company_logos=inline_company_logos),
         subject=subject,
         display_title=display_title,
-        generated_at=dt.datetime.now(tz=PRAGUE_TZ).date().isoformat(),
+        report_date_display=display_long_date(report.get("report_date")),
+        generated_at=display_date(dt.datetime.now(tz=PRAGUE_TZ).date()),
+        is_email_delivery=open_app_url is not None,
         logo_src=email_asset_src("ma-logo.png"),
         open_app_button_src=email_asset_src("open-in-app-button.png"),
+        show_context_button_src=email_asset_src("show-context-button.png"),
         open_app_url=open_app_url,
     )
+
+
+def email_company_logo_attachments(report: dict[str, Any]) -> list[dict[str, Any]]:
+    httpx = require_dependency("httpx", "httpx")
+    symbols: list[str] = []
+    for section in ("portfolio_news", "watchlist_news"):
+        for item in report.get(section, []):
+            if isinstance(item, dict):
+                symbol = re.sub(r"[^A-Z0-9.\-]", "", str(item.get("ticker") or "").upper())
+                if symbol and symbol not in symbols:
+                    symbols.append(symbol)
+
+    attachments = []
+    timeout = float(os.getenv("EMAIL_COMPANY_LOGO_TIMEOUT_SECONDS", "10"))
+    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+        for symbol in symbols:
+            cid = company_logo_cid(symbol)
+            if not cid:
+                continue
+            try:
+                response = client.get(company_logo_url(symbol))
+                response.raise_for_status()
+            except Exception:
+                continue
+            logo_content = prepare_email_company_logo(response.content)
+            attachments.append(
+                {
+                    "content": list(logo_content),
+                    "filename": f"{symbol}.png",
+                    "content_type": "image/png",
+                    "content_id": cid,
+                    "inline_content_id": cid,
+                }
+            )
+    return attachments
+
+
+def update_report_html(report_id: str | None, html: str) -> None:
+    if not report_id:
+        return
+    from database import connection
+
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "update public.reports set html = %(html)s where id::text = %(id)s",
+                {"html": html, "id": report_id},
+            )
 
 
 def report_app_url(report_id: str | None) -> str | None:
@@ -2714,7 +2941,13 @@ def email_asset_src(filename: str) -> str | None:
     return f"data:image/png;base64,{encoded}"
 
 
-def send_email(subject: str, html: str, recipient_email: str | None = None, from_email: str | None = None) -> None:
+def send_email(
+    subject: str,
+    html: str,
+    recipient_email: str | None = None,
+    from_email: str | None = None,
+    attachments: list[dict[str, Any]] | None = None,
+) -> None:
     resend = require_dependency("resend")
 
     api_key = os.getenv("RESEND_API_KEY")
@@ -2729,14 +2962,15 @@ def send_email(subject: str, html: str, recipient_email: str | None = None, from
         raise SystemExit("RESEND_API_KEY, RESEND_FROM, and a recipient email must be set to send email.")
 
     resend.api_key = api_key
-    resend.Emails.send(
-        {
-            "from": from_address,
-            "to": to_addresses,
-            "subject": subject,
-            "html": html,
-        }
-    )
+    payload = {
+        "from": from_address,
+        "to": to_addresses,
+        "subject": subject,
+        "html": html,
+    }
+    if attachments:
+        payload["attachments"] = attachments
+    resend.Emails.send(payload)
 
 
 def get_user_email(user_id: str) -> str | None:
@@ -2939,10 +3173,20 @@ def run_report_for_user(
             report_id=report_id,
             report_date=report_date,
         )
+        print(f"Company memory summary: {memory_summary}")
+        if memory_summary and memory_summary.get("links"):
+            report["_company_memory_links"] = memory_summary["links"]
+            html = render_email(report, subject)
+            update_report_html(report_id, html)
     except Exception as exc:
         print(f"Company memory update skipped: {exc}")
 
-    email_html = render_email(report, subject, open_app_url=report_app_url(report_id))
+    email_html = render_email(
+        report,
+        subject,
+        open_app_url=report_app_url(report_id),
+        inline_company_logos=send_email_report,
+    )
 
     write_report_outputs(
         context=context,
@@ -2959,7 +3203,12 @@ def run_report_for_user(
         recipient_email = recipient_email or get_user_email(user_id)
         if not recipient_email:
             raise SystemExit(f"User {user_id} does not have an email address.")
-        send_email(subject, email_html, recipient_email=recipient_email)
+        send_email(
+            subject,
+            email_html,
+            recipient_email=recipient_email,
+            attachments=email_company_logo_attachments(report),
+        )
 
     return {
         "subject": subject,

@@ -41,6 +41,96 @@ STORE_LABELS = {
     "negative_signal",
     "mixed_signal",
 }
+CORE_MEMORY_SEGMENTS = {
+    "advertising",
+    "cloud_infrastructure",
+    "commerce",
+    "enterprise_software",
+    "fintech_lending",
+    "semiconductors",
+}
+MEMORY_SEGMENT_KEYWORDS = {
+    "advertising": [
+        "ad revenue",
+        "ad revenues",
+        "advertising",
+        "advertising revenue",
+        "ad impressions",
+        "ad pricing",
+        "search ads",
+        "targeting",
+    ],
+    "cloud_infrastructure": [
+        "aws",
+        "azure",
+        "cloud",
+        "cloud growth",
+        "cloud revenue",
+        "cloud profit",
+        "data center",
+        "data centers",
+        "datacenter",
+        "datacenters",
+        "google cloud",
+        "infrastructure",
+    ],
+    "commerce": [
+        "commerce",
+        "e-commerce",
+        "marketplace",
+        "first-party retail",
+        "retail",
+        "gross merchandise",
+        "gmv",
+    ],
+    "enterprise_software": [
+        "enterprise software",
+        "subscription",
+        "subscriptions",
+        "saas",
+        "seat growth",
+        "renewal",
+        "retention",
+    ],
+    "fintech_lending": [
+        "credit",
+        "lending",
+        "loan",
+        "loans",
+        "non-performing",
+        "delinquency",
+        "credit losses",
+    ],
+    "semiconductors": [
+        "chip",
+        "chips",
+        "semiconductor",
+        "semiconductors",
+        "gpu",
+        "accelerator",
+        "trainium",
+        "asic",
+    ],
+    "capex_investment": [
+        "capex",
+        "capital expenditure",
+        "capital expenditures",
+        "ai spending",
+        "spending",
+        "investment",
+        "free cash flow",
+        "fcf",
+    ],
+    "regulatory_legal": [
+        "regulatory",
+        "regulation",
+        "lawsuit",
+        "legal",
+        "antitrust",
+        "investigation",
+        "probe",
+    ],
+}
 
 
 def clean_text(value: Any) -> str:
@@ -83,6 +173,19 @@ def normalize_theme(value: Any) -> str:
     words = tokenize(value)
     normalized = "_".join(words[:10])
     return normalized or "company_memory"
+
+
+def normalize_event_source_url(value: Any) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "_", clean_text(value).lower()).strip("_")
+    return normalized or "company_memory"
+
+
+def memory_event_key(*, report_id: str | None, report_date: dt.date, item: dict[str, Any]) -> str:
+    source_url = clean_text(item.get("source_url"))
+    if source_url:
+        return normalize_event_source_url(source_url)
+    parts = [report_id or report_date.isoformat(), item.get("headline") or ""]
+    return normalize_theme(" ".join(str(part or "") for part in parts))
 
 
 def normalize_importance(value: Any, *, thesis_linked: bool = False) -> str:
@@ -156,13 +259,40 @@ def memory_text(row: dict[str, Any]) -> str:
     return clean_text(" ".join(str(part or "") for part in parts))
 
 
+def detect_memory_segments(value: Any) -> list[str]:
+    text = f" {clean_text(value).lower()} "
+    segments = []
+    for segment, keywords in MEMORY_SEGMENT_KEYWORDS.items():
+        if any(f" {keyword} " in text or keyword in text for keyword in keywords):
+            segments.append(segment)
+    return segments
+
+
+def core_segment_set(segments: list[str]) -> set[str]:
+    return {segment for segment in segments if segment in CORE_MEMORY_SEGMENTS}
+
+
+def has_compatible_memory_segments(item: dict[str, Any], memory: dict[str, Any]) -> bool:
+    item_segments = detect_memory_segments(item_text_for_matching(item))
+    memory_segments = detect_memory_segments(memory_text(memory))
+    item_core = core_segment_set(item_segments)
+    memory_core = core_segment_set(memory_segments)
+    if item_core and memory_core and item_core.isdisjoint(memory_core):
+        return False
+    return True
+
+
 def memory_similarity_score(item: dict[str, Any], memory: dict[str, Any], today: dt.date | None = None) -> float:
+    if not has_compatible_memory_segments(item, memory):
+        return 0.0
     item_terms = set(tokenize(item_text_for_matching(item)))
     memory_terms = set(tokenize(memory_text(memory)))
     if not item_terms or not memory_terms:
         return 0.0
     overlap = item_terms.intersection(memory_terms)
     score = len(overlap) * 4.0
+    segment_overlap = set(detect_memory_segments(item_text_for_matching(item))).intersection(detect_memory_segments(memory_text(memory)))
+    score += len(segment_overlap) * 3.0
     if memory.get("importance") == "high":
         score += 2.0
     if memory.get("thesis_linked"):
@@ -350,6 +480,7 @@ def report_memory_candidates(report: dict[str, Any], context: dict[str, Any]) ->
                     "thesis_points": unique_strings(thesis_points, limit=8),
                     "thesis": thesis_map.get(ticker) or {},
                     "keywords": keywords,
+                    "segments": detect_memory_segments(text),
                     "report_text": truncate(text, 1400),
                 }
             )
@@ -363,6 +494,7 @@ def compact_memory_for_prompt(memory: dict[str, Any]) -> dict[str, Any]:
         "description": truncate(memory.get("description"), 500),
         "latest_development": truncate(memory.get("latest_development"), 300),
         "keywords": (memory.get("keywords") or [])[:12],
+        "segments": detect_memory_segments(memory_text(memory)),
         "importance": memory.get("importance"),
         "thesis_points": (memory.get("thesis_points") or [])[:8],
         "first_seen_at": memory.get("first_seen_at").isoformat() if hasattr(memory.get("first_seen_at"), "isoformat") else memory.get("first_seen_at"),
@@ -387,7 +519,11 @@ def classify_memory_updates_with_gpt(
     payload = {
         "instructions": [
             "Decide whether each report item should create, update, or ignore company memory.",
-            "Match only when today's item and memory describe the same business issue. Same broad category is not enough.",
+            "Match only when today's item and memory describe the same business issue, same business segment, and same investment question. Same broad category is not enough.",
+            "The same company and the same generic topic such as AI, growth, margins, spending, competition, or regulation are not enough for update_existing.",
+            "If one item is about cloud infrastructure/capex and another is about advertising monetization, they must be separate memory items unless the article explicitly connects the two.",
+            "If the connection is plausible but not explicit, choose create_new instead of update_existing.",
+            "Use update_existing only when the new article clearly extends, confirms, contradicts, or resolves the existing tracked theme.",
             "Memory is historical context, not evidence. Do not infer causality unless today's item states it.",
             "Create new memory only for topics likely to be useful in future reports.",
             "Ignore low-value, one-off, generic, or immaterial items.",
@@ -405,6 +541,7 @@ def classify_memory_updates_with_gpt(
                 "thesis_linked": item["thesis_linked"],
                 "thesis_points": item["thesis_points"],
                 "keywords": item["keywords"],
+                "segments": item.get("segments") or [],
                 "candidate_memories": [compact_memory_for_prompt(memory) for memory in memories_by_item[index]],
             }
             for index, item in enumerate(items)
@@ -449,8 +586,13 @@ def fallback_memory_decisions(items: list[dict[str, Any]], memories_by_item: lis
     decisions = []
     for index, item in enumerate(items):
         memories = memories_by_item[index]
+        matched = None
         if memories:
-            matched = memories[0]
+            for memory in memories:
+                if has_compatible_memory_segments(item, memory) and float(memory.get("similarity_score") or 0) >= 10.0:
+                    matched = memory
+                    break
+        if matched:
             decisions.append(
                 {
                     "index": index,
@@ -515,6 +657,104 @@ def prune_company_memory(cursor: Any, user_id: str, stock_id: str, max_items: in
     )
 
 
+def insert_company_memory_event(
+    cursor: Any,
+    *,
+    memory_id: str,
+    user_id: str,
+    report_id: str | None,
+    report_date: dt.date,
+    item: dict[str, Any],
+    decision: dict[str, Any],
+    event_type: str,
+    relationship: str,
+    summary: str,
+    importance: str,
+    thesis_points: list[str],
+) -> bool:
+    from psycopg.types.json import Json
+
+    cursor.execute(
+        """
+        insert into public.company_memory_events (
+            company_memory_item_id,
+            user_id,
+            stock_id,
+            report_id,
+            event_key,
+            event_date,
+            event_type,
+            relationship,
+            headline,
+            summary,
+            source_url,
+            source,
+            importance,
+            thesis_points,
+            metadata
+        )
+        values (
+            %(memory_id)s,
+            %(user_id)s,
+            %(stock_id)s,
+            %(report_id)s,
+            %(event_key)s,
+            %(event_date)s,
+            %(event_type)s,
+            %(relationship)s,
+            %(headline)s,
+            %(summary)s,
+            %(source_url)s,
+            %(source)s,
+            %(importance)s,
+            %(thesis_points)s,
+            %(metadata)s
+        )
+        on conflict (company_memory_item_id, event_key) do nothing
+        returning id
+        """,
+        {
+            "memory_id": memory_id,
+            "user_id": user_id,
+            "stock_id": item["stock_id"],
+            "report_id": report_id,
+            "event_key": memory_event_key(report_id=report_id, report_date=report_date, item=item),
+            "event_date": report_date,
+            "event_type": event_type,
+            "relationship": relationship or None,
+            "headline": item.get("headline") or None,
+            "summary": summary,
+            "source_url": item.get("source_url") or None,
+            "source": item.get("source") or None,
+            "importance": importance,
+            "thesis_points": Json(thesis_points),
+            "metadata": Json(
+                {
+                    "attention_label": item.get("attention_label"),
+                    "section": item.get("section"),
+                    "decision": decision.get("decision"),
+                    "confidence": decision.get("confidence"),
+                    "reason": decision.get("reason"),
+                }
+            ),
+        },
+    )
+    return cursor.fetchone() is not None
+
+
+def company_memory_event_exists(cursor: Any, *, memory_id: str, event_key: str) -> bool:
+    cursor.execute(
+        """
+        select 1
+        from public.company_memory_events
+        where company_memory_item_id::text = %(memory_id)s
+          and event_key = %(event_key)s
+        """,
+        {"memory_id": memory_id, "event_key": event_key},
+    )
+    return cursor.fetchone() is not None
+
+
 def memory_decision_effect(decision: dict[str, Any] | None, candidate_ids: set[str]) -> str:
     if not decision:
         return "ignored"
@@ -550,7 +790,14 @@ def apply_memory_decisions(
             decisions_by_index[int(decision.get("index"))] = decision
         except (TypeError, ValueError):
             continue
-    summary = {"created": 0, "updated": 0, "ignored": 0}
+    summary: dict[str, Any] = {
+        "created": 0,
+        "updated": 0,
+        "ignored": 0,
+        "duplicate_ignored": 0,
+        "events": 0,
+        "links": [],
+    }
     if dry_run:
         for index in range(len(items)):
             candidate_ids = {str(memory["id"]) for memory in memories_by_item[index]}
@@ -579,8 +826,13 @@ def apply_memory_decisions(
                 status = str(decision.get("status") or "active").strip().lower()
                 status = status if status in {"active", "stale", "resolved"} else "active"
                 source_urls = unique_strings([item.get("source_url")], limit=20)
+                event_key = memory_event_key(report_id=report_id, report_date=report_date, item=item)
 
                 if action == "update_existing" and matched_id in candidate_ids:
+                    if company_memory_event_exists(cursor, memory_id=matched_id, event_key=event_key):
+                        summary["ignored"] += 1
+                        summary["duplicate_ignored"] += 1
+                        continue
                     cursor.execute(
                         """
                         select source_urls
@@ -640,6 +892,35 @@ def apply_memory_decisions(
                         },
                     )
                     summary["updated"] += 1
+                    event_inserted = insert_company_memory_event(
+                        cursor,
+                        memory_id=matched_id,
+                        user_id=user_id,
+                        report_id=report_id,
+                        report_date=report_date,
+                        item=item,
+                        decision=decision,
+                        event_type="updated",
+                        relationship=str(decision.get("relationship") or "follow_up"),
+                        summary=latest_development,
+                        importance=importance,
+                        thesis_points=thesis_points,
+                    )
+                    if event_inserted:
+                        summary["events"] += 1
+                    summary["links"].append(
+                        {
+                            "ticker": item["ticker"],
+                            "stock_id": item["stock_id"],
+                            "memory_id": matched_id,
+                            "theme": theme,
+                            "event_type": "updated",
+                            "relationship": str(decision.get("relationship") or "follow_up"),
+                            "confidence": str(decision.get("confidence") or "medium"),
+                            "headline": item.get("headline") or "",
+                            "source_url": item.get("source_url") or "",
+                        }
+                    )
                 elif effect == "created":
                     cursor.execute(
                         """
@@ -679,27 +960,8 @@ def apply_memory_decisions(
                             %(first_seen_at)s,
                             %(last_seen_at)s
                         )
-                        on conflict (user_id, stock_id, normalized_theme) do update
-                        set
-                            description = excluded.description,
-                            latest_development = excluded.latest_development,
-                            thesis_points = excluded.thesis_points,
-                            thesis_linked = public.company_memory_items.thesis_linked or excluded.thesis_linked,
-                            keywords = excluded.keywords,
-                            source_urls = (
-                                select coalesce(jsonb_agg(distinct elem.value), '[]'::jsonb)
-                                from jsonb_array_elements_text(public.company_memory_items.source_urls || excluded.source_urls) as elem(value)
-                            ),
-                            last_source_url = excluded.last_source_url,
-                            importance = case
-                                when public.company_memory_items.importance = 'high' or excluded.importance = 'high' then 'high'
-                                else 'medium'
-                            end,
-                            status = excluded.status,
-                            evidence_count = public.company_memory_items.evidence_count + 1,
-                            last_seen_at = excluded.last_seen_at,
-                            last_report_id = excluded.last_report_id
-                        returning (xmax = 0) as inserted
+                        on conflict (user_id, stock_id, normalized_theme) do nothing
+                        returning id::text as id
                         """,
                         {
                             "user_id": user_id,
@@ -720,8 +982,103 @@ def apply_memory_decisions(
                             "last_seen_at": report_date,
                         },
                     )
-                    inserted = bool(cursor.fetchone()[0])
+                    inserted_row = cursor.fetchone()
+                    inserted = inserted_row is not None
+                    if inserted:
+                        memory_id = str(inserted_row[0])
+                    else:
+                        cursor.execute(
+                            """
+                            select id::text, source_urls
+                            from public.company_memory_items
+                            where user_id = %(user_id)s
+                              and stock_id = %(stock_id)s
+                              and normalized_theme = %(normalized_theme)s
+                            """,
+                            {"user_id": user_id, "stock_id": item["stock_id"], "normalized_theme": normalized_theme},
+                        )
+                        existing_row = cursor.fetchone()
+                        if not existing_row:
+                            summary["ignored"] += 1
+                            continue
+                        memory_id = str(existing_row[0])
+                        if company_memory_event_exists(cursor, memory_id=memory_id, event_key=event_key):
+                            summary["ignored"] += 1
+                            summary["duplicate_ignored"] += 1
+                            continue
+                        existing_urls = list(existing_row[1] or [])
+                        merged_urls = unique_strings(existing_urls + source_urls, limit=20)
+                        cursor.execute(
+                            """
+                            update public.company_memory_items
+                            set
+                                description = %(description)s,
+                                latest_development = %(latest_development)s,
+                                thesis_points = %(thesis_points)s,
+                                thesis_linked = company_memory_items.thesis_linked or %(thesis_linked)s,
+                                keywords = %(keywords)s,
+                                source_urls = %(source_urls)s,
+                                last_source_url = %(last_source_url)s,
+                                importance = case
+                                    when company_memory_items.importance = 'high' or %(importance)s = 'high' then 'high'
+                                    else 'medium'
+                                end,
+                                status = %(status)s,
+                                evidence_count = company_memory_items.evidence_count + 1,
+                                last_seen_at = %(last_seen_at)s,
+                                last_report_id = %(last_report_id)s
+                            where id::text = %(id)s
+                              and user_id = %(user_id)s
+                              and stock_id = %(stock_id)s
+                            """,
+                            {
+                                "id": memory_id,
+                                "user_id": user_id,
+                                "stock_id": item["stock_id"],
+                                "description": description,
+                                "latest_development": latest_development,
+                                "thesis_points": Json(thesis_points),
+                                "thesis_linked": bool(item.get("thesis_linked")),
+                                "keywords": Json(keywords),
+                                "source_urls": Json(merged_urls),
+                                "last_source_url": item.get("source_url") or None,
+                                "importance": importance,
+                                "status": status,
+                                "last_seen_at": report_date,
+                                "last_report_id": report_id,
+                            },
+                        )
+                    event_type = "created" if inserted else "updated"
                     summary["created" if inserted else "updated"] += 1
+                    event_inserted = insert_company_memory_event(
+                        cursor,
+                        memory_id=memory_id,
+                        user_id=user_id,
+                        report_id=report_id,
+                        report_date=report_date,
+                        item=item,
+                        decision=decision,
+                        event_type=event_type,
+                        relationship=str(decision.get("relationship") or ("new_evidence" if inserted else "follow_up")),
+                        summary=latest_development,
+                        importance=importance,
+                        thesis_points=thesis_points,
+                    )
+                    if event_inserted:
+                        summary["events"] += 1
+                    summary["links"].append(
+                        {
+                            "ticker": item["ticker"],
+                            "stock_id": item["stock_id"],
+                            "memory_id": memory_id,
+                            "theme": theme,
+                            "event_type": event_type,
+                            "relationship": str(decision.get("relationship") or ("new_evidence" if inserted else "follow_up")),
+                            "confidence": str(decision.get("confidence") or "medium"),
+                            "headline": item.get("headline") or "",
+                            "source_url": item.get("source_url") or "",
+                        }
+                    )
                 else:
                     summary["ignored"] += 1
                 prune_company_memory(cursor, user_id, item["stock_id"], settings["max_memory_items_per_stock"])
@@ -740,10 +1097,36 @@ def update_company_memory_from_report(
 ) -> dict[str, Any]:
     settings = memory_config(config)
     if not settings["enabled"]:
-        return {"created": 0, "updated": 0, "ignored": 0, "usage": None}
+        summary = {
+            "created": 0,
+            "updated": 0,
+            "ignored": 0,
+            "duplicate_ignored": 0,
+            "events": 0,
+            "links": [],
+            "candidate_count": 0,
+            "decision_count": 0,
+            "usage": None,
+            "skipped_reason": "disabled",
+        }
+        print("Company memory update: skipped disabled.")
+        return summary
     items = report_memory_candidates(report, context)
     if not items:
-        return {"created": 0, "updated": 0, "ignored": 0, "usage": None}
+        summary = {
+            "created": 0,
+            "updated": 0,
+            "ignored": 0,
+            "duplicate_ignored": 0,
+            "events": 0,
+            "links": [],
+            "candidate_count": 0,
+            "decision_count": 0,
+            "usage": None,
+            "skipped_reason": "no_candidates",
+        }
+        print("Company memory update: skipped no_candidates.")
+        return summary
     memories = load_memories_for_stocks(
         user_id,
         unique_strings([item["stock_id"] for item in items]),
@@ -771,7 +1154,15 @@ def update_company_memory_from_report(
         config=config,
         dry_run=dry_run,
     )
-    return {**summary, "usage": usage}
+    result = {**summary, "candidate_count": len(items), "decision_count": len(decisions), "usage": usage}
+    print(
+        "Company memory update: "
+        f"candidates={result['candidate_count']} decisions={result['decision_count']} "
+        f"created={result['created']} updated={result['updated']} ignored={result['ignored']} "
+        f"duplicate_ignored={result.get('duplicate_ignored', 0)} "
+        f"events={result['events']} links={len(result.get('links') or [])}."
+    )
+    return result
 
 
 class ReportTextParser(HTMLParser):

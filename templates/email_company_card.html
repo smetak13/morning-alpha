@@ -1,0 +1,112 @@
+<div id="{{ company.anchor }}" class="company-card" style="background: #181818; border: 1px solid #2a2a2a; border-radius: 8px; margin: 14px 0 18px; overflow: hidden;">
+  <div class="company-head" style="background: #151515; border-bottom: 1px solid #2a2a2a; padding: 14px 16px;">
+    {% set signal_class = "signal-positive" if company.tone == "positive" else "signal-negative" if company.tone == "negative" else "signal-mixed" if company.tone == "mixed" else "signal-neutral" %}
+    {% set signal_style = "background: rgba(74, 222, 128, 0.12); border: 1px solid #4ade80; color: #86efac;" if company.tone == "positive" else "background: rgba(248, 113, 113, 0.12); border: 1px solid #f87171; color: #fca5a5;" if company.tone == "negative" else "background: rgba(244, 196, 48, 0.12); border: 1px solid #f4c430; color: #f4d76b;" if company.tone == "mixed" else "background: rgba(255, 255, 255, 0.05); border: 1px solid #5f5f58; color: #d7d7d0;" %}
+    <table class="company-card-table" border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%">
+      <tr>
+        <td style="font-size: 0; line-height: 0; text-align: left; vertical-align: middle;">
+          <table class="company-title-table" align="left" border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse: collapse; max-width: 100%; width: 100%;">
+            <tr>
+              <td style="line-height: normal; vertical-align: middle; width: 40px;">
+                <table border="0" cellpadding="0" cellspacing="0" role="presentation">
+                  <tr>
+                    <td bgcolor="#343434" style="background: #343434; background-color: #343434 !important; border-radius: 8px; color-scheme: dark; forced-color-adjust: none; padding: 1px;">
+                      <table border="0" cellpadding="0" cellspacing="0" role="presentation">
+                        <tr>
+                          <td class="logo-tile" align="center" bgcolor="#222222" style="background: #222222; background-color: #222222 !important; border: 0; border-radius: 7px; color-scheme: dark; forced-color-adjust: none; height: 38px; min-height: 38px; min-width: 38px; padding: 4px; text-align: center; vertical-align: middle; width: 38px;">
+                            {% if company.logo_url %}
+                              <img class="company-logo" src="{{ company.logo_url }}" width="28" height="28" alt="{{ company.ticker }}" style="-webkit-filter: none !important; background: #222222; background-color: #222222 !important; border: 0; color-scheme: dark; display: inline-block; filter: none !important; forced-color-adjust: none; height: 28px !important; line-height: 28px; max-height: 28px; max-width: 28px; min-height: 28px; min-width: 28px; object-fit: contain; outline: 0; text-decoration: none; vertical-align: middle; width: 28px !important;">
+                            {% else %}
+                              <span class="ticker-fallback" style="background: #242424; border-radius: 8px; color: #ffffff; display: inline-block; font-size: 12px; font-weight: bold; height: 28px; line-height: 28px; text-align: center; width: 28px;">{{ company.ticker[:2] }}</span>
+                            {% endif %}
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+              <td style="font-size: 0; line-height: 0; width: 12px;">&nbsp;</td>
+              <td style="line-height: normal; vertical-align: middle;">
+                <h3 style="color: #ffffff; font-size: 17px; line-height: 1.25; margin: 0;">{{ company.ticker }}</h3>
+                <p class="meta" style="color: #a7a7a0; font-size: 12px; line-height: 1.5; margin: 2px 0 0;">{{ "Portfolio holding" if company.section == "portfolio" else "Watchlist company" }}</p>
+              </td>
+            </tr>
+          </table>
+          <table class="company-signal-table" align="left" border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse: collapse; max-width: 100%; width: 100%;">
+            <tr>
+              <td class="signal-cell" align="left" style="line-height: normal; padding-top: 10px; text-align: left; vertical-align: middle;">
+                <span class="signal {{ signal_class }}" title="{{ company.primary_label_description }}" style="{{ signal_style }} border-radius: 999px; display: inline-block; font-size: 9px; font-weight: bold; letter-spacing: 0; padding: 6px 10px; text-transform: uppercase; white-space: nowrap;">{{ company.primary_label_text }}</span>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="company-body" style="padding: 16px;">
+    <h4 style="color: #ffffff; font-size: 15px; line-height: 1.35; margin: 0 0 8px;">{{ company.headline }}</h4>
+    {% if company.why_it_matters %}
+      <p>{{ company.why_it_matters }}</p>
+    {% endif %}
+    {% if company.article_summary %}
+      <ul>
+        {% for point in company.article_summary %}
+          <li>{{ point }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if company.thesis %}
+      <div class="subpanel" style="background: #111111; border: 1px solid #2a2a2a; border-radius: 8px; margin-top: 12px; padding: 12px;">
+        <span class="subpanel-title" style="color: #f4c430; display: block; font-size: 11px; font-weight: bold; letter-spacing: 0.04em; margin-bottom: 5px; text-transform: uppercase;">Thesis impact</span>
+        {% if company.thesis_summary %}
+          <p style="margin-top: 0;">{{ company.thesis_summary }}</p>
+        {% endif %}
+        {% if company.thesis_points %}
+          <p style="margin-bottom: 4px;"><strong>Affected thesis points:</strong> {{ company.thesis_points|join(", ") }}</p>
+        {% endif %}
+        {% if company.thesis_monitor_next %}
+          <p style="margin-bottom: 0;"><strong>Monitor next:</strong> {{ company.thesis_monitor_next }}</p>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if company.attention_reason %}
+      <div class="subpanel" style="background: #111111; border: 1px solid #2a2a2a; border-radius: 8px; margin-top: 12px; padding: 12px;">
+        <span class="subpanel-title" style="color: #f4c430; display: block; font-size: 11px; font-weight: bold; letter-spacing: 0.04em; margin-bottom: 5px; text-transform: uppercase;">Attention</span>
+        <p style="margin: 0;">{{ company.attention_reason }}</p>
+      </div>
+    {% endif %}
+
+    {% if company.source_url or company.memory %}
+      {% if company.memory %}
+        {% set context_href = (open_app_url ~ "#memory-" ~ company.memory.memory_id) if open_app_url else ("#memory-" ~ company.memory.memory_id) %}
+      {% endif %}
+      <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" style="margin-top: 12px;">
+        <tr>
+          <td class="source-cell" style="color: #a7a7a0; font-size: 12px; line-height: 1.5; vertical-align: middle;">
+            {% if company.source_url %}
+              <a href="{{ company.source_url }}" style="color: #f4c430; text-decoration: none;">Full article{% if company.source %} - {{ company.source }}{% endif %}</a>
+            {% endif %}
+            {% if company.memory %}
+              {% if company.source_url %}<span style="color: #5f5f58;"> | </span>{% endif %}<span style="color: #a7a7a0;">Tracked theme: {{ company.memory.theme }}</span>
+            {% endif %}
+          </td>
+          <td class="memory-action-cell" style="text-align: right; vertical-align: middle; width: 112px;">
+            {% if company.memory %}
+              <a class="memory-link" data-memory-id="{{ company.memory.memory_id }}" href="{{ context_href }}" style="border: 0; display: inline-block; text-decoration: none;">
+                {% if show_context_button_src %}
+                  <img src="{{ show_context_button_src }}" width="104" height="32" alt="Show context" style="border: 0; display: block; height: 32px; line-height: 0; max-width: 104px; width: 104px;">
+                {% else %}
+                  <span style="background: #f4c430; border-radius: 6px; color: #111111; display: inline-block; font-size: 12px; font-weight: bold; letter-spacing: 0; padding: 8px 12px; text-decoration: none; white-space: nowrap;">Show context</span>
+                {% endif %}
+              </a>
+            {% endif %}
+          </td>
+        </tr>
+      </table>
+    {% endif %}
+  </div>
+</div>

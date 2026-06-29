@@ -269,8 +269,57 @@ function enhanceReportHtml(html) {
       *::-webkit-scrollbar-track { background: #111111; }
       *::-webkit-scrollbar-thumb { background: #3a3a3a; border: 2px solid #111111; border-radius: 999px; }
       *::-webkit-scrollbar-thumb:hover { background: #4a4a4a; }
+      @media (max-width: 760px) {
+        html body table.brand-report-row,
+        html body table.brand-report-row tbody,
+        html body table.brand-report-row tr,
+        html body table.brand-report-row td {
+          display: block !important;
+          text-align: left !important;
+          width: 100% !important;
+        }
+        html body table.brand-report-row td.desktop-report-meta-cell.report-meta-cell {
+          display: block !important;
+          max-height: none !important;
+          overflow: visible !important;
+          padding-top: 11px !important;
+          text-align: left !important;
+          width: 100% !important;
+        }
+        html body table.brand-report-row tr.mobile-report-meta-row {
+          display: none !important;
+          max-height: 0 !important;
+          overflow: hidden !important;
+        }
+        html body .report-date-main {
+          text-align: left !important;
+        }
+      }
       @media (min-width: 761px) {
         .container { max-width: 1180px !important; }
+        .company-nav {
+          position: sticky !important;
+          top: 0 !important;
+          z-index: 4 !important;
+          background: rgba(17, 17, 17, 0.94) !important;
+          border-bottom: 1px solid #2a2a2a !important;
+          margin-left: -28px !important;
+          margin-right: -28px !important;
+          padding: 12px 28px 6px !important;
+          backdrop-filter: blur(10px);
+        }
+        .company-card {
+          scroll-margin-top: 78px;
+        }
+        .company-chip:hover {
+          border-color: #f4c430 !important;
+          color: #f4c430 !important;
+        }
+        .memory-link:hover {
+          background: #f7d75a !important;
+          border-color: #f4c430 !important;
+          color: #111111 !important;
+        }
       }
     </style>
   `;
@@ -1560,6 +1609,88 @@ function ReportDateField({ label, value, onChange }) {
 
 function ReportPreviewModal({ report, onAddNote, onClose }) {
   const reportHtml = useMemo(() => enhanceReportHtml(report.html), [report.html]);
+  const iframeRef = useRef(null);
+  const [memoryDetail, setMemoryDetail] = useState(null);
+  const [memoryStatus, setMemoryStatus] = useState("idle");
+  const [memoryError, setMemoryError] = useState("");
+
+  const openMemory = useCallback(async (memoryId) => {
+    if (!memoryId) {
+      return;
+    }
+    setMemoryStatus("loading");
+    setMemoryError("");
+    setMemoryDetail(null);
+    try {
+      const payload = await requestJson(`/api/company-memory/${encodeURIComponent(memoryId)}`, { method: "GET" });
+      setMemoryDetail(payload.memory);
+      setMemoryStatus("ready");
+    } catch (err) {
+      setMemoryError(err instanceof Error ? err.message : "Unable to load tracked context.");
+      setMemoryStatus("error");
+    }
+  }, []);
+
+  const scrollReportFrameTo = useCallback((anchor) => {
+    const doc = iframeRef.current?.contentDocument;
+    if (!doc || !anchor) {
+      return false;
+    }
+    const target = doc.getElementById(anchor);
+    if (!target) {
+      return false;
+    }
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    return true;
+  }, []);
+
+  const wireReportFrame = useCallback(() => {
+    const frame = iframeRef.current;
+    const doc = frame?.contentDocument;
+    if (!doc) {
+      return;
+    }
+    const companyLinks = Array.from(doc.querySelectorAll("[data-company-anchor]"));
+    companyLinks.forEach((link) => {
+      link.addEventListener("click", (event) => {
+        const anchor = link.getAttribute("data-company-anchor");
+        if (!anchor) {
+          return;
+        }
+        event.preventDefault();
+        scrollReportFrameTo(anchor);
+      });
+    });
+    const links = Array.from(doc.querySelectorAll("[data-memory-id]"));
+    links.forEach((link) => {
+      link.addEventListener("click", (event) => {
+        const memoryId = link.getAttribute("data-memory-id");
+        if (!memoryId) {
+          return;
+        }
+        event.preventDefault();
+        openMemory(memoryId);
+      });
+    });
+    const companyMatch = window.location.hash.match(/^#(portfolio|watchlist)-([^#?]+)/);
+    if (companyMatch?.[0]) {
+      const anchor = decodeURIComponent(companyMatch[0].slice(1));
+      window.setTimeout(() => {
+        if (scrollReportFrameTo(anchor)) {
+          window.history.replaceState({}, "", window.location.pathname);
+        }
+      }, 50);
+    }
+  }, [openMemory, scrollReportFrameTo]);
+
+  useEffect(() => {
+    const match = window.location.hash.match(/^#memory-([^#?]+)/);
+    if (match?.[1]) {
+      openMemory(decodeURIComponent(match[1]));
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [openMemory, report.id]);
+
   return (
     <div className="modal-backdrop report-preview-backdrop" onMouseDown={onClose}>
       <section className="report-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
@@ -1580,10 +1711,111 @@ function ReportPreviewModal({ report, onAddNote, onClose }) {
         </div>
         <iframe
           className="report-frame"
-          sandbox="allow-popups allow-popups-to-escape-sandbox"
+          onLoad={wireReportFrame}
+          ref={iframeRef}
+          sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
           srcDoc={reportHtml}
           title={`Report ${report.report_date}`}
         />
+      </section>
+      {memoryStatus !== "idle" ? (
+        <CompanyMemoryModal
+          error={memoryError}
+          memory={memoryDetail}
+          onClose={() => {
+            setMemoryStatus("idle");
+            setMemoryDetail(null);
+            setMemoryError("");
+          }}
+          status={memoryStatus}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function CompanyMemoryModal({ error, memory, onClose, status }) {
+  const memoryStatusLabel = memory?.status === "resolved"
+    ? "Resolved"
+    : memory?.status === "stale"
+      ? "Developing"
+      : "Active";
+  return (
+    <div className="modal-backdrop nested-modal-backdrop" onMouseDown={(event) => { event.stopPropagation(); onClose(); }}>
+      <section className="modal-panel company-memory-panel long-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <div className="modal-header">
+          <div className="selected-stock no-margin">
+            {memory ? <img className="stock-logo large" {...stockLogoProps(memory.logo_url)} alt="" /> : <Info size={22} aria-hidden="true" />}
+            <div>
+              <p className="eyebrow">Tracked context</p>
+              <h2>{memory ? `${memory.symbol}: ${memory.theme}` : "Company memory"}</h2>
+            </div>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Close context" type="button">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        {status === "loading" ? <p className="muted">Loading tracked context...</p> : null}
+        {status === "error" ? <p className="form-error">{error}</p> : null}
+        {status === "ready" && memory ? (
+          <div className="company-memory-content">
+            <div className="company-memory-summary">
+              <div>
+                <span>First seen</span>
+                <strong>{formatDateOnly(memory.first_seen_at)}</strong>
+              </div>
+              <div>
+                <span>Last update</span>
+                <strong>{formatDateOnly(memory.last_seen_at)}</strong>
+              </div>
+              <div>
+                <span>Developments</span>
+                <strong>{memory.evidence_count}</strong>
+              </div>
+              <div>
+                <span>Status</span>
+                <strong>{memoryStatusLabel}</strong>
+              </div>
+            </div>
+
+            <section className="research-card company-memory-section">
+              <div className="research-card-header">
+                <strong>What we know so far</strong>
+              </div>
+              <p>{memory.description}</p>
+              {memory.latest_development ? <p><strong>Latest development:</strong> {memory.latest_development}</p> : null}
+              {memory.thesis_points?.length ? (
+                <div className="company-memory-thesis">
+                  {memory.thesis_points.map((point) => <span key={point}>{point}</span>)}
+                </div>
+              ) : null}
+            </section>
+
+            <section className="research-card company-memory-section">
+              <div className="research-card-header">
+                <strong>Timeline</strong>
+              </div>
+              <div className="company-memory-timeline">
+                {(memory.events ?? []).map((event) => (
+                  <article className="company-memory-event" key={event.id}>
+                    <div className="company-memory-event-date">
+                      <span>{formatDateOnly(event.event_date)}</span>
+                      <strong>{event.event_type === "created" ? "Started tracking" : "New development"}</strong>
+                    </div>
+                    <div className="company-memory-event-body">
+                      {event.headline ? <h3>{event.headline}</h3> : null}
+                      <p>{event.summary}</p>
+                      <div className="company-memory-event-links">
+                        {event.source_url ? <a href={event.source_url} rel="noreferrer" target="_blank">Full article</a> : null}
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </div>
+        ) : null}
       </section>
     </div>
   );
