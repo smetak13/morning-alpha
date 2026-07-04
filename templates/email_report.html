@@ -124,7 +124,7 @@
                 <table class="report-meta-table" border="0" cellpadding="0" cellspacing="0" role="presentation" style="border-collapse: collapse; max-width: 100%; width: 100%;">
                   <tr>
                     <td class="report-meta-cell" style="line-height: normal; padding-top: 15px; text-align: left; vertical-align: top;">
-                      <span class="report-kicker" style="color: #8f8f87; display: block; font-size: 10px; font-weight: bold; letter-spacing: 0.08em; line-height: 1.2; text-transform: uppercase;">Morning Report</span>
+                      <span class="report-kicker" style="color: #8f8f87; display: block; font-size: 10px; font-weight: bold; letter-spacing: 0.08em; line-height: 1.2; text-transform: uppercase;">{{ report_kicker_display }}</span>
                       <strong class="report-date-main" style="color: #ffffff; display: block; font-size: 13px; font-weight: bold; line-height: 1.35; margin-top: 3px; text-align: left;">{{ report_date_display }}</strong>
                     </td>
                   </tr>
@@ -163,18 +163,18 @@
             </ul>
           </div>
 
-          {% if company_view.portfolio or company_view.watchlist %}
+          {% if company_view.portfolio_nav or company_view.watchlist_nav %}
             <div class="company-nav" style="margin: 18px 0 0;">
-              {% if company_view.portfolio %}
+              {% if company_view.portfolio_nav %}
                 <p class="meta" style="color: #a7a7a0; font-size: 12px; line-height: 1.5; margin: 0 0 8px;">Portfolio</p>
-                {% for company in company_view.portfolio %}
+                {% for company in company_view.portfolio_nav %}
                   {% set company_href = (open_app_url ~ "#" ~ company.anchor) if open_app_url else ("#" ~ company.anchor) %}
                   <a class="company-chip" data-company-anchor="{{ company.anchor }}" href="{{ company_href }}" target="{{ '_blank' if open_app_url else '_self' }}" style="background: #1a1a1a; border: 1px solid #343434; border-radius: 999px; color: #f4f4f0; display: inline-block; font-size: 12px; font-weight: bold; margin: 0 6px 8px 0; padding: 7px 11px; text-decoration: none;">{{ company.ticker }}</a>
                 {% endfor %}
               {% endif %}
-              {% if company_view.watchlist %}
+              {% if company_view.watchlist_nav %}
                 <p class="meta" style="color: #a7a7a0; font-size: 12px; line-height: 1.5; margin: 10px 0 8px;">Watchlist</p>
-                {% for company in company_view.watchlist %}
+                {% for company in company_view.watchlist_nav %}
                   {% set company_href = (open_app_url ~ "#" ~ company.anchor) if open_app_url else ("#" ~ company.anchor) %}
                   <a class="company-chip" data-company-anchor="{{ company.anchor }}" href="{{ company_href }}" target="{{ '_blank' if open_app_url else '_self' }}" style="background: #1a1a1a; border: 1px solid #343434; border-radius: 999px; color: #f4f4f0; display: inline-block; font-size: 12px; font-weight: bold; margin: 0 6px 8px 0; padding: 7px 11px; text-decoration: none;">{{ company.ticker }}</a>
                 {% endfor %}

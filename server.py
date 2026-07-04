@@ -148,6 +148,7 @@ class WatchlistItemUpdateRequest(BaseModel):
 
 class UserSettingsUpdateRequest(BaseModel):
     report_scheduled_at: str | None = None
+    report_frequency: Literal["daily", "weekly", "monthly"] | None = None
     timezone: str | None = None
 
 
@@ -320,6 +321,7 @@ def get_user_profile(user_id: Any) -> dict[str, Any] | None:
                     timezone,
                     locale,
                     report_scheduled_at,
+                    report_frequency,
                     created_at,
                     updated_at
                 from public.users
@@ -363,6 +365,7 @@ def create_user_profile_if_missing(user: dict[str, Any], timezone: str | None = 
                     timezone,
                     locale,
                     report_scheduled_at,
+                    report_frequency,
                     created_at,
                     updated_at
                 """,
@@ -548,6 +551,9 @@ def update_user_settings(payload: UserSettingsUpdateRequest, request: Request) -
     if "timezone" in updates and updates["timezone"] is not None:
         params["timezone"] = validate_timezone(updates["timezone"])
         set_clauses.append("timezone = %(timezone)s")
+    if "report_frequency" in updates and updates["report_frequency"] is not None:
+        params["report_frequency"] = updates["report_frequency"]
+        set_clauses.append("report_frequency = %(report_frequency)s")
 
     if not set_clauses:
         profile = get_user_profile(user_id)
@@ -569,6 +575,7 @@ def update_user_settings(payload: UserSettingsUpdateRequest, request: Request) -
                     timezone,
                     locale,
                     report_scheduled_at,
+                    report_frequency,
                     created_at,
                     updated_at
                 """,

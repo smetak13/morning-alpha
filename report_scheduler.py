@@ -30,6 +30,7 @@ class ScheduledReportJob:
     email: str
     timezone: str
     report_scheduled_at: dt.time
+    report_frequency: str
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,8 +85,17 @@ def scheduled_time_is_due(
     return False
 
 
-def report_delivery_is_enabled(*, timezone: str, run_at_utc: dt.datetime) -> bool:
+def normalize_report_frequency(value: str | None) -> str:
+    frequency = str(value or "daily").strip().lower()
+    return frequency if frequency in {"daily", "weekly", "monthly"} else "daily"
+
+
+def report_delivery_is_enabled(*, timezone: str, run_at_utc: dt.datetime, frequency: str) -> bool:
     local_date = run_at_utc.astimezone(ZoneInfo(timezone)).date()
+    if frequency == "weekly":
+        return local_date.weekday() == 6
+    if frequency == "monthly":
+        return local_date.day == 1
     return local_date.weekday() < 5
 
 
@@ -103,7 +113,8 @@ def load_due_jobs(run_at_utc: dt.datetime, lookback: dt.timedelta) -> list[Sched
                     id::text as id,
                     email,
                     timezone,
-                    report_scheduled_at
+                    report_scheduled_at,
+                    report_frequency
                 from public.users
                 where email is not null
                   and report_scheduled_at is not null
@@ -119,11 +130,13 @@ def load_due_jobs(run_at_utc: dt.datetime, lookback: dt.timedelta) -> list[Sched
             continue
 
         timezone = normalize_timezone(row.get("timezone"))
-        if not report_delivery_is_enabled(timezone=timezone, run_at_utc=run_at_utc):
+        report_frequency = normalize_report_frequency(row.get("report_frequency"))
+        if not report_delivery_is_enabled(timezone=timezone, run_at_utc=run_at_utc, frequency=report_frequency):
             logging.debug(
-                "Skipping scheduled report on weekend user_id=%s timezone=%s local_date=%s",
+                "Skipping scheduled report outside frequency window user_id=%s timezone=%s frequency=%s local_date=%s",
                 row["id"],
                 timezone,
+                report_frequency,
                 run_at_utc.astimezone(ZoneInfo(timezone)).date().isoformat(),
             )
             continue
@@ -143,6 +156,7 @@ def load_due_jobs(run_at_utc: dt.datetime, lookback: dt.timedelta) -> list[Sched
                 email=email,
                 timezone=timezone,
                 report_scheduled_at=report_scheduled_at,
+                report_frequency=report_frequency,
             )
         )
 
@@ -194,6 +208,7 @@ def process_queue(
                 user_id=job.user_id,
                 recipient_email=job.email,
                 date_arg=date_arg,
+                frequency=job.report_frequency,
                 config_path=config_path,
                 send_email_report=True,
                 skip_openai=skip_openai,

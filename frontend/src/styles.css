@@ -1264,6 +1264,14 @@ input::placeholder {
 
 .schedule-controls {
   align-items: end;
+  display: grid;
+  gap: 12px;
+  justify-content: flex-end;
+  justify-items: end;
+}
+
+.schedule-control-row {
+  align-items: end;
   display: flex;
   gap: 12px;
   justify-content: flex-end;
@@ -1299,6 +1307,33 @@ input::placeholder {
 
 .time-field {
   min-width: 140px;
+}
+
+.report-frequency-tabs {
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  display: inline-grid;
+  gap: 3px;
+  grid-template-columns: repeat(3, auto);
+  padding: 3px;
+}
+
+.report-frequency-tabs button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #a7a7a0;
+  font-size: 0.82rem;
+  min-height: 32px;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.report-frequency-tabs button.active {
+  background: #f4c430;
+  color: #111111;
+  font-weight: 700;
 }
 
 .custom-combobox {
@@ -4274,18 +4309,29 @@ input[type="range"] {
 
   .schedule-panel {
     display: flex;
+    flex-direction: column;
     gap: 16px;
     padding: 16px;
   }
 
   .schedule-controls {
     align-items: stretch;
+    justify-content: stretch;
+    justify-items: stretch;
+    width: 100%;
+  }
+
+  .schedule-control-row {
+    align-items: stretch;
     flex-direction: column;
+    justify-content: stretch;
+    width: 100%;
   }
 
   .timezone-field,
   .schedule-field {
     min-width: 0;
+    width: 100%;
   }
 
   .toolbar-actions {
@@ -4347,7 +4393,8 @@ input[type="range"] {
   }
 
   .resolved-filter,
-  .research-type-filter {
+  .research-type-filter,
+  .report-frequency-tabs {
     width: 100%;
   }
 
@@ -4360,8 +4407,13 @@ input[type="range"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .report-frequency-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .resolved-filter-button,
   .research-type-filter button,
+  .report-frequency-tabs button,
   .research-type-switch button {
     min-width: 0;
     white-space: normal;

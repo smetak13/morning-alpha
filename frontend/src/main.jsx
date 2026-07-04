@@ -167,9 +167,20 @@ function resolveTimeInput(value) {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
+const REPORT_FREQUENCIES = [
+  ["daily", "Daily"],
+  ["weekly", "Weekly"],
+  ["monthly", "Monthly"],
+];
+
+function reportFrequencyValue(value) {
+  return REPORT_FREQUENCIES.some(([option]) => option === value) ? value : "daily";
+}
+
 function userSettingsFromProfile(user) {
   return {
     report_scheduled_at: timeInputValue(user?.report_scheduled_at),
+    report_frequency: reportFrequencyValue(user?.report_frequency),
     timezone: user?.timezone || browserTimezone() || "Europe/Prague",
   };
 }
@@ -4954,18 +4965,40 @@ function ReportSchedulePanel({ error, onChange, settings }) {
     <section className="schedule-panel">
       <div className="schedule-copy">
         <p className="eyebrow">Report delivery</p>
-        <h2>Daily report schedule</h2>
+        <h2>Report schedule</h2>
       </div>
       <div className="schedule-controls">
-        <ReportTimePicker value={settings.report_scheduled_at} onChange={(value) => onChange({ report_scheduled_at: value })} />
-        <TimezoneCombobox
-          options={timezones}
-          value={settings.timezone}
-          onChange={(value) => onChange({ timezone: value })}
-        />
+        <div className="schedule-control-row">
+          <ReportTimePicker value={settings.report_scheduled_at} onChange={(value) => onChange({ report_scheduled_at: value })} />
+          <TimezoneCombobox
+            options={timezones}
+            value={settings.timezone}
+            onChange={(value) => onChange({ timezone: value })}
+          />
+        </div>
+        <ReportFrequencyTabs value={settings.report_frequency} onChange={(value) => onChange({ report_frequency: value })} />
       </div>
       {error ? <p className="error schedule-error">{error}</p> : null}
     </section>
+  );
+}
+
+function ReportFrequencyTabs({ value, onChange }) {
+  return (
+    <div className="report-frequency-tabs" role="tablist" aria-label="Report frequency">
+      {REPORT_FREQUENCIES.map(([option, label]) => (
+        <button
+          aria-selected={value === option}
+          className={value === option ? "active" : ""}
+          key={option}
+          onClick={() => onChange(option)}
+          role="tab"
+          type="button"
+        >
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 

@@ -34,6 +34,15 @@ ATTENTION_LABELS = {
     "no_material_change",
 }
 
+REPORT_FREQUENCIES = {"daily", "weekly", "monthly"}
+
+
+@dataclass(frozen=True)
+class ReportWindow:
+    report_date: dt.date
+    window_start: dt.datetime
+    window_end: dt.datetime
+
 LABEL_DESCRIPTIONS = {
     "no_action": "No meaningful follow-up needed from this report item.",
     "monitor": "Relevant item to keep watching, but not enough to change the thesis.",
@@ -1903,6 +1912,7 @@ def generate_report_with_openai(
     *,
     user_id: str | None = None,
     task: str = "report_gen",
+    frequency: str = "daily",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     from openai import OpenAI
 
@@ -1915,14 +1925,31 @@ def generate_report_with_openai(
         "Classify relevance, thesis impact, and next things to monitor. "
         "Return valid JSON only."
     )
-    user = {
-        "task": (
-            "Create a daily investment morning report from this prefiltered context. "
+    frequency = normalize_report_frequency(frequency)
+    report_period_label = {
+        "daily": "daily",
+        "weekly": "weekly",
+        "monthly": "monthly",
+    }[frequency]
+    task_text = (
+        "Create a daily investment morning report from this prefiltered context. "
+        "For the top_market_themes section, create a short list of notable market reads from context.market_theme_candidates. "
+        "Each item must use exactly one candidate and exactly that candidate's single supporting article. "
+        "Do not turn a single article into a broad trend. "
+        "Prefer the single most relevant article per portfolio/watchlist company; omit weaker duplicate items for the same ticker."
+    )
+    if frequency != "daily":
+        task_text = (
+            f"Create a {report_period_label} investment morning report from this prefiltered context. "
+            "Use the same section structure and JSON schema as the daily report, but synthesize the whole context.news_window. "
+            "Because the period is longer, include more material company and market developments when the supplied context supports them. "
             "For the top_market_themes section, create a short list of notable market reads from context.market_theme_candidates. "
             "Each item must use exactly one candidate and exactly that candidate's single supporting article. "
             "Do not turn a single article into a broad trend. "
-            "Prefer the single most relevant article per portfolio/watchlist company; omit weaker duplicate items for the same ticker."
-        ),
+            "Prefer the most relevant material articles per portfolio/watchlist company and avoid weaker duplicate items for the same ticker."
+        )
+    user = {
+        "task": task_text,
         "writing_guidance": [
             "Write for beginner investors: explain financial implications plainly and avoid unexplained jargon.",
             "Write like an investor brief, not like a source audit. State the business implication directly in your own words.",
@@ -2055,11 +2082,26 @@ def generate_report_with_openai(
         },
         "context": context,
     }
+    if frequency != "daily":
+        user["writing_guidance"] = [
+            "For portfolio_news and watchlist_news, include up to 2 material items per ticker for weekly reports and up to 3 for monthly reports; omit weaker duplicate coverage for the same event."
+            if item == "For portfolio_news and watchlist_news, include at most one item per ticker: choose the highest-materiality item and omit the rest."
+            else item
+            for item in user["writing_guidance"]
+        ]
     if not context.get("market_theme_candidates"):
-        user["task"] = (
-            "Create a daily investment morning report from this prefiltered context. "
-            "Focus only on executive_summary, portfolio_news, thesis_impact, watchlist_news, attention_flags, and sources."
-        )
+        if frequency == "daily":
+            user["task"] = (
+                "Create a daily investment morning report from this prefiltered context. "
+                "Focus only on executive_summary, portfolio_news, thesis_impact, watchlist_news, attention_flags, and sources."
+            )
+        else:
+            user["task"] = (
+                f"Create a {report_period_label} investment morning report from this prefiltered context. "
+                "Use the same section structure and JSON schema as the daily report, but synthesize the whole context.news_window. "
+                "Because the period is longer, include more material company developments when the supplied context supports them. "
+                "Focus only on executive_summary, portfolio_news, thesis_impact, watchlist_news, attention_flags, and sources."
+            )
         user["writing_guidance"] = [
             item for item in user["writing_guidance"] if "top_market_themes" not in item
         ]
@@ -2587,8 +2629,8 @@ def importance_priority(value: Any) -> int:
     return {"high": 30, "medium": 20, "low": 10}.get(normalize_importance(value), 0)
 
 
-def keep_best_item_per_ticker(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    best_by_ticker: dict[str, tuple[int, int, dict[str, Any]]] = {}
+def keep_best_items_per_ticker(items: list[dict[str, Any]], limit: int = 1) -> list[dict[str, Any]]:
+    best_by_ticker: dict[str, list[tuple[int, int, dict[str, Any]]]] = {}
     passthrough: list[dict[str, Any]] = []
     for index, item in enumerate(items):
         ticker = str(item.get("ticker") or "").upper()
@@ -2596,10 +2638,15 @@ def keep_best_item_per_ticker(items: list[dict[str, Any]]) -> list[dict[str, Any
             passthrough.append(item)
             continue
         score = label_priority(item.get("attention_label") or item.get("label")) + importance_priority(item.get("importance"))
-        current = best_by_ticker.get(ticker)
-        if current is None or score > current[0]:
-            best_by_ticker[ticker] = (score, index, item)
-    return passthrough + [item for _score, _index, item in sorted(best_by_ticker.values(), key=lambda entry: entry[1])]
+        best_by_ticker.setdefault(ticker, []).append((score, index, item))
+    retained = []
+    for ticker_items in best_by_ticker.values():
+        retained.extend(sorted(ticker_items, key=lambda entry: (-entry[0], entry[1]))[:limit])
+    return passthrough + [item for _score, _index, item in sorted(retained, key=lambda entry: entry[1])]
+
+
+def keep_best_item_per_ticker(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return keep_best_items_per_ticker(items, limit=1)
 
 
 def remove_meta_report_phrases(items: list[Any]) -> list[Any]:
@@ -2615,6 +2662,8 @@ def remove_meta_report_phrases(items: list[Any]) -> list[Any]:
 
 
 def validate_report(report: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    frequency = normalize_report_frequency(context.get("report_frequency"))
+    per_ticker_limit = 1 if frequency == "daily" else 2 if frequency == "weekly" else 3
     report["report_date"] = str(report.get("report_date") or context["report_date"])
     for key in ("executive_summary", "portfolio_news", "thesis_impact", "watchlist_news", "top_market_themes", "attention_flags", "sources"):
         if not isinstance(report.get(key), list):
@@ -2639,14 +2688,16 @@ def validate_report(report: dict[str, Any], context: dict[str, Any]) -> dict[str
         for item in report[section]:
             item["importance"] = infer_importance(item, item.get("attention_label"))
     for section in ("portfolio_news", "watchlist_news"):
-        report[section] = keep_best_item_per_ticker(
-            [item for item in report[section] if not is_low_materiality_legal_item(item)]
+        report[section] = keep_best_items_per_ticker(
+            [item for item in report[section] if not is_low_materiality_legal_item(item)],
+            limit=per_ticker_limit,
         )
     filter_news_sections_to_context(report, context)
     filter_thesis_impact_to_retained_news(report)
     fill_missing_watchlist_news(report, context)
-    report["watchlist_news"] = keep_best_item_per_ticker(
-        [item for item in report["watchlist_news"] if not is_low_materiality_legal_item(item)]
+    report["watchlist_news"] = keep_best_items_per_ticker(
+        [item for item in report["watchlist_news"] if not is_low_materiality_legal_item(item)],
+        limit=per_ticker_limit,
     )
     for section in ("portfolio_news", "watchlist_news"):
         for item in report[section]:
@@ -2808,6 +2859,8 @@ def build_company_report_view(report: dict[str, Any], inline_company_logos: bool
         for item in report.get("watchlist_news", [])
         if isinstance(item, dict) and item.get("ticker")
     ]
+    assign_unique_company_anchors(portfolio)
+    assign_unique_company_anchors(watchlist)
     retained_tickers = {company["ticker"] for company in portfolio}
     standalone_flags = [
         item
@@ -2817,10 +2870,36 @@ def build_company_report_view(report: dict[str, Any], inline_company_logos: bool
     return {
         "portfolio": portfolio,
         "watchlist": watchlist,
+        "portfolio_nav": unique_company_nav(portfolio),
+        "watchlist_nav": unique_company_nav(watchlist),
         "standalone_flags": standalone_flags,
         "portfolio_count": len(portfolio),
         "watchlist_count": len(watchlist),
     }
+
+
+def unique_company_nav(companies: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    unique = []
+    for company in companies:
+        ticker = str(company.get("ticker") or "").upper()
+        if not ticker or ticker in seen:
+            continue
+        seen.add(ticker)
+        unique.append(company)
+    return unique
+
+
+def assign_unique_company_anchors(companies: list[dict[str, Any]]) -> None:
+    counts: dict[str, int] = {}
+    for company in companies:
+        base_anchor = str(company.get("anchor") or "")
+        if not base_anchor:
+            continue
+        count = counts.get(base_anchor, 0)
+        counts[base_anchor] = count + 1
+        if count:
+            company["anchor"] = f"{base_anchor}-{count + 1}"
 
 
 def display_date(value: Any) -> str:
@@ -2840,6 +2919,27 @@ def display_long_date(value: Any) -> str:
         return parsed.strftime("%B %-d, %Y") if os.name != "nt" else parsed.strftime("%B %#d, %Y")
     except (TypeError, ValueError):
         return str(value or "")
+
+
+def report_date_display(report: dict[str, Any]) -> str:
+    frequency = str(report.get("_report_frequency") or "daily").lower()
+    if frequency == "daily":
+        return display_long_date(report.get("report_date"))
+
+    start = report.get("_report_period_start")
+    end = report.get("_report_period_end") or report.get("report_date")
+    if start and end:
+        return f"{display_long_date(start)} - {display_long_date(end)}"
+    return display_long_date(report.get("report_date"))
+
+
+def report_kicker_display(report: dict[str, Any]) -> str:
+    frequency = str(report.get("_report_frequency") or "daily").lower()
+    if frequency == "weekly":
+        return "Weekly Morning Report"
+    if frequency == "monthly":
+        return "Monthly Morning Report"
+    return "Daily Morning Report"
 
 
 def render_email(
@@ -2862,7 +2962,8 @@ def render_email(
         company_view=build_company_report_view(report, inline_company_logos=inline_company_logos),
         subject=subject,
         display_title=display_title,
-        report_date_display=display_long_date(report.get("report_date")),
+        report_kicker_display=report_kicker_display(report),
+        report_date_display=report_date_display(report),
         generated_at=display_date(dt.datetime.now(tz=PRAGUE_TZ).date()),
         is_email_delivery=open_app_url is not None,
         logo_src=email_asset_src("ma-logo.png"),
@@ -3065,6 +3166,72 @@ def resolve_report_date(date_arg: str) -> dt.date:
     return report_date
 
 
+def normalize_report_frequency(value: str | None) -> str:
+    frequency = str(value or "daily").strip().lower()
+    if frequency not in REPORT_FREQUENCIES:
+        raise SystemExit(f"Unsupported report frequency {value!r}. Use daily, weekly, or monthly.")
+    return frequency
+
+
+def timezone_from_config(config: dict[str, Any]) -> ZoneInfo:
+    timezone = str(config.get("timezone") or "Europe/Prague")
+    try:
+        return ZoneInfo(timezone)
+    except Exception:
+        return PRAGUE_TZ
+
+
+def latest_day_for_weekly_report(local_date: dt.date) -> dt.date:
+    if local_date.weekday() >= 5:
+        return local_date - dt.timedelta(days=local_date.weekday() - 4)
+    return local_date
+
+
+def latest_day_for_monthly_report(local_date: dt.date) -> dt.date:
+    if local_date.day == 1:
+        return local_date.replace(day=1) - dt.timedelta(days=1)
+    return local_date
+
+
+def period_window_end(period_end: dt.date, now_local: dt.datetime, date_arg: str) -> dt.datetime:
+    if date_arg == "latest" and period_end == now_local.date():
+        return now_local
+    return dt.datetime.combine(period_end, dt.time.max, tzinfo=NY_TZ)
+
+
+def resolve_report_window(date_arg: str, frequency: str, config: dict[str, Any]) -> ReportWindow:
+    frequency = normalize_report_frequency(frequency)
+    now_local = dt.datetime.now(tz=timezone_from_config(config))
+
+    if frequency == "daily":
+        report_date = resolve_report_date(date_arg)
+        return ReportWindow(
+            report_date=report_date,
+            window_start=dt.datetime.combine(report_date, dt.time.min, tzinfo=NY_TZ),
+            window_end=now_local,
+        )
+
+    if date_arg == "latest":
+        period_end = (
+            latest_day_for_weekly_report(now_local.date())
+            if frequency == "weekly"
+            else latest_day_for_monthly_report(now_local.date())
+        )
+    else:
+        period_end = resolve_report_date(date_arg)
+
+    if frequency == "weekly":
+        period_start = period_end - dt.timedelta(days=period_end.weekday())
+    else:
+        period_start = period_end.replace(day=1)
+
+    return ReportWindow(
+        report_date=period_end,
+        window_start=dt.datetime.combine(period_start, dt.time.min, tzinfo=NY_TZ),
+        window_end=period_window_end(period_end, now_local, date_arg),
+    )
+
+
 def write_report_outputs(
     *,
     context: dict[str, Any],
@@ -3095,6 +3262,7 @@ def run_report_for_user(
     user_id: str,
     recipient_email: str | None = None,
     date_arg: str = "latest",
+    frequency: str = "daily",
     config_path: str | Path = "config.yaml",
     send_email_report: bool = False,
     skip_openai: bool = False,
@@ -3105,14 +3273,14 @@ def run_report_for_user(
 ) -> dict[str, Any]:
     config_file = Path(config_path)
     config = load_yaml(config_file if config_file.is_absolute() else ROOT / config_file)
+    frequency = normalize_report_frequency(frequency)
     portfolio = load_portfolio_from_db(user_id)
     watchlist = load_watchlist_from_db(user_id)
 
-    report_date = resolve_report_date(date_arg)
-
-    now_prague = dt.datetime.now(tz=ZoneInfo(config.get("timezone", "Europe/Prague")))
-    window_start = dt.datetime.combine(report_date, dt.time.min, tzinfo=NY_TZ)
-    window_end = now_prague
+    report_window = resolve_report_window(date_arg, frequency, config)
+    report_date = report_window.report_date
+    window_start = report_window.window_start
+    window_end = report_window.window_end
 
     fmp_api_key = os.getenv("FMP_API_KEY")
     if not fmp_api_key:
@@ -3133,9 +3301,16 @@ def run_report_for_user(
         portfolio=portfolio,
         watchlist=watchlist,
         items=ranked_news,
-        max_items=int(config.get("openai", {}).get("max_input_items", 35)),
+        max_items=int(
+            config.get("openai", {}).get(
+                f"{frequency}_max_input_items",
+                config.get("openai", {}).get("max_input_items", 35) if frequency == "daily" else 70,
+            )
+        ),
         config=config,
     )
+    if frequency != "daily":
+        context["report_frequency"] = frequency
     try:
         from company_memory import build_company_memory_context
 
@@ -3150,7 +3325,17 @@ def run_report_for_user(
     else:
         if not os.getenv("OPENAI_API_KEY"):
             raise SystemExit("OPENAI_API_KEY is required unless --skip-openai is used.")
-        report, usage = generate_report_with_openai(context, config, user_id=user_id, task="report_gen")
+        report, usage = generate_report_with_openai(
+            context,
+            config,
+            user_id=user_id,
+            task=f"{frequency}_report_gen" if frequency != "daily" else "report_gen",
+            frequency=frequency,
+        )
+
+    report["_report_frequency"] = frequency
+    report["_report_period_start"] = window_start.date().isoformat()
+    report["_report_period_end"] = report_date.isoformat()
 
     subject = build_subject(config, report_date)
     html = render_email(report, subject)
@@ -3213,6 +3398,7 @@ def run_report_for_user(
     return {
         "subject": subject,
         "report_date": report_date.isoformat(),
+        "report_frequency": frequency,
         "report_id": report_id,
         "usage": usage,
         "company_memory": memory_summary,
@@ -3226,6 +3412,7 @@ def run_report_for_user(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a personalized investment morning report.")
     parser.add_argument("--date", default="latest", help="'latest' or an explicit YYYY-MM-DD US trading date.")
+    parser.add_argument("--frequency", choices=sorted(REPORT_FREQUENCIES), default="daily", help="Report frequency window.")
     parser.add_argument("--config", default="config.yaml", help="Path to config YAML.")
     parser.add_argument("--user-id", help="User ID whose portfolio should be used for the report.")
     parser.add_argument("--check-db", action="store_true", help="Verify the configured Neon/Postgres connection and exit.")
@@ -3290,6 +3477,7 @@ def main() -> int:
         user_id=args.user_id,
         recipient_email=args.recipient_email,
         date_arg=args.date,
+        frequency=args.frequency,
         config_path=args.config,
         send_email_report=args.send_email,
         skip_openai=args.skip_openai,
