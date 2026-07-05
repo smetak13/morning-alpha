@@ -4,6 +4,7 @@ import os
 import json
 import html
 import datetime as dt
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -2187,10 +2188,72 @@ def parse_report_date_filter(value: str | None, field_name: str) -> dt.date | No
         raise HTTPException(status_code=422, detail=f"{field_name} must use YYYY-MM-DD format.")
 
 
+def display_long_date(value: Any) -> str:
+    if isinstance(value, dt.datetime):
+        value = value.date()
+    if isinstance(value, dt.date):
+        return f"{value.strftime('%B')} {value.day}, {value.year}"
+    try:
+        parsed = dt.date.fromisoformat(str(value))
+        return f"{parsed.strftime('%B')} {parsed.day}, {parsed.year}"
+    except (TypeError, ValueError):
+        return str(value or "")
+
+
+def fallback_report_period_display(report_date: Any, frequency: str) -> str:
+    parsed = report_date if isinstance(report_date, dt.date) else None
+    if parsed is None:
+        try:
+            parsed = dt.date.fromisoformat(str(report_date))
+        except (TypeError, ValueError):
+            return str(report_date or "")
+
+    if frequency == "weekly":
+        start = parsed - dt.timedelta(days=parsed.weekday())
+        return f"{display_long_date(start)} - {display_long_date(parsed)}"
+    if frequency == "monthly":
+        start = parsed.replace(day=1)
+        return f"{display_long_date(start)} - {display_long_date(parsed)}"
+    return display_long_date(parsed)
+
+
+def report_archive_metadata_from_html(report_html: str | None) -> dict[str, str]:
+    metadata = {"report_frequency": "daily", "report_period_display": ""}
+    if not report_html:
+        return metadata
+
+    kicker_match = re.search(r'class=["\'][^"\']*\breport-kicker\b[^"\']*["\'][^>]*>(.*?)</span>', report_html, re.IGNORECASE | re.DOTALL)
+    if kicker_match:
+        kicker = html.unescape(re.sub(r"<[^>]+>", "", kicker_match.group(1))).strip().lower()
+        if "weekly" in kicker:
+            metadata["report_frequency"] = "weekly"
+        elif "monthly" in kicker:
+            metadata["report_frequency"] = "monthly"
+        elif "daily" in kicker:
+            metadata["report_frequency"] = "daily"
+
+    date_match = re.search(r'class=["\'][^"\']*\breport-date-main\b[^"\']*["\'][^>]*>(.*?)</strong>', report_html, re.IGNORECASE | re.DOTALL)
+    if date_match:
+        metadata["report_period_display"] = html.unescape(re.sub(r"<[^>]+>", "", date_match.group(1))).strip()
+
+    return metadata
+
+
 def serialize_report_row(row: dict[str, Any], include_html: bool = False) -> dict[str, Any]:
+    metadata = report_archive_metadata_from_html(row.get("html"))
+    report_frequency = str(row.get("report_frequency") or metadata["report_frequency"] or "daily").lower()
+    if report_frequency not in {"daily", "weekly", "monthly"}:
+        report_frequency = "daily"
+    report_period_display = (
+        row.get("report_period_display")
+        or metadata["report_period_display"]
+        or fallback_report_period_display(row.get("report_date"), report_frequency)
+    )
     payload = {
         "id": str(row["id"]),
         "report_date": row["report_date"].isoformat() if hasattr(row["report_date"], "isoformat") else row["report_date"],
+        "report_frequency": report_frequency,
+        "report_period_display": report_period_display,
         "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
         "usage_id": str(row["usage_id"]) if row.get("usage_id") else None,
         "note_count": int(row.get("note_count") or 0),
@@ -2720,6 +2783,7 @@ def list_reports(
                     reports.usage_id::text as usage_id,
                     reports.report_date,
                     reports.created_at,
+                    reports.html,
                     count(notes.id)::int as note_count
                 from public.reports
                 left join public.notes

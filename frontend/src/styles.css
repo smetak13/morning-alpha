@@ -1594,15 +1594,30 @@ input::placeholder {
 }
 
 .report-date-cell {
-  align-items: center;
+  align-items: flex-start;
   color: #f4c430;
   display: flex;
   gap: 10px;
 }
 
+.report-date-cell > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 .report-date-cell strong {
   color: #ffffff;
   font-weight: 400;
+}
+
+.report-date-cell em {
+  color: #a7a7a0;
+  font-size: 0.76rem;
+  font-style: normal;
+  font-weight: 750;
+  line-height: 1.2;
+  text-transform: uppercase;
 }
 
 .notes-count-pill {

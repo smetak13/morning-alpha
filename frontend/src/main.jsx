@@ -210,6 +210,28 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+function formatLongDate(value) {
+  if (!value) {
+    return "";
+  }
+  if (!String(value).match(/^\d{4}-\d{2}-\d{2}$/)) {
+    return String(value);
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  }).format(parseIsoDate(value));
+}
+
+function reportFrequencyLabel(value) {
+  return REPORT_FREQUENCIES.find(([option]) => option === value)?.[1] ?? "Daily";
+}
+
+function reportPeriodDisplay(report) {
+  return report?.report_period_display || formatLongDate(report?.report_date) || report?.report_date || "";
+}
+
 function parseIsoDate(value) {
   const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) {
@@ -1595,7 +1617,10 @@ function ReportsView({ routeReportId = "" }) {
                         <div className="mobile-card-title-row">
                           <div className="report-date-cell">
                             <FileText size={17} aria-hidden="true" />
-                            <strong>{report.report_date}</strong>
+                            <span>
+                              <strong>{reportPeriodDisplay(report)}</strong>
+                              <em>{reportFrequencyLabel(report.report_frequency)} report</em>
+                            </span>
                           </div>
                           <button className="mobile-open-button" onClick={(event) => { event.stopPropagation(); openReport(report); }} type="button">
                             Open
@@ -1853,7 +1878,7 @@ function ReportPreviewModal({ report, onAddNote, onClose }) {
         <div className="report-modal-header">
           <div>
             <p className="eyebrow">Saved report</p>
-            <h2>{report.report_date}</h2>
+            <h2>{reportPeriodDisplay(report)}</h2>
           </div>
           <div className="modal-header-actions">
             <button className="primary-button compact-button" onClick={onAddNote} type="button">
@@ -1871,7 +1896,7 @@ function ReportPreviewModal({ report, onAddNote, onClose }) {
           ref={iframeRef}
           sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
           srcDoc={reportHtml}
-          title={`Report ${report.report_date}`}
+          title={`Report ${reportPeriodDisplay(report)}`}
         />
       </section>
       {memoryStatus !== "idle" ? (
@@ -2080,7 +2105,7 @@ function NoteFormModal({ initialStock = null, report = null, researchItem = null
       <section className="modal-panel note-modal-panel long-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="modal-header">
           <div>
-            <p className="eyebrow">{report ? `Report ${report.report_date}` : researchItem ? `${researchItem.symbol} research` : "Notes"}</p>
+            <p className="eyebrow">{report ? `Report ${reportPeriodDisplay(report)}` : researchItem ? `${researchItem.symbol} research` : "Notes"}</p>
             <h2>Add note</h2>
           </div>
           <button className="icon-button" onClick={onClose} title="Close" type="button">
@@ -2170,7 +2195,7 @@ function ReportNotesModal({ mode, report = null, researchItem = null, revision =
 
   const targetId = report?.id ?? researchItem?.id;
   const queryKey = report ? "report_id" : "research_item_id";
-  const title = report ? report.report_date : `${researchItem?.symbol} research`;
+  const title = report ? reportPeriodDisplay(report) : `${researchItem?.symbol} research`;
   const emptyText = report ? "No notes for this report yet." : "No notes for this research yet.";
 
   const loadNotes = useCallback(async () => {
