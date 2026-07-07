@@ -4,7 +4,11 @@ import os
 import json
 import html
 import datetime as dt
+import logging
 import re
+import sys
+import time
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,6 +16,7 @@ from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
+import requests
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
@@ -38,6 +43,15 @@ if load_dotenv is not None:
     load_dotenv()
 
 
+logger = logging.getLogger("morning_alpha.api")
+logger.setLevel(os.getenv("API_LOG_LEVEL", "INFO").upper())
+logger.propagate = False
+if not logger.handlers:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    logger.addHandler(handler)
+
+
 def parse_bool(value: str | None, default: bool) -> bool:
     if value is None:
         return default
@@ -57,9 +71,17 @@ def run_alembic_migrations() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    if parse_bool(os.getenv("API_RUN_MIGRATIONS_ON_STARTUP"), default=True):
+    migrations_enabled = parse_bool(os.getenv("API_RUN_MIGRATIONS_ON_STARTUP"), default=True)
+    if migrations_enabled:
+        started_at = time.perf_counter()
+        logger.info("Running startup migrations")
         run_alembic_migrations()
+        logger.info("Startup migrations completed duration_ms=%.1f", (time.perf_counter() - started_at) * 1000)
+    else:
+        logger.info("Startup migrations skipped")
+    logger.info("Morning Alpha API startup complete")
     yield
+    logger.info("Morning Alpha API shutdown complete")
 
 
 class RegisterRequest(BaseModel):
@@ -188,6 +210,41 @@ class FeedbackRequest(BaseModel):
 def create_app() -> FastAPI:
     app = FastAPI(title="Morning Alpha API", lifespan=lifespan)
 
+    @app.middleware("http")
+    async def log_request_response(request: Request, call_next: Any) -> Response:
+        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
+        started_at = time.perf_counter()
+        client_host = request.client.host if request.client else "-"
+        path = request.url.path
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = (time.perf_counter() - started_at) * 1000
+            logger.exception(
+                "Request failed request_id=%s method=%s path=%s status=500 duration_ms=%.1f client=%s",
+                request_id,
+                request.method,
+                path,
+                duration_ms,
+                client_host,
+            )
+            raise
+
+        duration_ms = (time.perf_counter() - started_at) * 1000
+        response.headers["x-request-id"] = request_id
+        log = logger.warning if response.status_code >= 400 else logger.info
+        log(
+            "Request completed request_id=%s method=%s path=%s status=%s duration_ms=%.1f client=%s",
+            request_id,
+            request.method,
+            path,
+            response.status_code,
+            duration_ms,
+            client_host,
+        )
+        return response
+
     allowed_origins = [origin.strip() for origin in os.getenv("API_CORS_ORIGINS", "").split(",") if origin.strip()]
     if allowed_origins:
         app.add_middleware(
@@ -205,6 +262,7 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+logger.info("Morning Alpha API app initialized")
 
 
 def neon_auth_url(path: str) -> str:
@@ -615,7 +673,7 @@ def current_user_id(request: Request) -> str:
 
 
 def stock_logo_url(symbol: str) -> str:
-    return f"https://financialmodelingprep.com/image-stock/{symbol.upper()}.png"
+    return f"/api/stocks/logo/{symbol.upper()}"
 
 
 def clean_symbol(value: str) -> str:
@@ -637,7 +695,8 @@ def fmp_client_from_env() -> Any:
 
     api_key = os.getenv("FMP_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=500, detail="FMP_API_KEY is not configured.")
+        logger.error("FMP_API_KEY is not configured")
+        raise HTTPException(status_code=500, detail="Market data service is not configured.")
 
     config = load_yaml(ROOT / "config.yaml")
     fmp_config = config.get("fmp", {})
@@ -666,6 +725,21 @@ def normalize_stock_search_item(item: dict[str, Any]) -> StockSearchResult | Non
     )
 
 
+def fmp_error_status(exc: Exception) -> int:
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    return status_code if isinstance(status_code, int) else 502
+
+
+def fmp_public_error_detail(operation: str, exc: Exception) -> str:
+    status_code = fmp_error_status(exc)
+    if status_code in {401, 403}:
+        return f"Stock {operation} is temporarily unavailable."
+    if status_code == 429:
+        return f"Stock {operation} is temporarily rate limited."
+    return f"Stock {operation} failed. Please try again later."
+
+
 @app.get("/api/stocks/search")
 def search_stocks(q: str, request: Request) -> dict[str, Any]:
     current_user_id(request)
@@ -679,7 +753,10 @@ def search_stocks(q: str, request: Request) -> dict[str, Any]:
         try:
             data = client.get(endpoint, {"query": query, "limit": 8})
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"FMP search failed: {exc}") from exc
+            status_code = fmp_error_status(exc)
+            detail = fmp_public_error_detail("search", exc)
+            logger.warning("FMP search failed endpoint=%s status=%s error=%s", endpoint, status_code, exc)
+            raise HTTPException(status_code=status_code, detail=detail) from exc
         if not isinstance(data, list):
             continue
         for item in data:
@@ -691,6 +768,27 @@ def search_stocks(q: str, request: Request) -> dict[str, Any]:
                 results_by_listing.setdefault(listing_key, result)
 
     return {"results": [result.model_dump() for result in list(results_by_listing.values())[:12]]}
+
+
+@app.get("/api/stocks/logo/{symbol}", response_model=None)
+def stock_logo(symbol: str) -> Response:
+    cleaned_symbol = clean_symbol(symbol)
+    url = f"https://financialmodelingprep.com/image-stock/{cleaned_symbol}.png"
+    try:
+        upstream = requests.get(url, timeout=10)
+        upstream.raise_for_status()
+    except Exception as exc:
+        logger.warning("Stock logo fetch failed symbol=%s error=%s", cleaned_symbol, exc)
+        raise HTTPException(status_code=404, detail="Stock logo not found.") from exc
+
+    content_type = upstream.headers.get("content-type", "image/png")
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=404, detail="Stock logo not found.")
+    return Response(
+        content=upstream.content,
+        media_type=content_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 def draft_thesis_schema(item_type: str) -> dict[str, Any]:
@@ -3637,4 +3735,4 @@ if __name__ == "__main__":
     port = int(os.getenv("API_PORT", "8000"))
     migrations_enabled = parse_bool(os.getenv("API_RUN_MIGRATIONS_ON_STARTUP"), default=True)
     print(f"Starting Morning Alpha API on http://{host}:{port} (startup migrations: {migrations_enabled})")
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, host=host, port=port, access_log=True, log_level=os.getenv("API_LOG_LEVEL", "INFO").lower())

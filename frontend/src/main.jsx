@@ -2830,8 +2830,8 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
       try {
         const response = await requestJson(`/api/stocks/search?q=${encodeURIComponent(search.trim())}`, { method: "GET" });
         setResults(response.results ?? []);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Search failed.");
+      } catch {
+        setError("Stock search is temporarily unavailable.");
       }
     }, 250);
     return () => window.clearTimeout(timer);
@@ -5409,8 +5409,8 @@ function StockThesisModal({ modal, onClose, onSaved }) {
           method: "GET",
         });
         setResults(payload.results ?? []);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Search failed.");
+      } catch {
+        setError("Stock search is temporarily unavailable.");
       }
     }, 300);
     return () => window.clearTimeout(timer);
