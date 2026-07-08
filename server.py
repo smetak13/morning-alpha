@@ -691,6 +691,15 @@ def clean_bullets(values: list[str] | None) -> list[str]:
     return [str(value).strip() for value in values if str(value).strip()]
 
 
+def strip_reason_prefix(value: str) -> str:
+    return re.sub(
+        r"^\s*(?:possible\s+)?(?:reason(?:s)?(?:\s+to\s+(?:watch|own|follow|track|monitor))?|reason\s+for\s+(?:watching|owning)|rationale)\s*:\s*",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    ).strip()
+
+
 def fmp_client_from_env() -> Any:
     from report import FmpClient, load_yaml
 
@@ -807,15 +816,19 @@ def draft_thesis_schema(item_type: str) -> dict[str, Any]:
 
 def normalize_draft_thesis(payload: dict[str, Any], item_type: str) -> dict[str, list[str]]:
     schema = draft_thesis_schema(item_type)
+    first_field = "why_i_own_it" if item_type == "portfolio" else "why_i_watch_it"
     normalized: dict[str, list[str]] = {}
     for key in schema:
         value = payload.get(key)
         if isinstance(value, str):
-            normalized[key] = clean_bullets([value])
+            bullets = clean_bullets([value])
         elif isinstance(value, list):
-            normalized[key] = clean_bullets([str(item) for item in value])
+            bullets = clean_bullets([str(item) for item in value])
         else:
-            normalized[key] = []
+            bullets = []
+        if key == first_field:
+            bullets = clean_bullets([strip_reason_prefix(item) for item in bullets])
+        normalized[key] = bullets
     return normalized
 
 
@@ -835,9 +848,9 @@ def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any
     schema = draft_thesis_schema(payload.item_type)
     first_label = "why_i_own_it" if payload.item_type == "portfolio" else "why_i_watch_it"
     first_guidance = (
-        "possible reasons a long-term investor might own this company"
+        "2 to 4 concise possible reasons a long-term investor might own this company; write the reason text directly with no label prefix"
         if payload.item_type == "portfolio"
-        else "possible reasons a long-term investor might watch this company"
+        else "2 to 4 concise possible reasons a long-term investor might watch this company; write the reason text directly with no label prefix"
     )
 
     prompt = {
@@ -860,6 +873,7 @@ def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any
             "Do not recommend buying, selling, holding, position sizing, or trading.",
             "Use cautious language because this is only an AI draft.",
             "Do not claim to know the user's personal reason; phrase personal-looking fields as possible reasons.",
+            "For the first field, do not prefix bullets with labels such as 'Possible reason:', 'Reason to watch:', or 'Reason to own:'.",
         ],
     }
     try:
