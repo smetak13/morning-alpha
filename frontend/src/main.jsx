@@ -19,6 +19,7 @@ import {
   Search,
   Share2,
   Sparkles,
+  Timeline,
   Trash2,
   UserPlus,
   X,
@@ -1086,6 +1087,7 @@ function MainPage({ route, user, onLogout }) {
   const [settingsError, setSettingsError] = useState("");
   const [modal, setModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [contextTarget, setContextTarget] = useState(null);
 
   const portfolioTotal = useMemo(
     () => portfolio.reduce((total, item) => total + Number(item.position_size_pct || 0), 0),
@@ -1350,6 +1352,7 @@ function MainPage({ route, user, onLogout }) {
               onAdd={() => openAddModal("portfolio")}
               onDelete={(item) => setDeleteTarget({ itemType: "portfolio", item })}
               onEdit={(item) => openEditModal("portfolio", item)}
+              onOpenContext={(item) => setContextTarget(item)}
               onReportToggle={(item, nextValue) => updateReportInclusion("portfolio", item, nextValue)}
               onSort={() => setPortfolio((current) => sortPortfolioItems(current))}
               onPositionChange={updatePortfolioPosition}
@@ -1366,6 +1369,7 @@ function MainPage({ route, user, onLogout }) {
               onAdd={() => openAddModal("watchlist")}
               onDelete={(item) => setDeleteTarget({ itemType: "watchlist", item })}
               onEdit={(item) => openEditModal("watchlist", item)}
+              onOpenContext={(item) => setContextTarget(item)}
               onMoveToPortfolio={openMoveToPortfolioModal}
               onReportToggle={(item, nextValue) => updateReportInclusion("watchlist", item, nextValue)}
               title="Watchlist"
@@ -1427,6 +1431,13 @@ function MainPage({ route, user, onLogout }) {
           item={deleteTarget.item}
           onCancel={() => setDeleteTarget(null)}
           onConfirm={handleDelete}
+        />
+      ) : null}
+
+      {contextTarget ? (
+        <CompanyContextModal
+          item={contextTarget}
+          onClose={() => setContextTarget(null)}
         />
       ) : null}
     </main>
@@ -2014,6 +2025,7 @@ function ReportPreviewModal({ report, onAddNote, onClose }) {
             setMemoryDetail(null);
             setMemoryError("");
           }}
+          onChanged={(nextMemory) => setMemoryDetail(nextMemory)}
           status={memoryStatus}
         />
       ) : null}
@@ -2021,21 +2033,53 @@ function ReportPreviewModal({ report, onAddNote, onClose }) {
   );
 }
 
-function CompanyMemoryModal({ error, memory, onClose, status }) {
-  const memoryStatusLabel = memory?.status === "resolved"
+function CompanyMemoryModal({ error, memory, onChanged, onClose, status }) {
+  const [localMemory, setLocalMemory] = useState(memory);
+  const [deletingEventId, setDeletingEventId] = useState("");
+  const [eventError, setEventError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
+
+  useEffect(() => {
+    setLocalMemory(memory);
+    setEventError("");
+  }, [memory]);
+
+  const activeMemory = localMemory ?? memory;
+  const memoryStatusLabel = activeMemory?.status === "resolved"
     ? "Resolved"
-    : memory?.status === "stale"
+    : activeMemory?.status === "stale"
       ? "Developing"
       : "Active";
+
+  const deleteMemoryEvent = async () => {
+    if (!activeMemory?.id || !deleteTarget?.id || deletingEventId) {
+      return;
+    }
+    setDeletingEventId(deleteTarget.id);
+    setEventError("");
+    try {
+      const payload = await requestJson(`/api/company-memory/${encodeURIComponent(activeMemory.id)}/events/${encodeURIComponent(deleteTarget.id)}`, {
+        method: "DELETE",
+      });
+      setLocalMemory(payload.memory);
+      onChanged?.(payload.memory);
+      setDeleteTarget(null);
+    } catch (err) {
+      setEventError(err instanceof Error ? err.message : "Unable to remove tracked context item.");
+    } finally {
+      setDeletingEventId("");
+    }
+  };
+
   return (
     <div className="modal-backdrop nested-modal-backdrop" onMouseDown={(event) => { event.stopPropagation(); onClose(); }}>
       <section className="modal-panel company-memory-panel long-modal-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <div className="modal-header">
           <div className="selected-stock no-margin">
-            {memory ? <img className="stock-logo large" {...stockLogoProps(memory.logo_url)} alt="" /> : <Info size={22} aria-hidden="true" />}
+            {activeMemory ? <img className="stock-logo large" {...stockLogoProps(activeMemory.logo_url)} alt="" /> : <Info size={22} aria-hidden="true" />}
             <div>
               <p className="eyebrow">Tracked context</p>
-              <h2>{memory ? `${memory.symbol}: ${memory.theme}` : "Company memory"}</h2>
+              <h2>{activeMemory ? `${activeMemory.symbol}: ${activeMemory.theme}` : "Company memory"}</h2>
             </div>
           </div>
           <button className="icon-button" onClick={onClose} title="Close context" type="button">
@@ -2045,20 +2089,20 @@ function CompanyMemoryModal({ error, memory, onClose, status }) {
 
         {status === "loading" ? <p className="muted">Loading tracked context...</p> : null}
         {status === "error" ? <p className="form-error">{error}</p> : null}
-        {status === "ready" && memory ? (
+        {status === "ready" && activeMemory ? (
           <div className="company-memory-content">
             <div className="company-memory-summary">
               <div>
                 <span>First seen</span>
-                <strong>{formatDateOnly(memory.first_seen_at)}</strong>
+                <strong>{formatDateOnly(activeMemory.first_seen_at)}</strong>
               </div>
               <div>
                 <span>Last update</span>
-                <strong>{formatDateOnly(memory.last_seen_at)}</strong>
+                <strong>{formatDateOnly(activeMemory.last_seen_at)}</strong>
               </div>
               <div>
                 <span>Developments</span>
-                <strong>{memory.evidence_count}</strong>
+                <strong>{activeMemory.evidence_count}</strong>
               </div>
               <div>
                 <span>Status</span>
@@ -2070,11 +2114,11 @@ function CompanyMemoryModal({ error, memory, onClose, status }) {
               <div className="research-card-header">
                 <strong>What we know so far</strong>
               </div>
-              <p>{memory.description}</p>
-              {memory.latest_development ? <p><strong>Latest development:</strong> {memory.latest_development}</p> : null}
-              {memory.thesis_points?.length ? (
+              <p>{activeMemory.description}</p>
+              {activeMemory.latest_development ? <p><strong>Latest development:</strong> {activeMemory.latest_development}</p> : null}
+              {activeMemory.thesis_points?.length ? (
                 <div className="company-memory-thesis">
-                  {memory.thesis_points.map((point) => <span key={point}>{point}</span>)}
+                  {activeMemory.thesis_points.map((point) => <span key={point}>{point}</span>)}
                 </div>
               ) : null}
             </section>
@@ -2083,15 +2127,29 @@ function CompanyMemoryModal({ error, memory, onClose, status }) {
               <div className="research-card-header">
                 <strong>Timeline</strong>
               </div>
+              {eventError ? <p className="form-error company-memory-event-error">{eventError}</p> : null}
               <div className="company-memory-timeline">
-                {(memory.events ?? []).map((event) => (
+                {(activeMemory.events ?? []).map((event, index) => (
                   <article className="company-memory-event" key={event.id}>
                     <div className="company-memory-event-date">
                       <span>{formatDateOnly(event.event_date)}</span>
                       <strong>{event.event_type === "created" ? "Started tracking" : "New development"}</strong>
                     </div>
                     <div className="company-memory-event-body">
-                      {event.headline ? <h3>{event.headline}</h3> : null}
+                      <div className="company-memory-event-title-row">
+                        {event.headline ? <h3>{event.headline}</h3> : <span />}
+                        {index > 0 ? (
+                          <button
+                            className="icon-button danger company-memory-delete-event"
+                            disabled={deletingEventId === event.id}
+                            onClick={() => setDeleteTarget(event)}
+                            title="Remove from tracked context"
+                            type="button"
+                          >
+                            <Trash2 size={16} aria-hidden="true" />
+                          </button>
+                        ) : null}
+                      </div>
                       <p>{event.summary}</p>
                       <div className="company-memory-event-links">
                         {event.source_url ? <a href={event.source_url} rel="noreferrer" target="_blank">Full article</a> : null}
@@ -2104,6 +2162,15 @@ function CompanyMemoryModal({ error, memory, onClose, status }) {
           </div>
         ) : null}
       </section>
+      {deleteTarget ? (
+        <ConfirmDialog
+          item={{ symbol: activeMemory?.symbol, company_name: deleteTarget.headline || deleteTarget.summary }}
+          message="This removes the item from tracked context. The original report stays unchanged."
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={deleteMemoryEvent}
+          title="Remove context item?"
+        />
+      ) : null}
     </div>
   );
 }
@@ -5357,6 +5424,282 @@ function TimezoneCombobox({ options, value, onChange }) {
   );
 }
 
+function CompanyContextModal({ item, onClose }) {
+  const [payload, setPayload] = useState(null);
+  const [status, setStatus] = useState("loading");
+  const [error, setError] = useState("");
+  const [memoryDetail, setMemoryDetail] = useState(null);
+  const [memoryStatus, setMemoryStatus] = useState("idle");
+  const [memoryError, setMemoryError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadContext = async () => {
+      setStatus("loading");
+      setError("");
+      try {
+        const response = await requestJson(`/api/stocks/${encodeURIComponent(item.stock_id)}/context`, { method: "GET" });
+        if (!cancelled) {
+          setPayload(response);
+          setStatus("ready");
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Unable to load company context.");
+          setStatus("error");
+        }
+      }
+    };
+    loadContext();
+    return () => {
+      cancelled = true;
+    };
+  }, [item.stock_id]);
+
+  const openMemory = async (memoryId) => {
+    if (!memoryId) {
+      return;
+    }
+    setMemoryStatus("loading");
+    setMemoryError("");
+    setMemoryDetail(null);
+    try {
+      const response = await requestJson(`/api/company-memory/${encodeURIComponent(memoryId)}`, { method: "GET" });
+      setMemoryDetail(response.memory);
+      setMemoryStatus("ready");
+    } catch (err) {
+      setMemoryError(err instanceof Error ? err.message : "Unable to load tracked context.");
+      setMemoryStatus("error");
+    }
+  };
+
+  const stock = payload?.stock ?? item;
+  const notesByReport = useMemo(() => {
+    const groups = new Map();
+    for (const note of payload?.notes ?? []) {
+      if (!note.report_id) {
+        continue;
+      }
+      const list = groups.get(note.report_id) ?? [];
+      list.push(note);
+      groups.set(note.report_id, list);
+    }
+    return groups;
+  }, [payload?.notes]);
+  const timelineReportIds = useMemo(
+    () => new Set((payload?.report_items ?? []).map((reportItem) => reportItem.report_id)),
+    [payload?.report_items],
+  );
+  const otherNotes = (payload?.notes ?? []).filter((note) => note.research_item_id || !note.report_id || !timelineReportIds.has(note.report_id));
+  return (
+    <div className="modal-backdrop report-preview-backdrop" onMouseDown={onClose}>
+      <section className="modal-panel long-modal-panel company-context-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <div className="modal-header">
+          <div className="selected-stock no-margin">
+            <img className="stock-logo large" {...stockLogoProps(stock.logo_url)} alt="" />
+            <div>
+              <p className="eyebrow">Company context</p>
+              <h2>{stock.symbol}: {stock.company_name}</h2>
+            </div>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Close context" type="button">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        {status === "loading" ? <p className="muted company-context-status">Loading company context...</p> : null}
+        {status === "error" ? <p className="form-error company-context-status">{error}</p> : null}
+
+        {status === "ready" && payload ? (
+          <div className="company-context-content">
+            <div className="company-memory-summary company-context-summary">
+              <div>
+                <span>Report mentions</span>
+                <strong>{payload.summary.report_item_count}</strong>
+              </div>
+              <div>
+                <span>Tracked themes</span>
+                <strong>{payload.summary.memory_count}</strong>
+              </div>
+              <div>
+                <span>Open notes</span>
+                <strong>{payload.summary.unresolved_note_count}</strong>
+              </div>
+              <div>
+                <span>Next earnings</span>
+                <strong>{payload.next_earnings_date ? formatDateOnly(payload.next_earnings_date) : "N/A"}</strong>
+              </div>
+            </div>
+
+            <section className="research-card company-context-section">
+              <div className="research-card-header">
+                <h3>Key things to monitor</h3>
+              </div>
+              {payload.monitor_items.length ? (
+                <div className="company-monitor-list">
+                  {payload.monitor_items.map((monitor, index) => (
+                    <div className="company-monitor-item" key={`${monitor.text}-${index}`}>
+                      <span>{index + 1}</span>
+                      <p>{monitor.text}</p>
+                      <small>{monitor.count}x - last {formatDateOnly(monitor.last_seen_at)}</small>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">Nothing specific to monitor yet. This will fill in as future reports mention the company.</p>
+              )}
+            </section>
+
+            {payload.memories.length ? (
+              <section className="research-card company-context-section">
+                <div className="research-card-header">
+                  <h3>Tracked context</h3>
+                </div>
+                <div className="company-context-memory-list">
+                  {payload.memories.map((memory) => (
+                    <button className="company-context-memory" key={memory.id} onClick={() => openMemory(memory.id)} type="button">
+                      <strong>{memory.theme}</strong>
+                      <span>{memory.latest_development || memory.description}</span>
+                      <small>{memory.evidence_count} developments - last {formatDateOnly(memory.last_seen_at)}</small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            <section className="research-card company-context-section">
+              <div className="research-card-header">
+                <h3>Report timeline</h3>
+              </div>
+              {payload.report_items.length ? (
+                <div className="company-context-timeline">
+                  {payload.report_items.map((reportItem) => {
+                    const reportNotes = notesByReport.get(reportItem.report_id) ?? [];
+                    return (
+                      <article className="company-context-report" key={reportItem.id}>
+                        <div className="company-context-report-date">
+                          <span>{formatDateOnly(reportItem.report_date)}</span>
+                          {reportItem.attention_label ? <strong>{researchHumanLabel(reportItem.attention_label)}</strong> : null}
+                        </div>
+                        <div className="company-context-report-body">
+                          <h4>{reportItem.headline || "Report item"}</h4>
+                          {reportItem.why_it_matters ? <p>{reportItem.why_it_matters}</p> : null}
+                          {reportItem.article_summary?.length ? (
+                            <ul>
+                              {reportItem.article_summary.map((point, index) => <li key={`${reportItem.id}-point-${index}`}>{point}</li>)}
+                            </ul>
+                          ) : null}
+                          {reportItem.thesis_summary || reportItem.monitor_next || reportItem.thesis_points_affected?.length ? (
+                            <details className="company-context-thesis-impact">
+                              <summary><span>Thesis impact</span><span className="company-context-chevron" aria-hidden="true">&#8250;</span></summary>
+                              <div className="company-context-thesis-impact-body">
+                                {reportItem.thesis_summary ? <p>{reportItem.thesis_summary}</p> : null}
+                                {reportItem.thesis_points_affected?.length ? (
+                                  <p><strong>Affected thesis points:</strong> {reportItem.thesis_points_affected.join(", ")}</p>
+                                ) : null}
+                                {reportItem.monitor_next ? <p><strong>Monitor next:</strong> {reportItem.monitor_next}</p> : null}
+                              </div>
+                            </details>
+                          ) : null}
+                          <div className="company-context-report-links">
+                            {reportItem.source_url ? <a className="company-context-source-link" href={reportItem.source_url} rel="noreferrer" target="_blank">Full article{reportItem.source ? ` - ${reportItem.source}` : ""}</a> : null}
+                            {reportItem.company_memory_item_id ? (
+                              <button className="company-context-action-button" onClick={() => openMemory(reportItem.company_memory_item_id)} type="button">Show context</button>
+                            ) : null}
+                            <a className="company-context-action-button company-context-open-report" href={`/reports/${encodeURIComponent(reportItem.report_id)}`} rel="noreferrer" target="_blank">Open report</a>
+                          </div>
+                          {reportNotes.length ? (
+                            <div className="company-context-notes">
+                              {reportNotes.map((note) => (
+                                <div className={note.is_resolved ? "company-context-note resolved" : "company-context-note"} key={note.id}>
+                                  <p>{note.body}</p>
+                                  <div className="company-context-note-footer">
+                                    <small>{formatDateTime(note.created_at)}</small>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="muted">No report history for this company yet. This will fill in once the company appears in your reports.</p>
+              )}
+            </section>
+
+            {otherNotes.length ? (
+              <section className="research-card company-context-section">
+                <div className="research-card-header">
+                  <h3>Notes</h3>
+                </div>
+                <div className="company-context-notes standalone">
+                  {otherNotes.map((note) => (
+                    <div className={note.is_resolved ? "company-context-note resolved" : "company-context-note"} key={note.id}>
+                      <p>{note.body}</p>
+                      <div className="company-context-note-footer">
+                        <small>
+                          {note.research_item_id ? researchTypeLabel(note.research_type) : note.report_id ? `Report ${note.report_date || ""}` : "Standalone"}
+                          {" - "}
+                          {formatDateTime(note.created_at)}
+                        </small>
+                        {note.research_item_id ? (
+                          <a className="company-context-action-button small" href={`/research/${encodeURIComponent(note.research_item_id)}`} rel="noreferrer" target="_blank">Open research</a>
+                        ) : note.report_id ? (
+                          <a className="company-context-action-button small" href={`/reports/${encodeURIComponent(note.report_id)}`} rel="noreferrer" target="_blank">Open report</a>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+      {memoryStatus !== "idle" ? (
+        <CompanyMemoryModal
+          error={memoryError}
+          memory={memoryDetail}
+          onClose={() => {
+            setMemoryStatus("idle");
+            setMemoryDetail(null);
+            setMemoryError("");
+          }}
+          onChanged={(nextMemory) => {
+            setMemoryDetail(nextMemory);
+            setPayload((current) => {
+              if (!current?.memories?.length || !nextMemory?.id) {
+                return current;
+              }
+              return {
+                ...current,
+                memories: current.memories.map((memoryItem) => (
+                  memoryItem.id === nextMemory.id
+                    ? {
+                        ...memoryItem,
+                        latest_development: nextMemory.latest_development,
+                        thesis_points: nextMemory.thesis_points,
+                        importance: nextMemory.importance,
+                        status: nextMemory.status,
+                        evidence_count: nextMemory.evidence_count,
+                        first_seen_at: nextMemory.first_seen_at,
+                        last_seen_at: nextMemory.last_seen_at,
+                      }
+                    : memoryItem
+                )),
+              };
+            });
+          }}
+          status={memoryStatus}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function HoldingsSection({
   actionLabel,
   emptyText,
@@ -5365,6 +5708,7 @@ function HoldingsSection({
   onAdd,
   onDelete,
   onEdit,
+  onOpenContext,
   onMoveToPortfolio,
   onPositionChange,
   onPositionCommit,
@@ -5439,6 +5783,9 @@ function HoldingsSection({
                   <td className="actions-cell" data-label="Actions">
                     <button className="icon-button" onClick={() => onEdit(item)} title="Edit thesis" type="button">
                       <Pencil size={17} aria-hidden="true" />
+                    </button>
+                    <button className="icon-button" onClick={() => onOpenContext?.(item)} title="Company context" type="button">
+                      <Timeline size={17} aria-hidden="true" />
                     </button>
                     {itemType === "watchlist" ? (
                       <button className="icon-button" onClick={() => onMoveToPortfolio(item)} title="Move to portfolio" type="button">

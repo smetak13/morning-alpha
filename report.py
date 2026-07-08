@@ -1850,6 +1850,166 @@ def save_report_record(
     return str(row[0])
 
 
+def context_stock_ids_by_ticker(context: dict[str, Any]) -> dict[str, str]:
+    output = {}
+    for section in ("portfolio", "watchlist"):
+        for item in context.get(section, []):
+            if isinstance(item, dict) and item.get("ticker") and item.get("stock_id"):
+                output[str(item["ticker"]).upper()] = str(item["stock_id"])
+    return output
+
+
+def report_company_item_rows(report: dict[str, Any], context: dict[str, Any]) -> list[dict[str, Any]]:
+    stock_ids = context_stock_ids_by_ticker(context)
+    thesis_by_ticker = {
+        str(item.get("ticker") or "").upper(): item
+        for item in report.get("thesis_impact", [])
+        if isinstance(item, dict) and item.get("ticker")
+    }
+    memory_by_ticker: dict[str, list[dict[str, Any]]] = {}
+    for item in report.get("_company_memory_links", []):
+        if isinstance(item, dict) and item.get("ticker") and item.get("memory_id"):
+            memory_by_ticker.setdefault(str(item["ticker"]).upper(), []).append(item)
+
+    rows = []
+    for source_section, output_section in (("portfolio_news", "portfolio"), ("watchlist_news", "watchlist")):
+        for item in report.get(source_section, []):
+            if not isinstance(item, dict):
+                continue
+            ticker = str(item.get("ticker") or "").upper()
+            stock_id = stock_ids.get(ticker)
+            if not ticker or not stock_id:
+                continue
+            thesis = thesis_by_ticker.get(ticker) if output_section == "portfolio" else None
+            source_url = clean_url(item.get("source_url") or item.get("url")) or str(item.get("source_url") or item.get("url") or "").strip()
+            memory_links = memory_by_ticker.get(ticker, [])
+            memory = next((link for link in memory_links if link.get("source_url") and link.get("source_url") == source_url), None)
+            memory = memory or (memory_links[0] if memory_links else None)
+            rows.append(
+                {
+                    "stock_id": stock_id,
+                    "company_memory_item_id": memory.get("memory_id") if memory else None,
+                    "section": output_section,
+                    "ticker": ticker,
+                    "company_name": item.get("company") or item.get("company_name"),
+                    "headline": truncate(item.get("headline"), 500),
+                    "why_it_matters": truncate(item.get("why_it_matters"), 1200),
+                    "article_summary": concise_points(item.get("article_summary"), limit=5, max_length=500),
+                    "source": truncate(item.get("source"), 200),
+                    "source_url": source_url,
+                    "attention_label": truncate(item.get("attention_label"), 80),
+                    "importance": truncate(item.get("importance"), 40),
+                    "thesis_impact": truncate((thesis or {}).get("impact"), 80),
+                    "thesis_summary": truncate((thesis or {}).get("rationale"), 1200),
+                    "thesis_points_affected": concise_points((thesis or {}).get("thesis_points_affected"), limit=8, max_length=300),
+                    "monitor_next": truncate((thesis or {}).get("monitor_next"), 800),
+                    "metadata": {
+                        "primary_label": item.get("attention_label") or (thesis or {}).get("impact"),
+                        "memory": memory or None,
+                    },
+                }
+            )
+    return rows
+
+
+def replace_report_company_items(
+    *,
+    user_id: str,
+    report_id: str | None,
+    report_date: dt.date,
+    report: dict[str, Any],
+    context: dict[str, Any],
+) -> int:
+    if not report_id:
+        return 0
+    rows = report_company_item_rows(report, context)
+    from database import connection
+
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "delete from public.report_company_items where report_id::text = %(report_id)s and user_id = %(user_id)s",
+                {"report_id": report_id, "user_id": user_id},
+            )
+            for row in rows:
+                cursor.execute(
+                    """
+                    insert into public.report_company_items (
+                        user_id,
+                        report_id,
+                        stock_id,
+                        company_memory_item_id,
+                        section,
+                        ticker,
+                        company_name,
+                        headline,
+                        why_it_matters,
+                        article_summary,
+                        source,
+                        source_url,
+                        attention_label,
+                        importance,
+                        thesis_impact,
+                        thesis_summary,
+                        thesis_points_affected,
+                        monitor_next,
+                        metadata,
+                        report_date
+                    )
+                    values (
+                        %(user_id)s,
+                        %(report_id)s,
+                        %(stock_id)s,
+                        %(company_memory_item_id)s,
+                        %(section)s,
+                        %(ticker)s,
+                        %(company_name)s,
+                        %(headline)s,
+                        %(why_it_matters)s,
+                        %(article_summary)s::jsonb,
+                        %(source)s,
+                        %(source_url)s,
+                        %(attention_label)s,
+                        %(importance)s,
+                        %(thesis_impact)s,
+                        %(thesis_summary)s,
+                        %(thesis_points_affected)s::jsonb,
+                        %(monitor_next)s,
+                        %(metadata)s::jsonb,
+                        %(report_date)s
+                    )
+                    on conflict (report_id, stock_id, section, (coalesce(nullif(source_url, ''), lower(coalesce(headline, '')))))
+                    do update set
+                        company_memory_item_id = excluded.company_memory_item_id,
+                        company_name = excluded.company_name,
+                        headline = excluded.headline,
+                        why_it_matters = excluded.why_it_matters,
+                        article_summary = excluded.article_summary,
+                        source = excluded.source,
+                        source_url = excluded.source_url,
+                        attention_label = excluded.attention_label,
+                        importance = excluded.importance,
+                        thesis_impact = excluded.thesis_impact,
+                        thesis_summary = excluded.thesis_summary,
+                        thesis_points_affected = excluded.thesis_points_affected,
+                        monitor_next = excluded.monitor_next,
+                        metadata = excluded.metadata,
+                        report_date = excluded.report_date,
+                        updated_at = now()
+                    """,
+                    {
+                        **row,
+                        "user_id": user_id,
+                        "report_id": report_id,
+                        "article_summary": json.dumps(row["article_summary"]),
+                        "thesis_points_affected": json.dumps(row["thesis_points_affected"]),
+                        "metadata": json.dumps(row["metadata"]),
+                        "report_date": report_date,
+                    },
+                )
+    return len(rows)
+
+
 def default_report(context: dict[str, Any]) -> dict[str, Any]:
     items = context.get("ranked_news", [])
     portfolio_tickers = {item["ticker"] for item in context.get("portfolio", [])}
@@ -3365,6 +3525,18 @@ def run_report_for_user(
             update_report_html(report_id, html)
     except Exception as exc:
         print(f"Company memory update skipped: {exc}")
+
+    try:
+        item_count = replace_report_company_items(
+            user_id=user_id,
+            report_id=report_id,
+            report_date=report_date,
+            report=report,
+            context=context,
+        )
+        print(f"Report company items saved: {item_count}")
+    except Exception as exc:
+        print(f"Report company items skipped: {exc}")
 
     email_html = render_email(
         report,

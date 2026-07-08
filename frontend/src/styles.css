@@ -4986,6 +4986,350 @@ input[type="range"] {
     border-radius: 8px;
   }
 }
+/* Company context modal */
+.company-context-panel {
+  background: #151515;
+  display: flex;
+  flex-direction: column;
+  height: min(96vh, 980px);
+  max-height: 96vh;
+  max-width: none;
+  overflow: hidden;
+  width: min(1440px, calc(100vw - 28px));
+}
+
+.company-context-panel > .modal-header {
+  border-bottom: 1px solid #2a2a2a;
+  flex: 0 0 auto;
+  padding: 14px 16px;
+}
+
+.company-context-status {
+  margin: 18px 22px;
+}
+
+.company-context-content {
+  align-content: start;
+  align-items: start;
+  display: grid;
+  flex: 1 1 auto;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.company-context-summary {
+  margin: 0;
+}
+
+.company-context-section {
+  margin: 0;
+}
+
+.company-monitor-item,
+.company-context-memory,
+.company-context-note,
+.company-context-report-body {
+  background: #151515;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+}
+
+.company-monitor-item p,
+.company-context-memory strong,
+.company-context-report-body h4 {
+  color: var(--text);
+}
+
+.company-context-report-body ul {
+  display: block;
+  list-style: disc;
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.company-context-report-body li {
+  border: 0;
+  color: var(--text-soft);
+  display: list-item;
+  grid-template-columns: none;
+  line-height: 1.55;
+  margin: 5px 0;
+  padding: 0;
+}
+
+.company-context-report-body li::before {
+  display: none;
+}
+
+.company-monitor-list,
+.company-context-memory-list,
+.company-context-notes {
+  display: grid;
+  gap: 8px;
+}
+
+.company-monitor-list,
+.company-context-memory-list,
+.company-context-timeline,
+.company-context-notes.standalone {
+  padding: 0 18px 18px;
+}
+
+.company-monitor-item {
+  align-items: start;
+  display: grid;
+  gap: 4px 10px;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  padding: 10px 12px;
+}
+
+.company-monitor-item > span {
+  align-items: center;
+  background: #f4c430;
+  border-radius: 999px;
+  color: #111;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 800;
+  height: 22px;
+  justify-content: center;
+  width: 22px;
+}
+
+.company-monitor-item p {
+  margin: 0;
+}
+
+.company-monitor-item small,
+.company-context-memory small,
+.company-context-note small {
+  color: #8f8f87;
+  font-size: 12px;
+}
+
+.company-context-report-date span {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.company-context-memory {
+  appearance: none;
+  color: var(--text-soft);
+  cursor: pointer;
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  text-align: left;
+  width: 100%;
+}
+
+.company-context-memory:hover {
+  border-color: #f4c430;
+}
+
+.company-context-memory span {
+  color: var(--text-soft);
+  line-height: 1.45;
+}
+
+.company-context-timeline {
+  display: grid;
+  gap: 14px;
+}
+
+.company-context-report {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 132px minmax(0, 1fr);
+}
+
+.company-context-report-date {
+  border-right: 1px solid #343434;
+  padding-right: 14px;
+}
+
+.company-context-report-date strong {
+  color: #f4c430;
+  display: block;
+  font-size: 12px;
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+
+.company-context-report-body {
+  min-width: 0;
+  padding: 14px;
+}
+
+.company-context-report-body h4 {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.35;
+  margin: 0 0 8px;
+}
+
+.company-context-report-body p,
+.company-context-report-body li {
+  color: var(--text-soft);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.company-context-report-body > p {
+  margin: 0 0 10px;
+}
+
+.company-context-thesis-impact {
+  background: #111;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  margin-top: 10px;
+  padding: 0;
+}
+
+.company-context-thesis-impact summary {
+  align-items: center;
+  color: #f4c430;
+  cursor: pointer;
+  display: flex;
+  font-size: 11px;
+  font-weight: bold;
+  justify-content: space-between;
+  letter-spacing: 0.04em;
+  list-style: none;
+  padding: 12px;
+  text-transform: uppercase;
+}
+
+.company-context-thesis-impact summary::-webkit-details-marker {
+  display: none;
+}
+
+.company-context-chevron {
+  color: #f4c430;
+  font-size: 18px;
+  line-height: 1;
+  margin-left: 12px;
+  transform: rotate(0deg);
+  transition: transform 140ms ease;
+}
+
+.company-context-thesis-impact[open] .company-context-chevron {
+  transform: rotate(90deg);
+}
+
+.company-context-thesis-impact-body {
+  padding: 0 12px 12px;
+}
+
+.company-context-thesis-impact-body p {
+  margin: 8px 0;
+}
+
+.company-context-report-links {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.company-context-report-links a,
+.company-context-report-links button {
+  background: transparent;
+  border: 0;
+  color: #f4c430;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  padding: 0;
+  text-decoration: none;
+}
+
+.company-context-action-button,
+.company-context-report-links .company-context-action-button,
+.company-context-note .company-context-action-button {
+  align-items: center;
+  background: #f4c430;
+  border: 0;
+  border-radius: 8px;
+  color: #111 !important;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 500 !important;
+  justify-content: center;
+  line-height: 1.2;
+  min-height: 34px;
+  padding: 8px 12px !important;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.company-context-action-button:hover,
+.company-context-report-links .company-context-action-button:hover,
+.company-context-note .company-context-action-button:hover {
+  background: #ffd84a;
+}
+
+.company-context-action-button.small {
+  font-size: 12px;
+  min-height: 30px;
+  padding: 7px 10px !important;
+}
+
+.company-context-report-links .company-context-open-report {
+  margin-left: auto;
+}
+
+.company-context-note {
+  align-items: center;
+  display: grid;
+  gap: 6px 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px 12px;
+}
+
+.company-context-note p {
+  color: var(--text-soft);
+  grid-column: 1;
+  grid-row: 1;
+  margin: 0;
+}
+
+.company-context-note-footer {
+  display: contents;
+}
+
+.company-context-note-footer small {
+  color: #8f8f87;
+  font-size: 12px;
+  line-height: 1.4;
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.company-context-note-footer .company-context-action-button {
+  align-self: center;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: end;
+}
+
+.company-context-notes.standalone {
+  margin-top: 0;
+}
+
+.company-context-report-body > .company-context-notes {
+  margin-top: 14px;
+}
+
+.company-context-section > .muted {
+  padding: 0 18px 18px;
+}
+
 /* Company memory timeline modal */
 .nested-modal-backdrop {
   z-index: 80;
@@ -5131,11 +5475,26 @@ input[type="range"] {
   padding: 14px;
 }
 
+.company-memory-event-title-row {
+  align-items: start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .company-memory-event-body h3 {
   color: var(--text);
   font-size: 15px;
   line-height: 1.35;
   margin: 0 0 8px;
+}
+
+.company-memory-delete-event {
+  margin-top: -4px;
+}
+
+.company-memory-event-error {
+  margin: 0 18px;
 }
 
 .company-memory-event-body p {
@@ -5178,5 +5537,56 @@ input[type="range"] {
 
   .company-memory-event::before {
     display: none;
+  }
+
+  .company-context-panel {
+    border-radius: 0;
+    height: 100dvh;
+    max-height: 100dvh;
+    max-width: 100vw;
+    min-height: 100dvh;
+    width: 100vw;
+  }
+
+  .company-context-report {
+    grid-template-columns: 1fr;
+  }
+
+  .company-context-report-date {
+    border-bottom: 1px solid #343434;
+    border-right: 0;
+    padding: 0 0 8px;
+  }
+
+  .company-monitor-item {
+    grid-template-columns: 26px minmax(0, 1fr);
+  }
+
+  .company-monitor-item small {
+    grid-column: 2;
+  }
+
+  .company-context-report-links .company-context-open-report {
+    margin-left: 0;
+    align-self: flex-start;
+  }
+
+  .company-context-report-links {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 16px;
+    padding-top: 4px;
+  }
+
+  .company-context-note-footer {
+    display: contents;
+  }
+
+  .company-context-note-footer .company-context-action-button {
+    grid-column: 1;
+    grid-row: 3;
+    margin-top: 8px;
+    justify-self: start;
   }
 }

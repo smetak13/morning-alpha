@@ -3014,13 +3014,234 @@ def get_report(report_id: str, request: Request) -> dict[str, Any]:
     return {"report": serialize_report_row(dict(row), include_html=True)}
 
 
-@app.get("/api/company-memory/{memory_id}")
-def get_company_memory(memory_id: str, request: Request) -> dict[str, Any]:
+def monitor_key(value: str) -> str:
+    text = re.sub(r"[^a-z0-9\s]", " ", str(value or "").lower())
+    words = [word for word in text.split() if len(word) > 2]
+    return " ".join(words[:18])
+
+
+MONITOR_STOPWORDS = {
+    "any",
+    "and",
+    "are",
+    "for",
+    "from",
+    "how",
+    "next",
+    "that",
+    "the",
+    "this",
+    "watch",
+    "whether",
+    "with",
+    "management",
+    "commentary",
+    "comments",
+    "updated",
+    "upcoming",
+    "quarter",
+    "quarterly",
+    "report",
+    "details",
+}
+
+
+def monitor_tokens(value: str) -> set[str]:
+    words = re.findall(r"[a-z0-9][a-z0-9\-]{2,}", str(value or "").lower())
+    normalized = {word.replace("-", "") for word in words}
+    return {word for word in normalized if word not in MONITOR_STOPWORDS and len(word) > 2}
+
+
+def monitor_similarity(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def concise_monitor_text(values: list[str]) -> str:
+    if not values:
+        return ""
+    candidates = sorted(values, key=lambda text: (len(text), text))
+    text = candidates[0].strip()
+    text = re.sub(r"^(?:watch\s+(?:for\s+)?|monitor\s+|any\s+)", "", text, flags=re.IGNORECASE).strip()
+    text = text[:1].upper() + text[1:] if text else candidates[0]
+    if len(text) > 190:
+        text = text[:187].rstrip(" ,;.") + "..."
+    return text
+
+
+def build_monitor_summary(items: list[dict[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
+    clusters: list[dict[str, Any]] = []
+    for item in items:
+        monitor_next = str(item.get("monitor_next") or "").strip()
+        if not monitor_next:
+            continue
+        tokens = monitor_tokens(monitor_next)
+        best_cluster = None
+        best_score = 0.0
+        for cluster in clusters:
+            score = monitor_similarity(tokens, cluster["tokens"])
+            if score > best_score:
+                best_cluster = cluster
+                best_score = score
+        if best_cluster is None or best_score < 0.38:
+            best_cluster = {
+                "tokens": set(tokens),
+                "texts": [],
+                "count": 0,
+                "first_seen_at": item["report_date"],
+                "last_seen_at": item["report_date"],
+                "report_item_ids": [],
+            }
+            clusters.append(best_cluster)
+        best_cluster["tokens"].update(tokens)
+        best_cluster["texts"].append(monitor_next)
+        best_cluster["count"] += 1
+        best_cluster["report_item_ids"].append(item["id"])
+        best_cluster["first_seen_at"] = min(best_cluster["first_seen_at"], item["report_date"])
+        best_cluster["last_seen_at"] = max(best_cluster["last_seen_at"], item["report_date"])
+
+    latest_date = max((item["report_date"] for item in items), default="")
+    output = []
+    for cluster in clusters:
+        recency_bonus = 1 if cluster["last_seen_at"] == latest_date else 0
+        output.append(
+            {
+                "text": concise_monitor_text(cluster["texts"]),
+                "count": cluster["count"],
+                "first_seen_at": cluster["first_seen_at"],
+                "last_seen_at": cluster["last_seen_at"],
+                "report_item_ids": cluster["report_item_ids"],
+                "score": (cluster["count"] * 10) + recency_bonus,
+            }
+        )
+    return sorted(output, key=lambda item: (item["score"], item["last_seen_at"]), reverse=True)[:limit]
+
+
+def serialize_report_company_item(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "report_id": str(row["report_id"]),
+        "stock_id": str(row["stock_id"]),
+        "company_memory_item_id": str(row["company_memory_item_id"]) if row.get("company_memory_item_id") else None,
+        "section": row.get("section"),
+        "ticker": str(row.get("ticker") or "").upper(),
+        "company_name": row.get("company_name"),
+        "headline": row.get("headline"),
+        "why_it_matters": row.get("why_it_matters"),
+        "article_summary": row.get("article_summary") or [],
+        "source": row.get("source"),
+        "source_url": row.get("source_url"),
+        "attention_label": row.get("attention_label"),
+        "importance": row.get("importance"),
+        "thesis_impact": row.get("thesis_impact"),
+        "thesis_summary": row.get("thesis_summary"),
+        "thesis_points_affected": row.get("thesis_points_affected") or [],
+        "monitor_next": row.get("monitor_next"),
+        "report_date": row["report_date"].isoformat() if hasattr(row["report_date"], "isoformat") else row["report_date"],
+        "created_at": row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else row["created_at"],
+    }
+
+
+def serialize_context_memory_row(row: dict[str, Any]) -> dict[str, Any]:
+    symbol = str(row["symbol"]).upper()
+    return {
+        "id": str(row["id"]),
+        "stock_id": str(row["stock_id"]),
+        "symbol": symbol,
+        "company_name": row["company_name"],
+        "logo_url": stock_logo_url(symbol),
+        "theme": row.get("theme"),
+        "description": row.get("description"),
+        "latest_development": row.get("latest_development"),
+        "thesis_points": row.get("thesis_points") or [],
+        "thesis_linked": bool(row.get("thesis_linked")),
+        "importance": row.get("importance"),
+        "status": row.get("status"),
+        "evidence_count": int(row.get("evidence_count") or 0),
+        "first_seen_at": row["first_seen_at"].isoformat() if hasattr(row["first_seen_at"], "isoformat") else row["first_seen_at"],
+        "last_seen_at": row["last_seen_at"].isoformat() if hasattr(row["last_seen_at"], "isoformat") else row["last_seen_at"],
+    }
+
+
+def company_context_earnings(symbol: str) -> dict[str, Any]:
+    try:
+        client = fmp_client_from_env()
+        return fetch_research_earnings_reports(client, symbol, dt.date.today())
+    except Exception as exc:
+        logger.info("Company context earnings unavailable symbol=%s error=%s", symbol, exc)
+        return {"next_earnings_date": None, "reports": []}
+
+
+@app.get("/api/stocks/{stock_id}/context")
+def get_stock_context(stock_id: str, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
     from psycopg.rows import dict_row
 
     with connection(row_factory=dict_row) as conn:
         with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select
+                    stocks.id::text as stock_id,
+                    stocks.symbol,
+                    stocks.company_name,
+                    portfolio_items.id::text as portfolio_item_id,
+                    watchlist_items.id::text as watchlist_item_id,
+                    portfolio_items.position_size_pct,
+                    portfolio_items.why_i_own_it,
+                    portfolio_items.bull_case as portfolio_bull_case,
+                    portfolio_items.bear_case as portfolio_bear_case,
+                    portfolio_items.key_metrics as portfolio_key_metrics,
+                    portfolio_items.red_flags as portfolio_red_flags,
+                    portfolio_items.action_triggers,
+                    watchlist_items.why_i_watch_it,
+                    watchlist_items.bull_case as watchlist_bull_case,
+                    watchlist_items.bear_case as watchlist_bear_case,
+                    watchlist_items.key_metrics as watchlist_key_metrics,
+                    watchlist_items.red_flags as watchlist_red_flags,
+                    watchlist_items.entry_conditions
+                from public.stocks
+                left join public.portfolio_items
+                  on portfolio_items.stock_id = stocks.id
+                 and portfolio_items.user_id = %(user_id)s
+                left join public.watchlist_items
+                  on watchlist_items.stock_id = stocks.id
+                 and watchlist_items.user_id = %(user_id)s
+                where stocks.id::text = %(stock_id)s
+                  and (portfolio_items.id is not null or watchlist_items.id is not null)
+                """,
+                {"stock_id": stock_id, "user_id": user_id},
+            )
+            stock_row = cursor.fetchone()
+            if not stock_row:
+                raise HTTPException(status_code=404, detail="Stock not found in your portfolio or watchlist.")
+
+            cursor.execute(
+                """
+                select *
+                from public.report_company_items
+                where user_id = %(user_id)s
+                  and stock_id::text = %(stock_id)s
+                order by report_date desc, created_at desc
+                limit 100
+                """,
+                {"stock_id": stock_id, "user_id": user_id},
+            )
+            item_rows = cursor.fetchall()
+
+            cursor.execute(
+                NOTE_SELECT
+                + """
+                where notes.user_id = %(user_id)s
+                  and notes.stock_id::text = %(stock_id)s
+                order by notes.created_at desc
+                limit 100
+                """,
+                {"stock_id": stock_id, "user_id": user_id},
+            )
+            note_rows = cursor.fetchall()
+
             cursor.execute(
                 """
                 select
@@ -3037,45 +3258,127 @@ def get_company_memory(memory_id: str, request: Request) -> dict[str, Any]:
                     company_memory_items.status,
                     company_memory_items.evidence_count,
                     company_memory_items.first_seen_at,
-                    company_memory_items.last_seen_at,
-                    company_memory_items.created_at,
-                    company_memory_items.updated_at
+                    company_memory_items.last_seen_at
                 from public.company_memory_items
                 join public.stocks on stocks.id = company_memory_items.stock_id
-                where company_memory_items.id::text = %(id)s
-                  and company_memory_items.user_id = %(user_id)s
+                where company_memory_items.user_id = %(user_id)s
+                  and company_memory_items.stock_id::text = %(stock_id)s
+                order by
+                    case company_memory_items.status when 'active' then 0 when 'stale' then 1 else 2 end,
+                    company_memory_items.importance desc,
+                    company_memory_items.last_seen_at desc
+                limit 30
                 """,
-                {"id": memory_id, "user_id": user_id},
+                {"stock_id": stock_id, "user_id": user_id},
             )
-            memory_row = cursor.fetchone()
-            if not memory_row:
-                raise HTTPException(status_code=404, detail="Company memory not found.")
+            memory_rows = cursor.fetchall()
 
-            cursor.execute(
-                """
-                select
-                    company_memory_events.id::text as id,
-                    company_memory_events.report_id::text as report_id,
-                    company_memory_events.event_date,
-                    company_memory_events.event_type,
-                    company_memory_events.relationship,
-                    company_memory_events.headline,
-                    company_memory_events.summary,
-                    company_memory_events.source_url,
-                    company_memory_events.source,
-                    company_memory_events.importance,
-                    company_memory_events.thesis_points,
-                    company_memory_events.metadata,
-                    company_memory_events.created_at
-                from public.company_memory_events
-                where company_memory_events.company_memory_item_id::text = %(id)s
-                  and company_memory_events.user_id = %(user_id)s
-                order by company_memory_events.event_date asc, company_memory_events.created_at asc
-                """,
-                {"id": memory_id, "user_id": user_id},
-            )
-            event_rows = cursor.fetchall()
+    stock = dict(stock_row)
+    symbol = str(stock["symbol"]).upper()
+    items = [serialize_report_company_item(dict(row)) for row in item_rows]
+    notes = [serialize_note_row(dict(row)) for row in note_rows]
 
+    relationship = "portfolio" if stock.get("portfolio_item_id") else "watchlist"
+    thesis = (
+        {
+            "why_i_own_it": stock.get("why_i_own_it") or [],
+            "bull_case": stock.get("portfolio_bull_case") or [],
+            "bear_case": stock.get("portfolio_bear_case") or [],
+            "key_metrics": stock.get("portfolio_key_metrics") or [],
+            "red_flags": stock.get("portfolio_red_flags") or [],
+            "action_triggers": stock.get("action_triggers") or [],
+        }
+        if relationship == "portfolio"
+        else {
+            "why_i_watch_it": stock.get("why_i_watch_it") or [],
+            "bull_case": stock.get("watchlist_bull_case") or [],
+            "bear_case": stock.get("watchlist_bear_case") or [],
+            "key_metrics": stock.get("watchlist_key_metrics") or [],
+            "red_flags": stock.get("watchlist_red_flags") or [],
+            "entry_conditions": stock.get("entry_conditions") or [],
+        }
+    )
+    earnings = company_context_earnings(symbol)
+    return {
+        "stock": {
+            "stock_id": str(stock["stock_id"]),
+            "symbol": symbol,
+            "company_name": stock["company_name"],
+            "logo_url": stock_logo_url(symbol),
+            "relationship": relationship,
+            "position_size_pct": stock.get("position_size_pct"),
+            "thesis": thesis,
+        },
+        "summary": {
+            "report_item_count": len(items),
+            "memory_count": len(memory_rows),
+            "unresolved_note_count": sum(1 for note in notes if not note.get("is_resolved")),
+            "latest_signal": items[0].get("attention_label") if items else None,
+            "next_earnings_date": earnings.get("next_earnings_date"),
+        },
+        "report_items": items,
+        "notes": notes,
+        "memories": [serialize_context_memory_row(dict(row)) for row in memory_rows],
+        "monitor_items": build_monitor_summary(items),
+        "next_earnings_date": earnings.get("next_earnings_date"),
+    }
+
+
+def load_company_memory_detail(cursor: Any, *, user_id: str, memory_id: str) -> dict[str, Any]:
+    cursor.execute(
+        """
+        select
+            company_memory_items.id::text as id,
+            company_memory_items.stock_id::text as stock_id,
+            stocks.symbol,
+            stocks.company_name,
+            company_memory_items.theme,
+            company_memory_items.description,
+            company_memory_items.latest_development,
+            company_memory_items.thesis_points,
+            company_memory_items.thesis_linked,
+            company_memory_items.importance,
+            company_memory_items.status,
+            company_memory_items.evidence_count,
+            company_memory_items.first_seen_at,
+            company_memory_items.last_seen_at,
+            company_memory_items.created_at,
+            company_memory_items.updated_at
+        from public.company_memory_items
+        join public.stocks on stocks.id = company_memory_items.stock_id
+        where company_memory_items.id::text = %(id)s
+          and company_memory_items.user_id = %(user_id)s
+        """,
+        {"id": memory_id, "user_id": user_id},
+    )
+    memory_row = cursor.fetchone()
+    if not memory_row:
+        raise HTTPException(status_code=404, detail="Company memory not found.")
+
+    cursor.execute(
+        """
+        select
+            company_memory_events.id::text as id,
+            company_memory_events.report_id::text as report_id,
+            company_memory_events.event_date,
+            company_memory_events.event_type,
+            company_memory_events.relationship,
+            company_memory_events.headline,
+            company_memory_events.summary,
+            company_memory_events.source_url,
+            company_memory_events.source,
+            company_memory_events.importance,
+            company_memory_events.thesis_points,
+            company_memory_events.metadata,
+            company_memory_events.created_at
+        from public.company_memory_events
+        where company_memory_events.company_memory_item_id::text = %(id)s
+          and company_memory_events.user_id = %(user_id)s
+        order by company_memory_events.event_date asc, company_memory_events.created_at asc
+        """,
+        {"id": memory_id, "user_id": user_id},
+    )
+    event_rows = cursor.fetchall()
     memory = dict(memory_row)
     symbol = str(memory["symbol"]).upper()
     return {
@@ -3115,6 +3418,141 @@ def get_company_memory(memory_id: str, request: Request) -> dict[str, Any]:
             ],
         }
     }
+
+
+def unique_json_strings(values: list[Any], limit: int = 24) -> list[str]:
+    output = []
+    seen = set()
+    for value in values:
+        text = str(value or "").strip()
+        key = text.lower()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        output.append(text)
+        if len(output) >= limit:
+            break
+    return output
+
+
+def recalculate_company_memory_item(cursor: Any, *, user_id: str, memory_id: str) -> None:
+    cursor.execute(
+        """
+        select
+            id::text as id,
+            report_id::text as report_id,
+            event_date,
+            summary,
+            source_url,
+            importance,
+            thesis_points,
+            created_at
+        from public.company_memory_events
+        where company_memory_item_id::text = %(memory_id)s
+          and user_id = %(user_id)s
+        order by event_date asc, created_at asc
+        """,
+        {"memory_id": memory_id, "user_id": user_id},
+    )
+    rows = [dict(row) for row in cursor.fetchall()]
+    if not rows:
+        raise HTTPException(status_code=409, detail="Cannot remove the only tracked context item.")
+    latest = rows[-1]
+    source_urls = unique_json_strings([row.get("source_url") for row in rows if row.get("source_url")], limit=20)
+    thesis_points = unique_json_strings(
+        [
+            point
+            for row in rows
+            for point in (row.get("thesis_points") or [])
+        ],
+        limit=16,
+    )
+    cursor.execute(
+        """
+        update public.company_memory_items
+        set
+            latest_development = %(latest_development)s,
+            thesis_points = %(thesis_points)s::jsonb,
+            source_urls = %(source_urls)s::jsonb,
+            last_source_url = %(last_source_url)s,
+            importance = %(importance)s,
+            evidence_count = %(evidence_count)s,
+            last_seen_at = %(last_seen_at)s,
+            last_report_id = %(last_report_id)s,
+            updated_at = now()
+        where id::text = %(memory_id)s
+          and user_id = %(user_id)s
+        """,
+        {
+            "memory_id": memory_id,
+            "user_id": user_id,
+            "latest_development": latest.get("summary"),
+            "thesis_points": json.dumps(thesis_points),
+            "source_urls": json.dumps(source_urls),
+            "last_source_url": latest.get("source_url"),
+            "importance": "high" if any(row.get("importance") == "high" for row in rows) else "medium",
+            "evidence_count": len(rows),
+            "last_seen_at": latest.get("event_date"),
+            "last_report_id": latest.get("report_id"),
+        },
+    )
+
+
+@app.get("/api/company-memory/{memory_id}")
+def get_company_memory(memory_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            return load_company_memory_detail(cursor, user_id=user_id, memory_id=memory_id)
+
+
+@app.delete("/api/company-memory/{memory_id}/events/{event_id}")
+def delete_company_memory_event(memory_id: str, event_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select id::text as id
+                from public.company_memory_items
+                where id::text = %(memory_id)s
+                  and user_id = %(user_id)s
+                for update
+                """,
+                {"memory_id": memory_id, "user_id": user_id},
+            )
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail="Company memory not found.")
+            cursor.execute(
+                """
+                select id::text as id
+                from public.company_memory_events
+                where company_memory_item_id::text = %(memory_id)s
+                  and user_id = %(user_id)s
+                order by event_date asc, created_at asc
+                """,
+                {"memory_id": memory_id, "user_id": user_id},
+            )
+            event_ids = [str(row["id"]) for row in cursor.fetchall()]
+            if event_id not in event_ids:
+                raise HTTPException(status_code=404, detail="Tracked context item not found.")
+            if event_ids.index(event_id) == 0:
+                raise HTTPException(status_code=422, detail="The first tracked context item defines this theme and cannot be removed.")
+            cursor.execute(
+                """
+                delete from public.company_memory_events
+                where id::text = %(event_id)s
+                  and company_memory_item_id::text = %(memory_id)s
+                  and user_id = %(user_id)s
+                """,
+                {"event_id": event_id, "memory_id": memory_id, "user_id": user_id},
+            )
+            recalculate_company_memory_item(cursor, user_id=user_id, memory_id=memory_id)
+            return load_company_memory_detail(cursor, user_id=user_id, memory_id=memory_id)
 
 
 RESEARCH_ITEM_SELECT = """
