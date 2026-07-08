@@ -14,7 +14,9 @@ from database import connection
 DEFAULT_MAX_CONTEXT_ITEMS_PER_TICKER = 3
 DEFAULT_MAX_MEMORY_ITEMS_PER_STOCK = 30
 DEFAULT_MEMORY_LOOKBACK_DAYS = 365
-DEFAULT_MEMORY_MODEL = "gpt-4.1-mini"
+DEFAULT_MEMORY_MODEL = "gpt-5.4"
+DEFAULT_MIN_UPDATE_INTERVAL_DAYS = 21
+DEFAULT_DUPLICATE_SIMILARITY_SCORE = 18.0
 STOPWORDS = {
     "about",
     "after",
@@ -204,6 +206,8 @@ def memory_config(config: dict[str, Any]) -> dict[str, Any]:
         "max_memory_items_per_stock": int(raw.get("max_memory_items_per_stock", DEFAULT_MAX_MEMORY_ITEMS_PER_STOCK)),
         "lookback_days": int(raw.get("lookback_days", DEFAULT_MEMORY_LOOKBACK_DAYS)),
         "shortlist_size": int(raw.get("shortlist_size", 8)),
+        "min_update_interval_days": int(raw.get("min_update_interval_days", DEFAULT_MIN_UPDATE_INTERVAL_DAYS)),
+        "duplicate_similarity_score": float(raw.get("duplicate_similarity_score", DEFAULT_DUPLICATE_SIMILARITY_SCORE)),
     }
 
 
@@ -328,6 +332,47 @@ def shortlist_memories(
         copy["similarity_score"] = round(score, 2)
         output.append(copy)
     return output
+
+
+def coerce_date(value: Any) -> dt.date | None:
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
+    if isinstance(value, str) and value:
+        try:
+            return dt.date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def memory_age_days(memory: dict[str, Any], report_date: dt.date) -> int | None:
+    last_seen = coerce_date(memory.get("last_seen_at"))
+    if not last_seen:
+        return None
+    return max((report_date - last_seen).days, 0)
+
+
+def strongest_duplicate_candidate(
+    item: dict[str, Any],
+    memories: list[dict[str, Any]],
+    *,
+    report_date: dt.date,
+    min_score: float,
+) -> dict[str, Any] | None:
+    best_memory = None
+    best_score = 0.0
+    for memory in memories:
+        score = float(memory.get("similarity_score") or memory_similarity_score(item, memory, report_date))
+        if score > best_score:
+            best_score = score
+            best_memory = memory
+    if best_memory and best_score >= min_score:
+        copy = dict(best_memory)
+        copy["similarity_score"] = round(best_score, 2)
+        return copy
+    return None
 
 
 def load_memories_for_stocks(
@@ -523,9 +568,12 @@ def classify_memory_updates_with_gpt(
             "The same company and the same generic topic such as AI, growth, margins, spending, competition, or regulation are not enough for update_existing.",
             "If one item is about cloud infrastructure/capex and another is about advertising monetization, they must be separate memory items unless the article explicitly connects the two.",
             "If the connection is plausible but not explicit, choose create_new instead of update_existing.",
-            "Use update_existing only when the new article clearly extends, confirms, contradicts, or resolves the existing tracked theme.",
+            "Use update_existing only when the new article clearly extends, contradicts, or resolves the existing tracked theme with materially new facts.",
+            "Do not update memory for repeat coverage, reworded headlines, or another article with the same facts from the same news cycle.",
+            "A memory item should evolve over weeks or months, not daily. If a similar memory was seen recently, choose ignore unless there is a major concrete change.",
+            "Prefer ignore over create_new when a candidate memory already covers the same investment question.",
             "Memory is historical context, not evidence. Do not infer causality unless today's item states it.",
-            "Create new memory only for topics likely to be useful in future reports.",
+            "Create new memory only for narrow topics likely to be useful in future reports. Avoid broad themes such as AI strategy, growth, margins, capex, or regulation by themselves.",
             "Ignore low-value, one-off, generic, or immaterial items.",
             "If today's item touches the user's thesis, importance must be high.",
         ],
@@ -816,6 +864,7 @@ def apply_memory_decisions(
 
                 action = str(decision.get("decision") or "ignore").strip().lower()
                 matched_id = str(decision.get("matched_memory_id") or "")
+                relationship = str(decision.get("relationship") or "").strip().lower()
                 theme = truncate(decision.get("theme") or item.get("headline") or item["ticker"], 140)
                 normalized_theme = normalize_theme(theme)
                 description = truncate(decision.get("description") or item["summary"], 1200)
@@ -827,6 +876,44 @@ def apply_memory_decisions(
                 status = status if status in {"active", "stale", "resolved"} else "active"
                 source_urls = unique_strings([item.get("source_url")], limit=20)
                 event_key = memory_event_key(report_id=report_id, report_date=report_date, item=item)
+                matched_memory = next((memory for memory in memories_by_item[index] if str(memory.get("id") or "") == matched_id), None)
+                duplicate_candidate = strongest_duplicate_candidate(
+                    item,
+                    memories_by_item[index],
+                    report_date=report_date,
+                    min_score=settings["duplicate_similarity_score"],
+                )
+                if action == "update_existing":
+                    if relationship == "duplicate_coverage":
+                        summary["ignored"] += 1
+                        summary["duplicate_ignored"] += 1
+                        continue
+                    if matched_memory:
+                        if item.get("source_url") and item.get("source_url") in (matched_memory.get("source_urls") or []):
+                            summary["ignored"] += 1
+                            summary["duplicate_ignored"] += 1
+                            continue
+                        age_days = memory_age_days(matched_memory, report_date)
+                        if age_days is not None and age_days < settings["min_update_interval_days"]:
+                            summary["ignored"] += 1
+                            summary["duplicate_ignored"] += 1
+                            continue
+                elif action == "create_new" and duplicate_candidate:
+                    if item.get("source_url") and item.get("source_url") in (duplicate_candidate.get("source_urls") or []):
+                        summary["ignored"] += 1
+                        summary["duplicate_ignored"] += 1
+                        continue
+                    age_days = memory_age_days(duplicate_candidate, report_date)
+                    if age_days is not None and age_days < settings["min_update_interval_days"]:
+                        summary["ignored"] += 1
+                        summary["duplicate_ignored"] += 1
+                        continue
+                    action = "update_existing"
+                    matched_id = str(duplicate_candidate["id"])
+                    candidate_ids.add(matched_id)
+                    theme = truncate(duplicate_candidate.get("theme") or theme, 140)
+                    normalized_theme = normalize_theme(theme)
+                    relationship = "follow_up"
 
                 if action == "update_existing" and matched_id in candidate_ids:
                     if company_memory_event_exists(cursor, memory_id=matched_id, event_key=event_key):
@@ -848,6 +935,10 @@ def apply_memory_decisions(
                         summary["ignored"] += 1
                         continue
                     existing_urls = list(row[0] or [])
+                    if item.get("source_url") and item.get("source_url") in existing_urls:
+                        summary["ignored"] += 1
+                        summary["duplicate_ignored"] += 1
+                        continue
                     merged_urls = unique_strings(existing_urls + source_urls, limit=20)
                     cursor.execute(
                         """
@@ -901,7 +992,7 @@ def apply_memory_decisions(
                         item=item,
                         decision=decision,
                         event_type="updated",
-                        relationship=str(decision.get("relationship") or "follow_up"),
+                        relationship=relationship or "follow_up",
                         summary=latest_development,
                         importance=importance,
                         thesis_points=thesis_points,
@@ -915,7 +1006,7 @@ def apply_memory_decisions(
                             "memory_id": matched_id,
                             "theme": theme,
                             "event_type": "updated",
-                            "relationship": str(decision.get("relationship") or "follow_up"),
+                            "relationship": relationship or "follow_up",
                             "confidence": str(decision.get("confidence") or "medium"),
                             "headline": item.get("headline") or "",
                             "source_url": item.get("source_url") or "",
@@ -1007,6 +1098,10 @@ def apply_memory_decisions(
                             summary["duplicate_ignored"] += 1
                             continue
                         existing_urls = list(existing_row[1] or [])
+                        if item.get("source_url") and item.get("source_url") in existing_urls:
+                            summary["ignored"] += 1
+                            summary["duplicate_ignored"] += 1
+                            continue
                         merged_urls = unique_strings(existing_urls + source_urls, limit=20)
                         cursor.execute(
                             """
@@ -1059,7 +1154,7 @@ def apply_memory_decisions(
                         item=item,
                         decision=decision,
                         event_type=event_type,
-                        relationship=str(decision.get("relationship") or ("new_evidence" if inserted else "follow_up")),
+                        relationship=relationship or ("new_evidence" if inserted else "follow_up"),
                         summary=latest_development,
                         importance=importance,
                         thesis_points=thesis_points,
@@ -1073,7 +1168,7 @@ def apply_memory_decisions(
                             "memory_id": memory_id,
                             "theme": theme,
                             "event_type": event_type,
-                            "relationship": str(decision.get("relationship") or ("new_evidence" if inserted else "follow_up")),
+                            "relationship": relationship or ("new_evidence" if inserted else "follow_up"),
                             "confidence": str(decision.get("confidence") or "medium"),
                             "headline": item.get("headline") or "",
                             "source_url": item.get("source_url") or "",
