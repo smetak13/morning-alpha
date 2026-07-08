@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urljoin
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
@@ -1755,6 +1756,23 @@ def research_market_data(
     fcf_yield = ratio_to_percent(metrics.get("freeCashFlowYieldTTM") or ratios.get("freeCashFlowYieldTTM"))
     if fcf_yield is None and free_cash_flow is not None and market_cap not in (None, 0):
         fcf_yield = (free_cash_flow / market_cap) * 100
+    dividend_yield = ratio_to_percent(
+        first_number(
+            metrics.get("dividendYieldTTM"),
+            metrics.get("dividendYield"),
+            metrics.get("dividendYieldPercentageTTM"),
+            metrics.get("dividendYieldPercentage"),
+            ratios.get("dividendYieldTTM"),
+            ratios.get("dividendYield"),
+            ratios.get("dividendYieldPercentageTTM"),
+            ratios.get("dividendYieldPercentage"),
+            metrics_latest.get("dividendYield"),
+            metrics_latest.get("dividendYieldPercentage"),
+            ratios_latest.get("dividendYield"),
+            ratios_latest.get("dividendYieldPercentage"),
+            quote.get("dividendYield"),
+        )
+    )
     roe = ratio_to_percent(ratios.get("returnOnEquityTTM") or ratios.get("returnOnEquity") or metrics.get("roeTTM") or ratios_latest.get("returnOnEquity"))
     if roe is None and net_income is not None and equity not in (None, 0):
         roe = (net_income / equity) * 100
@@ -1790,6 +1808,7 @@ def research_market_data(
                 divide_or_none(metrics_latest.get("enterpriseValue"), ebitda),
             ),
             "fcf_yield_pct": fcf_yield,
+            "dividend_yield_pct": dividend_yield if dividend_yield and dividend_yield > 0 else None,
             "eps": latest_eps,
             "eps_growth_3y_pct": calculate_eps_growth(income_rows, 3),
             "eps_growth_5y_pct": calculate_eps_growth(income_rows, 5),
@@ -2490,6 +2509,23 @@ def app_public_url() -> str:
     return (os.getenv("API_PUBLIC_URL") or "http://localhost:8000").strip().rstrip("/")
 
 
+def absolute_public_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if re.match(r"^https?://", text, flags=re.IGNORECASE):
+        return text
+    return urljoin(f"{app_public_url()}/", text.lstrip("/"))
+
+
+def stock_email_logo_url(symbol: str, value: str | None = None) -> str | None:
+    absolute_url = absolute_public_url(value)
+    if absolute_url and "localhost" not in absolute_url and "127.0.0.1" not in absolute_url:
+        return absolute_url
+    cleaned_symbol = "".join(char for char in str(symbol or "").upper().strip() if char.isalnum() or char in {".", "-"})
+    return f"https://financialmodelingprep.com/image-stock/{cleaned_symbol}.png" if cleaned_symbol else absolute_url
+
+
 def html_escape(value: Any) -> str:
     return html.escape(str(value or ""), quote=True)
 
@@ -2554,6 +2590,9 @@ def compact_email_number(value: Any, prefix: str = "", suffix: str = "") -> str:
 
 
 def research_email_metric_value(key: str, value: Any) -> str:
+    if key == "dividend_yield_pct":
+        number = safe_float(value)
+        return f"{number:.2f}%" if number and number > 0 else "-"
     if key in {"price", "year_high", "year_low"}:
         return compact_email_number(value, prefix="$")
     if key == "market_cap":
@@ -2572,6 +2611,7 @@ def research_email_metrics(body: dict[str, Any]) -> list[tuple[str, str]]:
         "ps": "P/S TTM",
         "ev_to_ebitda": "EV/EBITDA",
         "fcf_yield_pct": "FCF yield",
+        "dividend_yield_pct": "Dividend yield",
         "eps": "EPS",
         "revenue_growth_3y_pct": "Revenue growth 3Y",
         "eps_growth_3y_pct": "EPS growth 3Y",
@@ -2592,8 +2632,11 @@ def render_research_email_list(title: str, items: Any) -> str:
     rows = "".join(
         f"""
         <tr>
-          <td width="34" style="width:34px;vertical-align:top;padding:12px 10px 12px 0;border-top:1px solid #303030;border-top-color:#303030;color:#f3c42e;font-weight:700;mso-border-top-alt:solid #303030 1pt;">{index:02d}</td>
-          <td style="padding:12px 0;border-top:1px solid #303030;border-top-color:#303030;color:#d7d7d0;font-size:14px;line-height:1.55;mso-border-top-alt:solid #303030 1pt;">{html_email_text(item if isinstance(item, str) else json.dumps(item, ensure_ascii=False))}</td>
+          <td colspan="2" bgcolor="#303030" height="1" style="background:#303030;background-color:#303030!important;color:#303030;font-size:1px;line-height:1px;mso-line-height-rule:exactly;">&nbsp;</td>
+        </tr>
+        <tr>
+          <td width="34" style="width:34px;vertical-align:top;padding:12px 10px 12px 0;color:#f3c42e;font-weight:700;">{index:02d}</td>
+          <td style="padding:12px 0;color:#d7d7d0;font-size:14px;line-height:1.55;">{html_email_text(item if isinstance(item, str) else json.dumps(item, ensure_ascii=False))}</td>
         </tr>
         """
         for index, item in enumerate(items, start=1)
@@ -2705,7 +2748,7 @@ def render_shared_research_email(
     signal = research.get("signal") or research.get("watchlist_suitability") or research_item.get("signal")
     stock_symbol = str(stock.get("symbol") or research_item.get("symbol") or "").upper()
     company_name = stock.get("company_name") or research_item.get("company_name") or stock_symbol
-    stock_logo_src = stock.get("logo_url") or research_item.get("logo_url") or (stock_logo_url(stock_symbol) if stock_symbol else None)
+    stock_logo_src = stock_email_logo_url(stock_symbol, stock.get("logo_url") or research_item.get("logo_url") or (stock_logo_url(stock_symbol) if stock_symbol else None))
     email_title = f"{research_email_label(research_item.get('research_type'))} for {company_name or stock_symbol}"
     metric_cells = [
         f"""
@@ -2777,9 +2820,23 @@ def render_shared_research_email(
         else ""
     )
     company_logo_html = (
-        f"<img src=\"{html_escape(stock_logo_src)}\" width=\"46\" height=\"46\" alt=\"{html_escape(stock_symbol)}\" style=\"background:#ffffff;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;display:block;height:46px;mso-border-alt:solid #2a2a2a 1pt;width:46px;\">"
+        f"""
+        <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="46" style="border-collapse:collapse;width:46px;">
+          <tr>
+            <td align="center" bgcolor="#ffffff" style="background:#ffffff;background-color:#ffffff!important;border-radius:8px;height:46px;padding:0;text-align:center;vertical-align:middle;width:46px;">
+              <img src="{html_escape(stock_logo_src)}" width="34" height="34" alt="{html_escape(stock_symbol)}" style="-webkit-filter:none!important;border:0;display:inline-block;filter:none!important;height:34px;line-height:34px;max-height:34px;max-width:34px;min-height:34px;min-width:34px;object-fit:contain;outline:0;text-decoration:none;vertical-align:middle;width:34px;">
+            </td>
+          </tr>
+        </table>
+        """
         if stock_logo_src
-        else f"<div style=\"background:#0d0d0d;border:1px solid #2a2a2a;border-color:#2a2a2a;border-radius:8px;color:#f3c42e;font-size:16px;font-weight:700;line-height:46px;mso-border-alt:solid #2a2a2a 1pt;text-align:center;width:46px;\">{html_escape(stock_symbol[:2])}</div>"
+        else f"""
+        <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="46" style="border-collapse:collapse;width:46px;">
+          <tr>
+            <td align="center" bgcolor="#0d0d0d" style="background:#0d0d0d;background-color:#0d0d0d!important;border:1px solid #2a2a2a;border-radius:8px;color:#f3c42e;font-size:16px;font-weight:700;height:44px;line-height:44px;text-align:center;vertical-align:middle;width:44px;">{html_escape(stock_symbol[:2])}</td>
+          </tr>
+        </table>
+        """
     )
     company_panel_html = f"""
     <div style="background:#181818;border:1px solid #2a2a2a;border-radius:8px;margin:0 0 8px;padding:16px;">

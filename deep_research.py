@@ -1259,6 +1259,15 @@ def build_metric_snapshot(context: dict[str, Any]) -> dict[str, Any]:
     total_debt = first_number(get_any(latest_balance, "totalDebt", "shortTermDebt", "longTermDebt"))
     cash = first_number(get_any(latest_balance, "cashAndCashEquivalents", "cashAndShortTermInvestments"))
     net_debt = first_number(get_any(metrics_ttm, "netDebtTTM", "netDebt"), (total_debt or 0) - (cash or 0) if total_debt is not None or cash is not None else None)
+    dividend_yield_pct = ratio_to_percent(
+        first_number(
+            get_any(metrics_ttm, "dividendYieldTTM", "dividendYield", "dividendYieldPercentageTTM", "dividendYieldPercentage"),
+            get_any(ratios_ttm, "dividendYieldTTM", "dividendYield", "dividendYieldPercentageTTM", "dividendYieldPercentage"),
+            get_any(metrics_latest, "dividendYield", "dividendYieldPercentage"),
+            get_any(ratios_latest, "dividendYield", "dividendYieldPercentage"),
+            get_any(quote, "dividendYield"),
+        )
+    )
     return {
         "price": first_number(quote.get("price"), quote.get("previousClose")),
         "market_cap": market_cap,
@@ -1273,6 +1282,7 @@ def build_metric_snapshot(context: dict[str, Any]) -> dict[str, Any]:
         "ev_to_ebitda": first_number(get_any(metrics_ttm, "enterpriseValueOverEBITDATTM", "enterpriseValueOverEBITDA"), get_any(metrics_latest, "enterpriseValueOverEBITDA", "evToEBITDA")),
         "ev_to_sales": first_number(get_any(metrics_ttm, "evToSalesTTM", "enterpriseValueOverRevenueTTM"), get_any(metrics_latest, "evToSales", "enterpriseValueOverRevenue")),
         "fcf_yield_pct": ratio_to_percent(first_number(get_any(metrics_ttm, "freeCashFlowYieldTTM", "freeCashFlowYield"), get_any(metrics_latest, "freeCashFlowYield"), divide_or_none(fcf, market_cap))),
+        "dividend_yield_pct": dividend_yield_pct if dividend_yield_pct and dividend_yield_pct > 0 else None,
         "eps": first_number(quote.get("eps"), latest_income.get("eps"), latest_income.get("epsdiluted")),
         "revenue": revenue,
         "gross_profit": first_number(latest_income.get("grossProfit")),

@@ -3654,7 +3654,21 @@ function formatMetricPercent(value) {
   return `${number.toFixed(1)}%`;
 }
 
+function formatDividendYield(value) {
+  if (value === null || value === undefined || value === "" || Number(value) === 0) {
+    return "-";
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "-";
+  }
+  return `${number.toFixed(2)}%`;
+}
+
 function metricValue(key, value) {
+  if (key === "dividend_yield_pct") {
+    return formatDividendYield(value);
+  }
   if (key.includes("growth")) {
     return formatMetricPercent(value);
   }
@@ -3684,6 +3698,7 @@ function metricLabel(key) {
     ev_to_ebitda: "EV/EBITDA",
     ev_to_sales: "EV/Sales",
     fcf_yield_pct: "FCF yield",
+    dividend_yield_pct: "Dividend yield",
     eps: "EPS",
     revenue: "Revenue",
     grossProfit: "Gross profit",
@@ -4014,6 +4029,7 @@ function ResearchMarketSnapshot({ marketData, showEarnings = true }) {
     "ev_to_ebitda",
     "ev_to_sales",
     "fcf_yield_pct",
+    "dividend_yield_pct",
     "eps",
     "revenue",
     "gross_profit",
@@ -4034,7 +4050,6 @@ function ResearchMarketSnapshot({ marketData, showEarnings = true }) {
     "roic_pct",
     "debt_to_equity",
     "current_ratio",
-    "net_debt",
     "shares_outstanding",
     "year_high",
     "year_low",
