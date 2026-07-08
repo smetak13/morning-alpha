@@ -1648,8 +1648,8 @@ input::placeholder {
   background: #080808;
   border: 0;
   display: block;
-  height: calc(92vh - 82px);
-  min-height: 560px;
+  height: calc(100% - 73px);
+  min-height: 0;
   width: 100%;
 }
 
@@ -1662,6 +1662,7 @@ input::placeholder {
   border: 1px solid #343434;
   border-radius: 8px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
+  height: min(96vh, 980px);
   max-height: 96vh;
   overflow: hidden;
   scrollbar-color: #3a3a3a #151515;
@@ -2228,10 +2229,11 @@ textarea:focus {
 }
 
 .research-preview-panel {
+  height: min(96vh, 980px);
   max-height: 96vh;
   overflow: auto;
   scrollbar-color: #3a3a3a #151515;
-  width: min(1300px, calc(100vw - 56px));
+  width: min(1440px, calc(100vw - 28px));
 }
 
 .research-preview-panel.long-modal-panel {
@@ -3761,7 +3763,9 @@ input[type="range"] {
 }
 
 .modal-panel.research-preview-panel {
-  width: min(1300px, calc(100vw - 56px));
+  height: min(96vh, 980px);
+  max-height: 96vh;
+  width: min(1440px, calc(100vw - 28px));
 }
 
 .modal-panel.share-research-panel {
@@ -5027,7 +5031,6 @@ input[type="range"] {
   margin: 0;
 }
 
-.company-monitor-item,
 .company-context-memory,
 .company-context-note,
 .company-context-report-body {
@@ -5036,7 +5039,6 @@ input[type="range"] {
   border-radius: 8px;
 }
 
-.company-monitor-item p,
 .company-context-memory strong,
 .company-context-report-body h4 {
   color: var(--text);
@@ -5077,28 +5079,26 @@ input[type="range"] {
   padding: 0 18px 18px;
 }
 
-.company-monitor-item {
-  align-items: start;
-  display: grid;
-  gap: 4px 10px;
-  grid-template-columns: 26px minmax(0, 1fr) auto;
-  padding: 10px 12px;
+.company-monitor-list {
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0 18px 18px;
 }
 
-.company-monitor-item > span {
-  align-items: center;
-  background: #f4c430;
-  border-radius: 999px;
-  color: #111;
-  display: inline-flex;
-  font-size: 12px;
-  font-weight: 800;
-  height: 22px;
-  justify-content: center;
-  width: 22px;
+.company-monitor-item {
+  align-items: start;
+  background: #151515;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 34px minmax(0, 1fr);
+  padding: 13px 16px;
 }
 
 .company-monitor-item p {
+  color: var(--text);
   margin: 0;
 }
 
@@ -5556,14 +5556,6 @@ input[type="range"] {
     border-bottom: 1px solid #343434;
     border-right: 0;
     padding: 0 0 8px;
-  }
-
-  .company-monitor-item {
-    grid-template-columns: 26px minmax(0, 1fr);
-  }
-
-  .company-monitor-item small {
-    grid-column: 2;
   }
 
   .company-context-report-links .company-context-open-report {

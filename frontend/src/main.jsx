@@ -5531,24 +5531,28 @@ function CompanyContextModal({ item, onClose }) {
               </div>
             </div>
 
-            <section className="research-card company-context-section">
-              <div className="research-card-header">
-                <h3>Key things to monitor</h3>
-              </div>
-              {payload.monitor_items.length ? (
-                <div className="company-monitor-list">
-                  {payload.monitor_items.map((monitor, index) => (
-                    <div className="company-monitor-item" key={`${monitor.text}-${index}`}>
-                      <span>{index + 1}</span>
-                      <p>{monitor.text}</p>
-                      <small>{monitor.count}x - last {formatDateOnly(monitor.last_seen_at)}</small>
-                    </div>
-                  ))}
+            {stock.relationship === "portfolio" ? (
+              <section className="research-card company-context-section">
+                <div className="research-card-header">
+                  <h3>Key things to monitor</h3>
                 </div>
-              ) : (
-                <p className="muted">Nothing specific to monitor yet. This will fill in as future reports mention the company.</p>
-              )}
-            </section>
+                {payload.monitor_items.length ? (
+                  <ol className="company-monitor-list">
+                    {payload.monitor_items.map((monitor, index) => (
+                      <li className="company-monitor-item" key={`${monitor.text}-${index}`}>
+                        <span className="research-list-index">{String(index + 1).padStart(2, "0")}</span>
+                        <div>
+                          <p>{monitor.text}</p>
+                          <small>{monitor.count}x - last {formatDateOnly(monitor.last_seen_at)}</small>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="muted">Nothing specific to monitor yet. This will fill in as future reports mention the company.</p>
+                )}
+              </section>
+            ) : null}
 
             {payload.memories.length ? (
               <section className="research-card company-context-section">
