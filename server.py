@@ -3043,6 +3043,9 @@ MONITOR_STOPWORDS = {
     "quarterly",
     "report",
     "details",
+    "discussion",
+    "signs",
+    "watching",
 }
 
 
@@ -3058,16 +3061,90 @@ def monitor_similarity(left: set[str], right: set[str]) -> float:
     return len(left & right) / len(left | right)
 
 
-def concise_monitor_text(values: list[str]) -> str:
+def split_monitor_points(value: str) -> list[str]:
+    text = str(value or "").strip().strip(".")
+    if not text:
+        return []
+    text = re.sub(r"\s+", " ", text)
+    parts = re.split(
+        r"\s*(?:;|,|\bor\b|\band whether\b|\band any\b|\band signs of\b|\band management\b|\band next\b)\s*",
+        text,
+        flags=re.IGNORECASE,
+    )
+    output = []
+    for part in parts:
+        cleaned = clean_monitor_point(part)
+        if len(monitor_tokens(cleaned)) >= 1 and cleaned.lower() not in {item.lower() for item in output}:
+            output.append(cleaned)
+    return output
+
+
+def clean_monitor_point(value: str) -> str:
+    text = str(value or "").strip(" .;:,")
+    text = re.sub(r"^(?:and\s+)?(?:watch\s+(?:for\s+)?|monitor\s+|any\s+|next\s+|upcoming\s+|change\s+in\s+|signs?\s+of\s+)", "", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"^(?:management\s+)?(?:commentary|comments|discussion|detail|details)\s+(?:on|of|about)\s+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"^(?:whether|if)\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bmanagement\s+(?:commentary|comments|discussion)\s+(?:on|of|about)\s+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip(" .;:,")
+    if not text:
+        return ""
+    text = text[:1].upper() + text[1:]
+    if len(text) > 120:
+        text = text[:117].rstrip(" ,;.") + "..."
+    return text
+
+
+def monitor_topic_key(value: str) -> str:
+    tokens = monitor_tokens(value)
+    text = " ".join(sorted(tokens))
+    if "aws" in tokens and ("growth" in tokens or "accelerating" in tokens):
+        return "aws_growth"
+    if {"free", "cash", "flow"}.issubset(tokens) or "fcf" in tokens:
+        return "free_cash_flow"
+    if "capex" in tokens or ({"capital", "spending"} & tokens):
+        return "capex"
+    if "ai" in tokens and ({"adoption", "customer", "customers", "demand", "conversion"} & tokens):
+        return "ai_adoption"
+    if "ai" in tokens and ({"returns", "return", "roi"} & tokens):
+        return "ai_returns"
+    if {"operating", "income"} & tokens or {"profitability", "margin", "margins"} & tokens:
+        return "profitability"
+    if {"pricing", "competitive", "competition", "pressure"} & tokens:
+        return "pricing_pressure"
+    if {"regulatory", "regulation", "penalty", "settlement"} & tokens:
+        return "regulatory"
+    if {"launch", "product", "adoption", "engagement"} & tokens:
+        return "product_adoption"
+    return f"terms:{text}"
+
+
+def monitor_topic_label(topic_key: str) -> str | None:
+    return {
+        "aws_growth": "AWS growth",
+        "free_cash_flow": "Free cash flow",
+        "capex": "Capex",
+        "ai_adoption": "AI customer adoption",
+        "ai_returns": "AI returns",
+        "profitability": "Profitability",
+        "pricing_pressure": "Pricing pressure",
+        "regulatory": "Regulatory exposure",
+        "product_adoption": "Product adoption",
+    }.get(topic_key)
+
+
+def concise_monitor_text(values: list[str], topic_key: str = "") -> str:
+    label = monitor_topic_label(topic_key)
+    if label:
+        return label
     if not values:
         return ""
     candidates = sorted(values, key=lambda text: (len(text), text))
-    text = candidates[0].strip()
-    text = re.sub(r"^(?:watch\s+(?:for\s+)?|monitor\s+|any\s+)", "", text, flags=re.IGNORECASE).strip()
-    text = text[:1].upper() + text[1:] if text else candidates[0]
-    if len(text) > 190:
-        text = text[:187].rstrip(" ,;.") + "..."
-    return text
+    return clean_monitor_point(candidates[0])
 
 
 def build_monitor_summary(items: list[dict[str, Any]], limit: int = 5) -> list[dict[str, Any]]:
@@ -3076,30 +3153,34 @@ def build_monitor_summary(items: list[dict[str, Any]], limit: int = 5) -> list[d
         monitor_next = str(item.get("monitor_next") or "").strip()
         if not monitor_next:
             continue
-        tokens = monitor_tokens(monitor_next)
-        best_cluster = None
-        best_score = 0.0
-        for cluster in clusters:
-            score = monitor_similarity(tokens, cluster["tokens"])
-            if score > best_score:
-                best_cluster = cluster
-                best_score = score
-        if best_cluster is None or best_score < 0.38:
-            best_cluster = {
-                "tokens": set(tokens),
-                "texts": [],
-                "count": 0,
-                "first_seen_at": item["report_date"],
-                "last_seen_at": item["report_date"],
-                "report_item_ids": [],
-            }
-            clusters.append(best_cluster)
-        best_cluster["tokens"].update(tokens)
-        best_cluster["texts"].append(monitor_next)
-        best_cluster["count"] += 1
-        best_cluster["report_item_ids"].append(item["id"])
-        best_cluster["first_seen_at"] = min(best_cluster["first_seen_at"], item["report_date"])
-        best_cluster["last_seen_at"] = max(best_cluster["last_seen_at"], item["report_date"])
+        for point in split_monitor_points(monitor_next):
+            tokens = monitor_tokens(point)
+            topic_key = monitor_topic_key(point)
+            best_cluster = None
+            best_score = 0.0
+            for cluster in clusters:
+                score = 1.0 if cluster["topic_key"] == topic_key else monitor_similarity(tokens, cluster["tokens"])
+                if score > best_score:
+                    best_cluster = cluster
+                    best_score = score
+            if best_cluster is None or best_score < 0.5:
+                best_cluster = {
+                    "topic_key": topic_key,
+                    "tokens": set(tokens),
+                    "texts": [],
+                    "count": 0,
+                    "first_seen_at": item["report_date"],
+                    "last_seen_at": item["report_date"],
+                    "report_item_ids": [],
+                }
+                clusters.append(best_cluster)
+            best_cluster["tokens"].update(tokens)
+            best_cluster["texts"].append(point)
+            best_cluster["count"] += 1
+            if item["id"] not in best_cluster["report_item_ids"]:
+                best_cluster["report_item_ids"].append(item["id"])
+            best_cluster["first_seen_at"] = min(best_cluster["first_seen_at"], item["report_date"])
+            best_cluster["last_seen_at"] = max(best_cluster["last_seen_at"], item["report_date"])
 
     latest_date = max((item["report_date"] for item in items), default="")
     output = []
@@ -3107,7 +3188,7 @@ def build_monitor_summary(items: list[dict[str, Any]], limit: int = 5) -> list[d
         recency_bonus = 1 if cluster["last_seen_at"] == latest_date else 0
         output.append(
             {
-                "text": concise_monitor_text(cluster["texts"]),
+                "text": concise_monitor_text(cluster["texts"], cluster["topic_key"]),
                 "count": cluster["count"],
                 "first_seen_at": cluster["first_seen_at"],
                 "last_seen_at": cluster["last_seen_at"],
