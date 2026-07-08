@@ -351,11 +351,75 @@ function enhanceReportHtml(html) {
           border-color: #f4c430 !important;
           color: #f4c430 !important;
         }
+        .memory-link {
+          align-items: center !important;
+          border: 0 !important;
+          border-radius: 6px !important;
+          box-sizing: border-box !important;
+          display: inline-flex !important;
+          height: 32px !important;
+          justify-content: center !important;
+          line-height: 0 !important;
+          overflow: hidden !important;
+          width: 104px !important;
+        }
+        .memory-link img {
+          display: block !important;
+          height: 32px !important;
+          max-width: 104px !important;
+          width: 104px !important;
+        }
         .memory-link:hover {
-          background: #f7d75a !important;
-          border-color: #f4c430 !important;
+          background: transparent !important;
+          border: 0 !important;
+          box-shadow: none !important;
           color: #111111 !important;
         }
+        .memory-link:hover img {
+          filter: brightness(1.06) !important;
+        }
+      }
+      .app-thesis-impact {
+        padding: 0 !important;
+      }
+      .app-thesis-toggle {
+        align-items: center;
+        background: transparent;
+        border: 0;
+        color: #f4c430;
+        cursor: pointer;
+        display: flex;
+        font: inherit;
+        font-size: 11px;
+        font-weight: bold;
+        justify-content: space-between;
+        letter-spacing: 0.04em;
+        margin: 0;
+        padding: 12px;
+        text-align: left;
+        text-transform: uppercase;
+        width: 100%;
+      }
+      .app-thesis-toggle:hover {
+        color: #f7d75a;
+      }
+      .app-thesis-chevron {
+        color: #f4c430;
+        font-size: 15px;
+        line-height: 1;
+        margin-left: 12px;
+        transform: rotate(0deg);
+        transition: transform 140ms ease;
+      }
+      .app-thesis-impact.open .app-thesis-chevron {
+        transform: rotate(90deg);
+      }
+      .app-thesis-body {
+        display: none;
+        padding: 0 12px 12px;
+      }
+      .app-thesis-impact.open .app-thesis-body {
+        display: block;
       }
     </style>
   `;
@@ -364,6 +428,47 @@ function enhanceReportHtml(html) {
     return withTargets.replace("<head>", `<head>${enhancement}`);
   }
   return `${enhancement}${withTargets}`;
+}
+
+function setupReportThesisImpactToggles(doc) {
+  const subpanels = Array.from(doc.querySelectorAll(".subpanel"));
+  subpanels.forEach((panel, index) => {
+    const title = panel.querySelector(".subpanel-title");
+    const titleText = title?.textContent?.trim().toLowerCase();
+    if (titleText === "attention") {
+      panel.remove();
+      return;
+    }
+    if (titleText !== "thesis impact" || panel.classList.contains("app-thesis-impact")) {
+      return;
+    }
+    const body = doc.createElement("div");
+    body.className = "app-thesis-body";
+    const siblings = [];
+    let node = title.nextSibling;
+    while (node) {
+      siblings.push(node);
+      node = node.nextSibling;
+    }
+    siblings.forEach((child) => body.appendChild(child));
+
+    const button = doc.createElement("button");
+    const contentId = `app-thesis-impact-${index}`;
+    button.className = "app-thesis-toggle";
+    button.type = "button";
+    button.setAttribute("aria-expanded", "false");
+    button.setAttribute("aria-controls", contentId);
+    button.innerHTML = '<span>Thesis impact</span><span class="app-thesis-chevron" aria-hidden="true">&#8250;</span>';
+
+    body.id = contentId;
+    panel.classList.add("app-thesis-impact");
+    panel.replaceChild(button, title);
+    panel.appendChild(body);
+    button.addEventListener("click", () => {
+      const isOpen = panel.classList.toggle("open");
+      button.setAttribute("aria-expanded", String(isOpen));
+    });
+  });
 }
 
 const THESIS_SECTIONS = {
@@ -1831,6 +1936,7 @@ function ReportPreviewModal({ report, onAddNote, onClose }) {
     if (!doc) {
       return;
     }
+    setupReportThesisImpactToggles(doc);
     const companyLinks = Array.from(doc.querySelectorAll("[data-company-anchor]"));
     companyLinks.forEach((link) => {
       link.addEventListener("click", (event) => {
