@@ -27,7 +27,7 @@ company_memory:
   model: gpt-5.4
   lookback_days: 365
   shortlist_size: 8
-  min_update_interval_days: 14
+  min_update_interval_days: 30
   duplicate_similarity_score: 18
   max_context_items_per_ticker: 3
   max_memory_items_per_stock: 30

@@ -15,7 +15,7 @@ DEFAULT_MAX_CONTEXT_ITEMS_PER_TICKER = 3
 DEFAULT_MAX_MEMORY_ITEMS_PER_STOCK = 30
 DEFAULT_MEMORY_LOOKBACK_DAYS = 365
 DEFAULT_MEMORY_MODEL = "gpt-5.4"
-DEFAULT_MIN_UPDATE_INTERVAL_DAYS = 21
+DEFAULT_MIN_UPDATE_INTERVAL_DAYS = 30
 DEFAULT_DUPLICATE_SIMILARITY_SCORE = 18.0
 STOPWORDS = {
     "about",
@@ -567,11 +567,14 @@ def classify_memory_updates_with_gpt(
             "Match only when today's item and memory describe the same business issue, same business segment, and same investment question. Same broad category is not enough.",
             "The same company and the same generic topic such as AI, growth, margins, spending, competition, or regulation are not enough for update_existing.",
             "If one item is about cloud infrastructure/capex and another is about advertising monetization, they must be separate memory items unless the article explicitly connects the two.",
-            "If the connection is plausible but not explicit, choose create_new instead of update_existing.",
-            "Use update_existing only when the new article clearly extends, contradicts, or resolves the existing tracked theme with materially new facts.",
+            "If the connection is plausible but not explicit, choose ignore instead of update_existing.",
+            "Use update_existing only when the new article clearly extends, contradicts, or resolves the exact same tracked theme with materially new facts.",
+            "Do not broaden an existing memory theme to fit today's item. The existing memory theme and description are stable labels, not a draft to rewrite.",
+            "If today's item is related but would require changing the memory theme or description to make it fit, choose ignore.",
             "Do not update memory for repeat coverage, reworded headlines, or another article with the same facts from the same news cycle.",
             "A memory item should evolve over weeks or months, not daily. If a similar memory was seen recently, choose ignore unless there is a major concrete change.",
             "Prefer ignore over create_new when a candidate memory already covers the same investment question.",
+            "Prefer ignore over create_new for adjacent or only mildly different themes; create_new only for a narrow, durable, high-confidence theme that is not already tracked.",
             "Memory is historical context, not evidence. Do not infer causality unless today's item states it.",
             "Create new memory only for narrow topics likely to be useful in future reports. Avoid broad themes such as AI strategy, growth, margins, capex, or regulation by themselves.",
             "Ignore low-value, one-off, generic, or immaterial items.",
@@ -661,12 +664,12 @@ def fallback_memory_decisions(items: list[dict[str, Any]], memories_by_item: lis
             decisions.append(
                 {
                     "index": index,
-                    "decision": "create_new",
+                    "decision": "ignore",
                     "matched_memory_id": None,
-                    "relationship": "new_evidence",
-                    "confidence": "medium",
-                    "theme": item.get("headline") or item["ticker"],
-                    "description": item["summary"],
+                    "relationship": "unrelated",
+                    "confidence": "low",
+                    "theme": "",
+                    "description": "",
                     "latest_development": item["summary"],
                     "keywords": item.get("keywords") or [],
                     "thesis_points": item.get("thesis_points") or [],
@@ -811,9 +814,9 @@ def memory_decision_effect(decision: dict[str, Any] | None, candidate_ids: set[s
     if action == "ignore" or confidence == "low":
         return "ignored"
     matched_id = str(decision.get("matched_memory_id") or "")
-    if action == "update_existing" and matched_id in candidate_ids:
+    if action == "update_existing" and matched_id in candidate_ids and confidence == "high":
         return "updated"
-    if action == "create_new" and confidence in {"medium", "high"}:
+    if action == "create_new" and confidence == "high":
         return "created"
     return "ignored"
 
@@ -922,7 +925,7 @@ def apply_memory_decisions(
                         continue
                     cursor.execute(
                         """
-                        select source_urls
+                        select source_urls, theme
                         from public.company_memory_items
                         where id::text = %(id)s
                           and user_id = %(user_id)s
@@ -935,6 +938,7 @@ def apply_memory_decisions(
                         summary["ignored"] += 1
                         continue
                     existing_urls = list(row[0] or [])
+                    existing_theme = str(row[1] or theme)
                     if item.get("source_url") and item.get("source_url") in existing_urls:
                         summary["ignored"] += 1
                         summary["duplicate_ignored"] += 1
@@ -944,8 +948,6 @@ def apply_memory_decisions(
                         """
                         update public.company_memory_items
                         set
-                            theme = %(theme)s,
-                            description = %(description)s,
                             latest_development = %(latest_development)s,
                             thesis_points = %(thesis_points)s,
                             thesis_linked = company_memory_items.thesis_linked or %(thesis_linked)s,
@@ -968,8 +970,6 @@ def apply_memory_decisions(
                             "id": matched_id,
                             "user_id": user_id,
                             "stock_id": item["stock_id"],
-                            "theme": theme,
-                            "description": description,
                             "latest_development": latest_development,
                             "thesis_points": Json(thesis_points),
                             "thesis_linked": bool(item.get("thesis_linked")),
@@ -1004,7 +1004,7 @@ def apply_memory_decisions(
                             "ticker": item["ticker"],
                             "stock_id": item["stock_id"],
                             "memory_id": matched_id,
-                            "theme": theme,
+                            "theme": existing_theme,
                             "event_type": "updated",
                             "relationship": relationship or "follow_up",
                             "confidence": str(decision.get("confidence") or "medium"),
@@ -1107,7 +1107,6 @@ def apply_memory_decisions(
                             """
                             update public.company_memory_items
                             set
-                                description = %(description)s,
                                 latest_development = %(latest_development)s,
                                 thesis_points = %(thesis_points)s,
                                 thesis_linked = company_memory_items.thesis_linked or %(thesis_linked)s,
@@ -1130,7 +1129,6 @@ def apply_memory_decisions(
                                 "id": memory_id,
                                 "user_id": user_id,
                                 "stock_id": item["stock_id"],
-                                "description": description,
                                 "latest_development": latest_development,
                                 "thesis_points": Json(thesis_points),
                                 "thesis_linked": bool(item.get("thesis_linked")),
