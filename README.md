@@ -103,11 +103,7 @@ On successful register, the server forwards Neon Auth session cookies to the cli
 
 ## Cron
 
-Scheduled reports use `public.users.timezone`, `public.users.report_scheduled_at`, and the user's `email`. The scheduler checks every hour for users whose local scheduled time was in the previous hour, queues those users, and processes the queue sequentially. For each user it runs the same report flow as:
-
-```powershell
-python report.py --date latest --send-email --user-id <user_id> --recipient-email <user_email>
-```
+Scheduled reports use `public.users.timezone`, `public.users.report_scheduled_at`, and the user's `email`. The scheduler checks on the configured interval for users whose local scheduled time was in the lookback window and writes due jobs into `public.report_runs`. The background worker claims queued report jobs first, then falls back to queued deep research jobs.
 
 Run one scheduler cycle, useful for system cron:
 
@@ -115,13 +111,13 @@ Run one scheduler cycle, useful for system cron:
 python report_scheduler.py --once
 ```
 
-Run the built-in hourly scheduler loop:
+Run the built-in scheduler loop:
 
 ```powershell
 python report_scheduler.py
 ```
 
-With Docker Compose, the API server and scheduler start together:
+With Docker Compose, the API server, scheduler, and worker start together:
 
 ```powershell
 docker compose up --build
@@ -131,6 +127,12 @@ To watch scheduler logs:
 
 ```powershell
 docker compose logs -f report-scheduler
+```
+
+To watch background worker logs:
+
+```powershell
+docker compose logs -f worker
 ```
 
 Legacy direct cron example on a VPS/VM with timezone set explicitly:

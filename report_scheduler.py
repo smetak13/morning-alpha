@@ -7,17 +7,17 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from queue import Queue
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from database import connection
-from report import load_dotenv_if_available, load_yaml, run_report_for_user
+from psycopg.types.json import Json
+from report import load_dotenv_if_available, load_yaml
 from sync_stocks import fmp_client, fetch_active_stocks, sync_stocks
 
 
 DEFAULT_TIMEZONE = "Europe/Prague"
-SCHEDULER_INTERVAL_MINS = int(os.getenv("SCHEDULER_INTERVAL_MINS", "30"))
+SCHEDULER_INTERVAL_MINS = int(os.getenv("SCHEDULER_INTERVAL_MINS", "15"))
 UTC = dt.timezone.utc
 PRAGUE_TZ = ZoneInfo(DEFAULT_TIMEZONE)
 STOCK_SYNC_MIN_SYMBOL_COUNT = int(os.getenv("STOCK_SYNC_MIN_SYMBOL_COUNT", "10000"))
@@ -31,6 +31,7 @@ class ScheduledReportJob:
     timezone: str
     report_scheduled_at: dt.time
     report_frequency: str
+    scheduled_for: dt.datetime
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,21 +69,22 @@ def coerce_time(value: Any) -> dt.time:
     raise TypeError(f"Unsupported report_scheduled_at value: {value!r}")
 
 
-def scheduled_time_is_due(
+def due_scheduled_time(
     *,
     report_scheduled_at: dt.time,
     timezone: str,
     run_at_utc: dt.datetime,
     lookback: dt.timedelta,
-) -> bool:
-    local_end = run_at_utc.astimezone(ZoneInfo(timezone))
+) -> dt.datetime | None:
+    tz = ZoneInfo(timezone)
+    local_end = run_at_utc.astimezone(tz)
     local_start = local_end - lookback
 
     for scheduled_date in {local_start.date(), local_end.date()}:
-        scheduled_local = dt.datetime.combine(scheduled_date, report_scheduled_at, tzinfo=local_end.tzinfo)
+        scheduled_local = dt.datetime.combine(scheduled_date, report_scheduled_at, tzinfo=tz)
         if local_start < scheduled_local <= local_end:
-            return True
-    return False
+            return scheduled_local.astimezone(UTC)
+    return None
 
 
 def normalize_report_frequency(value: str | None) -> str:
@@ -142,12 +144,13 @@ def load_due_jobs(run_at_utc: dt.datetime, lookback: dt.timedelta) -> list[Sched
             continue
 
         report_scheduled_at = coerce_time(row["report_scheduled_at"])
-        if not scheduled_time_is_due(
+        scheduled_for = due_scheduled_time(
             report_scheduled_at=report_scheduled_at,
             timezone=timezone,
             run_at_utc=run_at_utc,
             lookback=lookback,
-        ):
+        )
+        if scheduled_for is None:
             continue
 
         due_jobs.append(
@@ -157,73 +160,98 @@ def load_due_jobs(run_at_utc: dt.datetime, lookback: dt.timedelta) -> list[Sched
                 timezone=timezone,
                 report_scheduled_at=report_scheduled_at,
                 report_frequency=report_frequency,
+                scheduled_for=scheduled_for,
             )
         )
 
     return due_jobs
 
 
-def enqueue_jobs(jobs: list[ScheduledReportJob]) -> Queue[ScheduledReportJob]:
-    queue: Queue[ScheduledReportJob] = Queue()
-    for job in jobs:
-        queue.put(job)
-    return queue
-
-
-def output_paths_for_job(job: ScheduledReportJob, run_at_utc: dt.datetime) -> dict[str, Path]:
-    run_id = run_at_utc.strftime("%Y%m%dT%H%M%SZ")
-    base = Path("out") / "scheduled" / run_id / job.user_id
-    return {
-        "context_json": base / "context.json",
-        "output_json": base / "report.json",
-        "usage_json": base / "usage.json",
-        "output_html": base / "report.html",
-    }
-
-
-def process_queue(
+def enqueue_report_runs(
     *,
-    queue: Queue[ScheduledReportJob],
-    run_at_utc: dt.datetime,
+    jobs: list[ScheduledReportJob],
     date_arg: str,
     config_path: str,
     skip_openai: bool,
 ) -> None:
-    total = queue.qsize()
-    completed = 0
-    failed = 0
+    if not jobs:
+        logging.info("No report runs to enqueue")
+        return
 
-    while not queue.empty():
-        job = queue.get()
-        logging.info(
-            "Starting scheduled report user_id=%s email=%s scheduled_at=%s timezone=%s",
-            job.user_id,
-            job.email,
-            job.report_scheduled_at.isoformat(timespec="minutes"),
-            job.timezone,
-        )
-        try:
-            paths = output_paths_for_job(job, run_at_utc)
-            result = run_report_for_user(
-                user_id=job.user_id,
-                recipient_email=job.email,
-                date_arg=date_arg,
-                frequency=job.report_frequency,
-                config_path=config_path,
-                send_email_report=True,
-                skip_openai=skip_openai,
-                **paths,
-            )
-        except Exception:
-            failed += 1
-            logging.exception("Scheduled report failed user_id=%s email=%s", job.user_id, job.email)
-        else:
-            completed += 1
-            logging.info("Scheduled report sent user_id=%s subject=%s", job.user_id, result["subject"])
-        finally:
-            queue.task_done()
-
-    logging.info("Scheduler cycle finished total=%s completed=%s failed=%s", total, completed, failed)
+    inserted = 0
+    duplicate = 0
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            for job in jobs:
+                cursor.execute(
+                    """
+                    insert into public.report_runs (
+                        user_id,
+                        recipient_email,
+                        timezone,
+                        report_scheduled_at,
+                        report_frequency,
+                        scheduled_for,
+                        date_arg,
+                        status,
+                        progress_step,
+                        progress_pct,
+                        request
+                    )
+                    values (
+                        %(user_id)s,
+                        %(recipient_email)s,
+                        %(timezone)s,
+                        %(report_scheduled_at)s,
+                        %(report_frequency)s,
+                        %(scheduled_for)s,
+                        %(date_arg)s,
+                        'queued',
+                        'Queued for report generation',
+                        0,
+                        %(request)s
+                    )
+                    on conflict (user_id, scheduled_for, report_frequency) do nothing
+                    returning id::text
+                    """,
+                    {
+                        "user_id": job.user_id,
+                        "recipient_email": job.email,
+                        "timezone": job.timezone,
+                        "report_scheduled_at": job.report_scheduled_at,
+                        "report_frequency": job.report_frequency,
+                        "scheduled_for": job.scheduled_for,
+                        "date_arg": date_arg,
+                        "request": Json(
+                            {
+                                "config_path": config_path,
+                                "skip_openai": skip_openai,
+                                "scheduler": "report_scheduler.py",
+                            }
+                        ),
+                    },
+                )
+                row = cursor.fetchone()
+                if row:
+                    inserted += 1
+                    logging.info(
+                        "Queued report run id=%s user_id=%s email=%s frequency=%s scheduled_for=%s timezone=%s",
+                        row[0],
+                        job.user_id,
+                        job.email,
+                        job.report_frequency,
+                        job.scheduled_for.isoformat(),
+                        job.timezone,
+                    )
+                else:
+                    duplicate += 1
+                    logging.info(
+                        "Skipped duplicate report run user_id=%s frequency=%s scheduled_for=%s",
+                        job.user_id,
+                        job.report_frequency,
+                        job.scheduled_for.isoformat(),
+                    )
+    logging.info("Scheduler enqueue finished total=%s inserted=%s duplicate=%s", len(jobs), inserted, duplicate)
 
 
 def stock_sync_is_due(run_at_utc: dt.datetime) -> bool:
@@ -279,10 +307,8 @@ def run_scheduler_cycle(args: argparse.Namespace, run_at_utc: dt.datetime | None
 
     jobs = load_due_jobs(run_at, lookback)
     logging.info("Scheduler found %s due users", len(jobs))
-    queue = enqueue_jobs(jobs)
-    process_queue(
-        queue=queue,
-        run_at_utc=run_at,
+    enqueue_report_runs(
+        jobs=jobs,
         date_arg=args.date,
         config_path=args.config,
         skip_openai=args.skip_openai,
