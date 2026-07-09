@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Bell,
   Check,
   Calendar,
   ChevronDown,
@@ -222,6 +223,19 @@ function formatLongDate(value) {
     month: "long",
     day: "numeric",
     year: "numeric",
+  }).format(parseIsoDate(value));
+}
+
+function formatShortDate(value) {
+  if (!value) {
+    return "";
+  }
+  if (!String(value).match(/^\d{4}-\d{2}-\d{2}$/)) {
+    return String(value);
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
   }).format(parseIsoDate(value));
 }
 
@@ -1088,6 +1102,12 @@ function MainPage({ route, user, onLogout }) {
   const [modal, setModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [contextTarget, setContextTarget] = useState(null);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationsStatus, setNotificationsStatus] = useState("idle");
+  const notificationRef = useRef(null);
+  const notificationUnreadOnOpenRef = useRef(0);
 
   const portfolioTotal = useMemo(
     () => portfolio.reduce((total, item) => total + Number(item.position_size_pct || 0), 0),
@@ -1111,9 +1131,40 @@ function MainPage({ route, user, onLogout }) {
     }
   }, []);
 
+  const loadNotifications = useCallback(async () => {
+    setNotificationsStatus("loading");
+    try {
+      const payload = await requestJson("/api/notifications?limit=5", { method: "GET" });
+      setNotifications(payload.items ?? []);
+      setUnreadNotifications(Number(payload.unread_count || 0));
+      setNotificationsStatus("ready");
+      return payload;
+    } catch {
+      setNotificationsStatus("error");
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     loadItems();
   }, [loadItems]);
+
+  useEffect(() => {
+    loadNotifications();
+  }, [loadNotifications]);
+
+  useEffect(() => {
+    if (!notificationsOpen) {
+      return undefined;
+    }
+    const handlePointerDown = (event) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target)) {
+        closeNotifications();
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [notificationsOpen]);
 
   useEffect(() => {
     setSettings(userSettingsFromProfile(user));
@@ -1171,6 +1222,37 @@ function MainPage({ route, user, onLogout }) {
     } catch (err) {
       setSettingsError(err instanceof Error ? err.message : "Unable to update report schedule.");
     }
+  };
+
+  const markOpenNotificationsRead = async () => {
+    const unreadCount = notificationUnreadOnOpenRef.current;
+    if (unreadCount <= 0) {
+      return;
+    }
+    const readAt = new Date().toISOString();
+    notificationUnreadOnOpenRef.current = 0;
+    setUnreadNotifications(0);
+    setNotifications((current) => current.map((notification) => ({ ...notification, read_at: notification.read_at || readAt })));
+    await requestJson("/api/notifications/read", { method: "POST", body: "{}" }).catch(() => {
+      setUnreadNotifications(unreadCount);
+      loadNotifications();
+    });
+  };
+
+  const closeNotifications = () => {
+    setNotificationsOpen(false);
+    markOpenNotificationsRead();
+  };
+
+  const toggleNotifications = async () => {
+    const nextOpen = !notificationsOpen;
+    if (!nextOpen) {
+      closeNotifications();
+      return;
+    }
+    setNotificationsOpen(true);
+    const payload = await loadNotifications();
+    notificationUnreadOnOpenRef.current = Number(payload?.unread_count || unreadNotifications || 0);
   };
 
   const openAddModal = (itemType) => {
@@ -1283,9 +1365,53 @@ function MainPage({ route, user, onLogout }) {
         <div className="brand-row compact">
           <img className="topbar-logo" src="/ma-logo.png" alt="Morning Alpha" />
         </div>
-        <button className="icon-button" onClick={onLogout} type="button" title="Sign out">
-          <LogOut size={18} aria-hidden="true" />
-        </button>
+        <div className="topbar-actions">
+          <div className="notification-menu" ref={notificationRef}>
+            <button
+              aria-expanded={notificationsOpen}
+              aria-haspopup="menu"
+              className="icon-button notification-button"
+              onClick={toggleNotifications}
+              type="button"
+              title="Notifications"
+            >
+              <Bell size={18} aria-hidden="true" />
+              {unreadNotifications > 0 ? <span className="notification-dot" aria-hidden="true" /> : null}
+            </button>
+            {notificationsOpen ? (
+              <div className="notification-popover" role="menu">
+                <div className="notification-popover-header">
+                  <strong>Notifications</strong>
+                </div>
+                {notificationsStatus === "loading" ? <p className="notification-empty">Loading...</p> : null}
+                {notificationsStatus === "error" ? <p className="notification-empty">Unable to load notifications.</p> : null}
+                {notificationsStatus !== "loading" && notificationsStatus !== "error" && notifications.length === 0 ? (
+                  <p className="notification-empty">No notifications.</p>
+                ) : null}
+                {notificationsStatus !== "loading" && notificationsStatus !== "error" && notifications.length > 0 ? (
+                  <div className="notification-list">
+                    {notifications.map((notification) => (
+                      <div
+                        className={notification.read_at ? "notification-item" : "notification-item unread"}
+                        key={notification.id}
+                        role="menuitem"
+                      >
+                        <span>
+                          <strong>{notification.title}</strong>
+                          {notification.body ? <em>{notification.body}</em> : null}
+                        </span>
+                        {notification.event_date ? <small>{formatShortDate(notification.event_date)}</small> : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          <button className="icon-button" onClick={onLogout} type="button" title="Sign out">
+            <LogOut size={18} aria-hidden="true" />
+          </button>
+        </div>
       </header>
       <section className={`main-content main-content-${activeView}`}>
         <div className="page-heading">

@@ -1146,6 +1146,12 @@ input::placeholder {
   padding: 0 28px;
 }
 
+.topbar-actions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
 .icon-button {
   background: #222222;
   border-radius: 8px;
@@ -1156,6 +1162,116 @@ input::placeholder {
 
 .icon-button:hover {
   background: #303030;
+}
+
+.notification-menu {
+  position: relative;
+}
+
+.notification-button {
+  position: relative;
+}
+
+.notification-dot {
+  background: #e5483f;
+  border: 2px solid #222222;
+  border-radius: 999px;
+  height: 10px;
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  width: 10px;
+}
+
+.notification-popover {
+  background: #151515;
+  border: 1px solid #343434;
+  border-radius: 8px;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.5);
+  color: #eeeeea;
+  overflow: hidden;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  width: min(360px, calc(100vw - 28px));
+  z-index: 100;
+}
+
+.notification-popover-header {
+  align-items: center;
+  border-bottom: 1px solid #2a2a2a;
+  display: flex;
+  min-height: 42px;
+  padding: 10px 12px;
+}
+
+.notification-popover-header strong {
+  font-size: 0.92rem;
+}
+
+.notification-empty {
+  color: #a7a7a0;
+  margin: 0;
+  padding: 14px 12px;
+}
+
+.notification-list {
+  display: grid;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.notification-item {
+  align-items: flex-start;
+  border-bottom: 1px solid #252525;
+  color: #eeeeea;
+  cursor: default;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  min-height: 74px;
+  padding: 12px;
+}
+
+.notification-item:last-child {
+  border-bottom: 0;
+}
+
+.notification-item > span {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.notification-item strong {
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.notification-item em {
+  color: #b8b8b0;
+  font-size: 0.8rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.notification-item small {
+  color: #f4c430;
+  flex: 0 0 auto;
+  font-size: 0.76rem;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.notification-item.unread strong::before {
+  background: #e5483f;
+  border-radius: 999px;
+  content: "";
+  display: inline-block;
+  height: 7px;
+  margin-right: 7px;
+  vertical-align: 1px;
+  width: 7px;
 }
 
 .main-content {
@@ -4230,6 +4346,19 @@ input[type="range"] {
 
   .topbar-logo {
     max-height: 32px;
+  }
+
+  .notification-popover {
+    left: 14px;
+    max-height: calc(100dvh - 76px);
+    position: fixed;
+    right: 14px;
+    top: 64px;
+    width: auto;
+  }
+
+  .notification-list {
+    max-height: calc(100dvh - 132px);
   }
 
   .main-content {

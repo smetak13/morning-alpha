@@ -648,6 +648,100 @@ def update_user_settings(payload: UserSettingsUpdateRequest, request: Request) -
     return {"user": dict(row)}
 
 
+def serialize_notification_row(row: dict[str, Any]) -> dict[str, Any]:
+    metadata = row.get("metadata") or {}
+    return {
+        "id": str(row["id"]),
+        "type": row["type"],
+        "title": row["title"],
+        "body": row.get("body"),
+        "target_url": row.get("target_url"),
+        "stock_id": str(row["stock_id"]) if row.get("stock_id") else None,
+        "portfolio_item_id": str(row["portfolio_item_id"]) if row.get("portfolio_item_id") else None,
+        "watchlist_item_id": str(row["watchlist_item_id"]) if row.get("watchlist_item_id") else None,
+        "event_date": row["event_date"].isoformat() if row.get("event_date") else None,
+        "reminder_kind": row.get("reminder_kind"),
+        "read_at": row["read_at"].isoformat() if row.get("read_at") else None,
+        "created_at": row["created_at"].isoformat() if row.get("created_at") else None,
+        "expires_at": row["expires_at"].isoformat() if row.get("expires_at") else None,
+        "metadata": metadata if isinstance(metadata, dict) else {},
+    }
+
+
+@app.get("/api/notifications")
+def list_notifications(request: Request, limit: int = 5) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    safe_limit = min(max(limit, 1), 20)
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select count(*) as unread_count
+                from public.notifications
+                where user_id = %(user_id)s
+                  and read_at is null
+                  and (expires_at is null or expires_at > now())
+                """,
+                {"user_id": user_id},
+            )
+            unread_count = int(cursor.fetchone()["unread_count"] or 0)
+
+            cursor.execute(
+                """
+                select
+                    id::text as id,
+                    type,
+                    title,
+                    body,
+                    target_url,
+                    stock_id::text as stock_id,
+                    portfolio_item_id::text as portfolio_item_id,
+                    watchlist_item_id::text as watchlist_item_id,
+                    event_date,
+                    reminder_kind,
+                    read_at,
+                    expires_at,
+                    metadata,
+                    created_at
+                from public.notifications
+                where user_id = %(user_id)s
+                  and (expires_at is null or expires_at > now())
+                order by created_at desc
+                limit %(limit)s
+                """,
+                {"user_id": user_id, "limit": safe_limit},
+            )
+            rows = cursor.fetchall()
+
+    return {
+        "items": [serialize_notification_row(dict(row)) for row in rows],
+        "unread_count": unread_count,
+    }
+
+
+@app.post("/api/notifications/read")
+def mark_notifications_read(request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                update public.notifications
+                set read_at = coalesce(read_at, now())
+                where user_id::text = %(user_id)s
+                  and read_at is null
+                  and (expires_at is null or expires_at > now())
+                """,
+                {"user_id": user_id},
+            )
+            updated = cursor.rowcount
+
+    return {"updated": updated}
+
+
 @app.post("/logout")
 def logout(request: Request, response: Response) -> dict[str, Any]:
     upstream = post_to_neon_auth("/sign-out", {}, request)

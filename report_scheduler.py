@@ -22,6 +22,7 @@ UTC = dt.timezone.utc
 PRAGUE_TZ = ZoneInfo(DEFAULT_TIMEZONE)
 STOCK_SYNC_MIN_SYMBOL_COUNT = int(os.getenv("STOCK_SYNC_MIN_SYMBOL_COUNT", "10000"))
 _last_stock_sync_date: dt.date | None = None
+_last_earnings_notification_date: dt.date | None = None
 
 
 @dataclass(frozen=True)
@@ -298,12 +299,344 @@ def run_daily_stock_sync(args: argparse.Namespace, run_at_utc: dt.datetime) -> N
     )
 
 
+def earnings_notification_sync_is_due(run_at_utc: dt.datetime) -> bool:
+    global _last_earnings_notification_date
+    local_run_at = run_at_utc.astimezone(PRAGUE_TZ)
+    if local_run_at.hour != 2:
+        return False
+    if _last_earnings_notification_date == local_run_at.date():
+        return False
+    return True
+
+
+def scheduler_fmp_items(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, dict):
+        items = data.get("historical") or data.get("historicalStockList") or data.get("data") or []
+    elif isinstance(data, list):
+        items = data
+    else:
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def parse_fmp_date(value: Any) -> dt.date | None:
+    if not value:
+        return None
+    try:
+        return dt.date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def row_any(row: dict[str, Any], *names: str) -> Any:
+    lower_map = {str(key).lower(): value for key, value in row.items()} if isinstance(row, dict) else {}
+    for name in names:
+        if name in row and row.get(name) not in (None, "", []):
+            return row.get(name)
+        value = lower_map.get(str(name).lower())
+        if value not in (None, "", []):
+            return value
+    return None
+
+
+def normalize_earnings_event(row: dict[str, Any], today: dt.date) -> dict[str, Any] | None:
+    event_date = parse_fmp_date(row_any(row, "date", "fiscalDateEnding"))
+    if event_date is None or event_date < today:
+        return None
+
+    quarter = row_any(row, "quarter", "fiscalQuarter", "period")
+    fiscal_quarter = str(quarter).strip().upper() if quarter not in (None, "", []) else None
+    if fiscal_quarter and fiscal_quarter.isdigit():
+        fiscal_quarter = f"Q{fiscal_quarter}"
+
+    fiscal_year = row_any(row, "calendarYear", "fiscalYear", "year")
+    if fiscal_year not in (None, "", []):
+        try:
+            fiscal_year = str(int(float(fiscal_year)))
+        except (TypeError, ValueError):
+            fiscal_year = str(fiscal_year)
+    else:
+        fiscal_year = None
+
+    report_time = row_any(row, "time", "reportTime", "publicationTime", "epsTime")
+    return {
+        "event_date": event_date,
+        "report_time": str(report_time).strip() if report_time not in (None, "", []) else None,
+        "fiscal_quarter": fiscal_quarter,
+        "fiscal_year": fiscal_year,
+        "raw": row,
+    }
+
+
+def fetch_upcoming_earnings_events(client: Any, symbol: str, today: dt.date) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for endpoint, params in (
+        ("earnings", {"symbol": symbol, "limit": 20, "includeReportTimes": True}),
+        ("historical/earning_calendar", {"symbol": symbol, "limit": 20}),
+        ("earnings-calendar", {"symbol": symbol, "limit": 20}),
+    ):
+        try:
+            rows = scheduler_fmp_items(client.get(endpoint, params))
+        except Exception as exc:
+            logging.warning("FMP earnings fetch failed symbol=%s endpoint=%s error=%s", symbol, endpoint, exc)
+            continue
+        if rows:
+            break
+
+    events: list[dict[str, Any]] = []
+    seen_dates: set[dt.date] = set()
+    for row in rows:
+        event = normalize_earnings_event(row, today)
+        if not event or event["event_date"] in seen_dates:
+            continue
+        seen_dates.add(event["event_date"])
+        events.append(event)
+    return sorted(events, key=lambda item: item["event_date"])
+
+
+def load_notification_stock_universe(cursor: Any) -> list[dict[str, Any]]:
+    cursor.execute(
+        """
+        select distinct
+            stocks.id::text as stock_id,
+            stocks.symbol,
+            stocks.company_name
+        from public.stocks
+        where exists (
+            select 1 from public.portfolio_items
+            where portfolio_items.stock_id = stocks.id
+        )
+           or exists (
+            select 1 from public.watchlist_items
+            where watchlist_items.stock_id = stocks.id
+        )
+        order by stocks.symbol
+        """
+    )
+    return [dict(row) for row in cursor.fetchall()]
+
+
+def refresh_stock_earnings_events(*, client: Any, today: dt.date) -> int:
+    from psycopg.rows import dict_row
+
+    updated = 0
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            stocks = load_notification_stock_universe(cursor)
+            logging.info("Refreshing earnings events for %s unique stocks", len(stocks))
+            for stock in stocks:
+                symbol = str(stock["symbol"]).upper()
+                events = fetch_upcoming_earnings_events(client, symbol, today)
+                for event in events:
+                    cursor.execute(
+                        """
+                        insert into public.stock_earnings_events (
+                            stock_id,
+                            symbol,
+                            event_date,
+                            report_time,
+                            fiscal_quarter,
+                            fiscal_year,
+                            source,
+                            raw,
+                            updated_at
+                        )
+                        values (
+                            %(stock_id)s,
+                            %(symbol)s,
+                            %(event_date)s,
+                            %(report_time)s,
+                            %(fiscal_quarter)s,
+                            %(fiscal_year)s,
+                            'fmp',
+                            %(raw)s,
+                            now()
+                        )
+                        on conflict (stock_id, event_date) do update
+                        set symbol = excluded.symbol,
+                            report_time = excluded.report_time,
+                            fiscal_quarter = excluded.fiscal_quarter,
+                            fiscal_year = excluded.fiscal_year,
+                            source = excluded.source,
+                            raw = excluded.raw,
+                            updated_at = now()
+                        """,
+                        {
+                            "stock_id": stock["stock_id"],
+                            "symbol": symbol,
+                            "event_date": event["event_date"],
+                            "report_time": event["report_time"],
+                            "fiscal_quarter": event["fiscal_quarter"],
+                            "fiscal_year": event["fiscal_year"],
+                            "raw": Json(event["raw"]),
+                        },
+                    )
+                    updated += 1
+    return updated
+
+
+def reminder_title(symbol: str, company_name: str, reminder_kind: str) -> str:
+    prefix = "Soon" if reminder_kind == "1d" else "Upcoming"
+    return f"{prefix}: {symbol} earnings call"
+
+
+def reminder_body(company_name: str, event_date: dt.date, report_time: str | None, reminder_kind: str) -> str:
+    date_text = event_date.strftime("%b %-d, %Y") if os.name != "nt" else event_date.strftime("%b %#d, %Y")
+    timing = f" ({report_time})" if report_time else ""
+    if reminder_kind == "1d":
+        return f"{company_name} is expected to report earnings soon: {date_text}{timing}."
+    return f"{company_name} is expected to report earnings on {date_text}{timing}."
+
+
+def create_earnings_notifications(today: dt.date) -> int:
+    from psycopg.rows import dict_row
+
+    inserted = 0
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                select
+                    holdings.user_id::text as user_id,
+                    holdings.relationship,
+                    holdings.item_id::text as item_id,
+                    stocks.id::text as stock_id,
+                    stocks.symbol,
+                    stocks.company_name,
+                    events.event_date,
+                    events.report_time,
+                    events.fiscal_quarter,
+                    events.fiscal_year
+                from (
+                    select user_id, stock_id, id as item_id, 'portfolio'::text as relationship
+                    from public.portfolio_items
+                    union all
+                    select user_id, stock_id, id as item_id, 'watchlist'::text as relationship
+                    from public.watchlist_items
+                ) holdings
+                join public.stocks on stocks.id = holdings.stock_id
+                join public.stock_earnings_events events on events.stock_id = holdings.stock_id
+                where events.event_date between %(today)s and %(week_end)s
+                order by holdings.user_id, events.event_date, stocks.symbol
+                """,
+                {"today": today, "week_end": today + dt.timedelta(days=7)},
+            )
+            rows = cursor.fetchall()
+            for row in rows:
+                event_date = row["event_date"]
+                days_until = (event_date - today).days
+                reminder_kinds = ["7d"]
+                if days_until <= 1:
+                    reminder_kinds.append("1d")
+
+                for reminder_kind in reminder_kinds:
+                    symbol = str(row["symbol"]).upper()
+                    target_url = f"/research#{row['relationship']}-{row['item_id']}"
+                    params = {
+                        "user_id": row["user_id"],
+                        "stock_id": row["stock_id"],
+                        "portfolio_item_id": row["item_id"] if row["relationship"] == "portfolio" else None,
+                        "watchlist_item_id": row["item_id"] if row["relationship"] == "watchlist" else None,
+                        "event_date": event_date,
+                        "reminder_kind": reminder_kind,
+                        "title": reminder_title(symbol, row["company_name"], reminder_kind),
+                        "body": reminder_body(row["company_name"], event_date, row["report_time"], reminder_kind),
+                        "target_url": target_url,
+                        "expires_at": dt.datetime.combine(event_date + dt.timedelta(days=7), dt.time.min, tzinfo=UTC),
+                        "metadata": Json(
+                            {
+                                "symbol": symbol,
+                                "company_name": row["company_name"],
+                                "relationship": row["relationship"],
+                                "fiscal_quarter": row["fiscal_quarter"],
+                                "fiscal_year": row["fiscal_year"],
+                                "report_time": row["report_time"],
+                            }
+                        ),
+                    }
+                    cursor.execute(
+                        """
+                        insert into public.notifications (
+                            user_id,
+                            type,
+                            title,
+                            body,
+                            target_url,
+                            stock_id,
+                            portfolio_item_id,
+                            watchlist_item_id,
+                            event_date,
+                            reminder_kind,
+                            expires_at,
+                            metadata
+                        )
+                        values (
+                            %(user_id)s,
+                            'earnings_call_reminder',
+                            %(title)s,
+                            %(body)s,
+                            %(target_url)s,
+                            %(stock_id)s,
+                            %(portfolio_item_id)s,
+                            %(watchlist_item_id)s,
+                            %(event_date)s,
+                            %(reminder_kind)s,
+                            %(expires_at)s,
+                            %(metadata)s
+                        )
+                        on conflict (user_id, type, stock_id, event_date, reminder_kind)
+                        where type = 'earnings_call_reminder'
+                          and stock_id is not null
+                          and event_date is not null
+                          and reminder_kind is not null
+                        do nothing
+                        returning id
+                        """,
+                        params,
+                    )
+                    if cursor.fetchone():
+                        inserted += 1
+    return inserted
+
+
+def run_daily_earnings_notifications(args: argparse.Namespace, run_at_utc: dt.datetime) -> None:
+    global _last_earnings_notification_date
+    if not earnings_notification_sync_is_due(run_at_utc):
+        return
+
+    local_date = run_at_utc.astimezone(PRAGUE_TZ).date()
+    logging.info("Starting daily earnings notification sync local_date=%s", local_date.isoformat())
+    try:
+        config_path = Path(args.config)
+        if not config_path.is_absolute():
+            config_path = Path(__file__).resolve().parent / config_path
+        config = load_yaml(config_path)
+        client = fmp_client(config)
+        updated_events = refresh_stock_earnings_events(client=client, today=local_date)
+        inserted_notifications = create_earnings_notifications(local_date)
+    except SystemExit as exc:
+        logging.error("Daily earnings notification sync failed local_date=%s error=%s", local_date.isoformat(), exc)
+        return
+    except Exception:
+        logging.exception("Daily earnings notification sync failed local_date=%s", local_date.isoformat())
+        return
+
+    _last_earnings_notification_date = local_date
+    logging.info(
+        "Daily earnings notification sync finished local_date=%s updated_events=%s inserted_notifications=%s",
+        local_date.isoformat(),
+        updated_events,
+        inserted_notifications,
+    )
+
+
 def run_scheduler_cycle(args: argparse.Namespace, run_at_utc: dt.datetime | None = None) -> None:
     run_at = (run_at_utc or dt.datetime.now(tz=UTC)).astimezone(UTC)
     lookback = dt.timedelta(minutes=args.lookback_minutes)
     logging.info("Scheduler cycle started run_at_utc=%s lookback=%s", run_at.isoformat(), lookback)
 
     run_daily_stock_sync(args, run_at)
+    run_daily_earnings_notifications(args, run_at)
 
     jobs = load_due_jobs(run_at, lookback)
     logging.info("Scheduler found %s due users", len(jobs))
