@@ -175,6 +175,8 @@ const REPORT_FREQUENCIES = [
   ["monthly", "Monthly"],
 ];
 
+const STOCK_SEARCH_DEBOUNCE_MS = 650;
+
 function reportFrequencyValue(value) {
   return REPORT_FREQUENCIES.some(([option]) => option === value) ? value : "daily";
 }
@@ -3124,16 +3126,31 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
       setResults([]);
       return undefined;
     }
+    const query = search.trim();
+    const controller = new AbortController();
+    let active = true;
     const timer = window.setTimeout(async () => {
       setError("");
       try {
-        const response = await requestJson(`/api/stocks/search?q=${encodeURIComponent(search.trim())}`, { method: "GET" });
-        setResults(response.results ?? []);
-      } catch {
+        const response = await requestJson(`/api/stocks/search?q=${encodeURIComponent(query)}`, {
+          method: "GET",
+          signal: controller.signal,
+        });
+        if (active) {
+          setResults(response.results ?? []);
+        }
+      } catch (err) {
+        if (err?.name === "AbortError" || !active) {
+          return;
+        }
         setError("Stock search is temporarily unavailable.");
       }
-    }, 250);
-    return () => window.clearTimeout(timer);
+    }, STOCK_SEARCH_DEBOUNCE_MS);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [search, selectedStock]);
 
   const runResearch = async () => {
@@ -6026,18 +6043,31 @@ function StockThesisModal({ modal, onClose, onSaved }) {
       setResults([]);
       return undefined;
     }
+    const query = search.trim();
+    const controller = new AbortController();
+    let active = true;
     const timer = window.setTimeout(async () => {
       setError("");
       try {
-        const payload = await requestJson(`/api/stocks/search?q=${encodeURIComponent(search.trim())}`, {
+        const payload = await requestJson(`/api/stocks/search?q=${encodeURIComponent(query)}`, {
           method: "GET",
+          signal: controller.signal,
         });
-        setResults(payload.results ?? []);
-      } catch {
+        if (active) {
+          setResults(payload.results ?? []);
+        }
+      } catch (err) {
+        if (err?.name === "AbortError" || !active) {
+          return;
+        }
         setError("Stock search is temporarily unavailable.");
       }
-    }, 300);
-    return () => window.clearTimeout(timer);
+    }, STOCK_SEARCH_DEBOUNCE_MS);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [modal.mode, search, status]);
 
   const selectStock = async (selected) => {
