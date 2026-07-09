@@ -3795,7 +3795,7 @@ function formatCompactNumber(value) {
   if (!Number.isFinite(number)) {
     return "N/A";
   }
-  return new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
     notation: Math.abs(number) >= 1000000 ? "compact" : "standard",
   }).format(number);
@@ -3809,7 +3809,7 @@ function formatStatementNumber(value) {
   if (!Number.isFinite(number)) {
     return "N/A";
   }
-  return new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 2,
     minimumFractionDigits: 2,
     notation: Math.abs(number) >= 1000000 ? "compact" : "standard",
@@ -3838,6 +3838,35 @@ function formatDividendYield(value) {
   return `${number.toFixed(2)}%`;
 }
 
+const currencyMetricKeys = new Set([
+  "capitalExpenditure",
+  "cashAndCashEquivalents",
+  "ebitda",
+  "enterprise_value",
+  "eps",
+  "fcf_per_share",
+  "freeCashFlow",
+  "free_cash_flow",
+  "grossProfit",
+  "gross_profit",
+  "market_cap",
+  "netIncome",
+  "net_debt",
+  "net_income",
+  "operatingCashFlow",
+  "operatingIncome",
+  "operating_income",
+  "price",
+  "revenue",
+  "revenue_per_share",
+  "totalAssets",
+  "totalDebt",
+  "totalLiabilities",
+  "totalStockholdersEquity",
+  "year_high",
+  "year_low",
+]);
+
 function metricValue(key, value) {
   if (key === "dividend_yield_pct") {
     return formatDividendYield(value);
@@ -3848,10 +3877,7 @@ function metricValue(key, value) {
   if (key.includes("margin") || key === "roe_pct" || key.includes("yield")) {
     return formatMetricPercent(value);
   }
-  if (["market_cap", "enterprise_value", "net_debt"].includes(key)) {
-    return formatCompactNumber(value);
-  }
-  if (key === "price" || key === "year_high" || key === "year_low") {
+  if (currencyMetricKeys.has(key)) {
     if (value === null || value === undefined || value === "") {
       return "N/A";
     }

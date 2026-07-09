@@ -2591,11 +2591,11 @@ def compact_email_number(value: Any, prefix: str = "", suffix: str = "") -> str:
         return "N/A"
     abs_number = abs(number)
     if abs_number >= 1_000_000_000_000:
-        formatted = f"{number / 1_000_000_000_000:.1f}T"
+        formatted = f"{number / 1_000_000_000_000:.2f}".rstrip("0").rstrip(".") + "T"
     elif abs_number >= 1_000_000_000:
-        formatted = f"{number / 1_000_000_000:.1f}B"
+        formatted = f"{number / 1_000_000_000:.2f}".rstrip("0").rstrip(".") + "B"
     elif abs_number >= 1_000_000:
-        formatted = f"{number / 1_000_000:.1f}M"
+        formatted = f"{number / 1_000_000:.2f}".rstrip("0").rstrip(".") + "M"
     elif abs_number >= 100:
         formatted = f"{number:.0f}"
     else:
@@ -2604,13 +2604,21 @@ def compact_email_number(value: Any, prefix: str = "", suffix: str = "") -> str:
 
 
 def research_email_metric_value(key: str, value: Any) -> str:
+    currency_metric_keys = {
+        "eps",
+        "fcf_per_share",
+        "market_cap",
+        "price",
+        "revenue_per_share",
+        "year_high",
+        "year_low",
+    }
+
     if key == "dividend_yield_pct":
         number = safe_float(value)
         return f"{number:.2f}%" if number and number > 0 else "-"
-    if key in {"price", "year_high", "year_low"}:
+    if key in currency_metric_keys:
         return compact_email_number(value, prefix="$")
-    if key == "market_cap":
-        return compact_email_number(value)
     if "growth" in key or "margin" in key or "yield" in key:
         return compact_email_number(value, suffix="%")
     return compact_email_number(value)
