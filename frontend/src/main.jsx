@@ -1183,6 +1183,7 @@ function MainPage({ route, user, onLogout }) {
   const [modal, setModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [contextTarget, setContextTarget] = useState(null);
+  const [editingMobilePositionId, setEditingMobilePositionId] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -1564,6 +1565,8 @@ function MainPage({ route, user, onLogout }) {
               onSort={() => setPortfolio((current) => sortPortfolioItems(current))}
               onPositionChange={updatePortfolioPosition}
               onPositionCommit={savePortfolioPosition}
+              editingMobilePositionId={editingMobilePositionId}
+              onMobilePositionEdit={setEditingMobilePositionId}
               portfolioTotal={portfolioTotal}
               title="Portfolio"
             />
@@ -5966,6 +5969,8 @@ function HoldingsSection({
   onPositionCommit,
   onReportToggle,
   onSort,
+  editingMobilePositionId,
+  onMobilePositionEdit,
   portfolioTotal = 0,
   title,
 }) {
@@ -6020,8 +6025,10 @@ function HoldingsSection({
                     {itemType === "portfolio" ? (
                       <PositionSlider
                         item={item}
+                        isMobileEditing={editingMobilePositionId === item.id}
                         onChange={onPositionChange}
                         onCommit={onPositionCommit}
+                        onMobileEdit={onMobilePositionEdit}
                         portfolioTotal={portfolioTotal}
                       />
                     ) : null}
@@ -6086,12 +6093,37 @@ function thesisPointCount(item, itemType) {
   return THESIS_SECTIONS[itemType].reduce((total, section) => total + (item[section.key]?.length ?? 0), 0);
 }
 
-function PositionSlider({ item, onChange, onCommit, portfolioTotal }) {
+function PositionSlider({ item, isMobileEditing = false, onChange, onCommit, onMobileEdit, portfolioTotal }) {
   const current = Number(item.position_size_pct || 0);
   const max = Math.max(0, 100 - portfolioTotal + current);
+  const [draftValue, setDraftValue] = useState(current);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!isMobileEditing) {
+      setDraftValue(current);
+    }
+  }, [current, isMobileEditing]);
+
+  const handleMobileEdit = () => {
+    setDraftValue(current);
+    onMobileEdit?.(item.id);
+  };
+
+  const handleMobileDone = async () => {
+    setIsSaving(true);
+    try {
+      await onCommit({ ...item, position_size_pct: clampPosition(draftValue, max) });
+      onMobileEdit?.(null);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="position-control">
       <input
+        className="position-desktop-slider"
         max={max}
         min="0"
         onBlur={() => onCommit(item)}
@@ -6102,7 +6134,34 @@ function PositionSlider({ item, onChange, onCommit, portfolioTotal }) {
         type="range"
         value={current}
       />
-      <span>{current.toFixed(1)}%</span>
+      <div className="position-mobile-control">
+        {isMobileEditing ? (
+          <input
+            aria-label={`Position size for ${item.symbol}`}
+            max={max}
+            min="0"
+            onChange={(event) => setDraftValue(clampPosition(event.target.value, max))}
+            step="0.5"
+            type="range"
+            value={draftValue}
+          />
+        ) : (
+          <div className="position-allocation-bar" aria-label={`Position size ${current.toFixed(1)}%`}>
+            <span style={{ width: `${Math.min(100, (current / Math.max(max, current, 1)) * 100)}%` }} />
+          </div>
+        )}
+        <button
+          className="position-edit-button"
+          disabled={isSaving}
+          onClick={isMobileEditing ? handleMobileDone : handleMobileEdit}
+          title={isMobileEditing ? "Done editing position" : "Edit position"}
+          type="button"
+        >
+          {isMobileEditing ? <Check size={16} aria-hidden="true" /> : <Pencil size={15} aria-hidden="true" />}
+          <span>{isMobileEditing ? "Done" : "Edit"}</span>
+        </button>
+      </div>
+      <span className="position-value">{(isMobileEditing ? Number(draftValue) : current).toFixed(1)}%</span>
     </div>
   );
 }
