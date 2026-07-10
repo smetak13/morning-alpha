@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Any, Callable
@@ -12,6 +13,95 @@ from report import FmpClient, load_yaml, log_openai_usage, openai_usage_summary,
 
 ROOT = Path(__file__).resolve().parent
 DEEP_RESEARCH_MODEL = "gpt-5.4"
+logger = logging.getLogger(__name__)
+
+EXTERNAL_DISCOVERY_TASKS = [
+    {
+        "id": "recent_developments",
+        "section": "Recent developments",
+        "budget": "low",
+        "max_claims": 2,
+        "include_price_context": True,
+        "include_recent_news_titles": True,
+        "include_stock_grades": False,
+        "include_latest_earnings": False,
+        "focus": (
+            "Recent material company developments over roughly the last six months and reported explanations for "
+            "meaningful stock price movement. Avoid repeating developments already covered by supplied FMP news titles "
+            "unless external sources add important new context, causality, competitor context, or investment impact. "
+            "Return only the few developments that add the most information beyond the supplied company news."
+        ),
+    },
+    {
+        "id": "competitive_threats",
+        "section": "Competitive position",
+        "budget": "full",
+        "max_claims": 7,
+        "include_price_context": False,
+        "include_recent_news_titles": False,
+        "include_stock_grades": False,
+        "include_latest_earnings": False,
+        "focus": (
+            "Main competitors and direct competitive threats. Go deeper only on up to three competitors whose "
+            "products, procedures, customers, pricing, approvals, or market-share actions directly affect the company. "
+            "Preserve edge information, but consolidate related competitor facts into fewer, denser claims."
+        ),
+    },
+    {
+        "id": "industry_context",
+        "section": "Competitive position",
+        "budget": "low",
+        "max_claims": 2,
+        "include_price_context": False,
+        "include_recent_news_titles": False,
+        "include_stock_grades": False,
+        "include_latest_earnings": False,
+        "focus": (
+            "Industry structure, demand cycle, pricing, regulation, technology shifts, and market-share context "
+            "that directly changes how an investor should understand this company. Return only highly material context "
+            "that is not already covered by direct competitive threats or risks."
+        ),
+    },
+    {
+        "id": "risks",
+        "section": "Risks",
+        "budget": "full",
+        "max_claims": 7,
+        "include_price_context": False,
+        "include_recent_news_titles": False,
+        "include_stock_grades": False,
+        "include_latest_earnings": False,
+        "focus": (
+            "Externally visible risks: regulatory, legal, customer demand, financing, execution, pricing, supply chain, "
+            "and competitive risks. Exclude generic risk-factor boilerplate. Preserve edge information, but consolidate "
+            "related risk facts into fewer, denser claims."
+        ),
+    },
+    {
+        "id": "catalysts",
+        "section": "Catalysts and monitoring checklist",
+        "budget": "medium",
+        "max_claims": 2,
+        "include_price_context": False,
+        "include_recent_news_titles": True,
+        "include_stock_grades": False,
+        "include_latest_earnings": False,
+        "focus": (
+            "Source-backed opportunities and catalysts: product launches, approvals, contracts, adoption, geographic "
+            "expansion, margin drivers, and strategic changes. Avoid repeating supplied FMP news unless external sources "
+            "add new investment context."
+        ),
+    },
+]
+
+EXTERNAL_DISCOVERY_BANNED_DOMAINS = {
+    "reddit.com",
+    "x.com",
+    "twitter.com",
+    "stocktwits.com",
+    "seekingalpha.com",
+    "substack.com",
+}
 
 
 def safe_float(value: Any) -> float | None:
@@ -435,6 +525,298 @@ def source_entry(source_key: str, source_type: str, title: str, **extra: Any) ->
         "metadata": extra.get("metadata") or {},
         "excerpt": extra.get("excerpt"),
     }
+
+
+def price_change_since(price_history: list[dict[str, Any]], days: int) -> float | None:
+    if len(price_history) < 2:
+        return None
+    latest = price_history[-1]
+    latest_date = parse_fmp_date(latest.get("date"))
+    latest_close = first_number(latest.get("close"))
+    if latest_date is None or latest_close in (None, 0):
+        return None
+    target_date = latest_date - dt.timedelta(days=days)
+    prior = None
+    for point in reversed(price_history):
+        point_date = parse_fmp_date(point.get("date"))
+        if point_date and point_date <= target_date:
+            prior = point
+            break
+    prior_close = first_number((prior or price_history[0]).get("close"))
+    if prior_close in (None, 0):
+        return None
+    return ((latest_close / prior_close) - 1) * 100
+
+
+def price_move_context(context: dict[str, Any]) -> dict[str, Any]:
+    price_history = context.get("price_history") or []
+    return {
+        "latest_price_date": (price_history[-1] or {}).get("date") if price_history else None,
+        "change_1m_pct": price_change_since(price_history, 30),
+        "change_3m_pct": price_change_since(price_history, 90),
+        "change_6m_pct": price_change_since(price_history, 180),
+        "change_12m_pct": price_change_since(price_history, 365),
+    }
+
+
+def source_allowed_for_external_discovery(source: dict[str, Any], config: dict[str, Any]) -> bool:
+    url = source.get("url")
+    title = str(source.get("title") or "").strip()
+    if not url or not title:
+        return False
+    domain = domain_from_url(url)
+    if not domain:
+        return False
+    if any(domain_matches(domain, banned) for banned in EXTERNAL_DISCOVERY_BANNED_DOMAINS):
+        return False
+    if source_domain_is_excluded({"url": url, "source": source.get("publisher")}, config):
+        return False
+    return True
+
+
+def normalize_external_source(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    title = str(raw.get("title") or raw.get("headline") or "").strip()
+    url = str(raw.get("url") or raw.get("link") or "").strip()
+    if not title or not url:
+        return None
+    return {
+        "title": title[:300],
+        "url": url,
+        "publisher": raw.get("publisher") or domain_from_url(url),
+        "published_at": raw.get("published_at") or raw.get("publishedAt") or raw.get("date"),
+    }
+
+
+def normalize_external_claim(raw: Any, default_section: str, config: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    sources = [
+        source
+        for item in (raw.get("sources") or raw.get("evidence") or [])
+        if (source := normalize_external_source(item)) and source_allowed_for_external_discovery(source, config)
+    ]
+    if not sources:
+        return None
+    headline = str(raw.get("headline") or raw.get("claim") or "").strip()
+    summary = str(raw.get("summary") or raw.get("detail") or raw.get("description") or "").strip()
+    why_it_matters = str(raw.get("whyItMatters") or raw.get("why_it_matters") or raw.get("investment_impact") or "").strip()
+    if not headline or not summary or not why_it_matters:
+        return None
+    return {
+        "section": str(raw.get("section") or default_section).strip() or default_section,
+        "headline": headline[:500],
+        "summary": summary[:1800],
+        "why_it_matters": why_it_matters[:1000],
+        "affected_business_area": str(raw.get("affectedBusinessArea") or raw.get("affected_business_area") or "").strip()[:300] or None,
+        "sources": sources[:4],
+    }
+
+
+def attach_external_claim_sources(claims: list[dict[str, Any]], context: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    existing_by_url = {
+        str(source.get("url")).strip(): source
+        for source in context.get("sources") or []
+        if source.get("url")
+    }
+    external_sources: list[dict[str, Any]] = []
+    next_index = 1
+    for claim in claims:
+        source_keys: list[str] = []
+        normalized_sources = []
+        for raw_source in claim.get("sources") or []:
+            url = str(raw_source.get("url") or "").strip()
+            if not url:
+                continue
+            existing = existing_by_url.get(url)
+            if existing:
+                source_key = existing.get("source_key")
+            else:
+                source_key = f"external_web_{next_index}"
+                next_index += 1
+                source = source_entry(
+                    source_key,
+                    "external_web",
+                    raw_source.get("title") or domain_from_url(url) or "External source",
+                    url=url,
+                    publisher=raw_source.get("publisher") or domain_from_url(url) or "External web",
+                    published_at=raw_source.get("published_at"),
+                    metadata={"origin": "external_web", "section": claim.get("section")},
+                    excerpt=claim.get("summary"),
+                )
+                existing_by_url[url] = source
+                external_sources.append(source)
+                source_key = source["source_key"]
+            if source_key:
+                source_keys.append(source_key)
+                normalized_sources.append(raw_source)
+        if source_keys:
+            claim["source_keys"] = list(dict.fromkeys(source_keys))
+            claim["sources"] = normalized_sources
+    clean_claims = [claim for claim in claims if claim.get("source_keys")]
+    context.setdefault("sources", []).extend(external_sources)
+    return clean_claims, external_sources
+
+
+def external_discovery_prompt(
+    *,
+    symbol: str,
+    company_name: str,
+    task: dict[str, str],
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    profile = context.get("profile") or {}
+    existing_company_context: dict[str, Any] = {}
+    if task.get("include_recent_news_titles"):
+        existing_company_context["recent_fmp_news_titles"] = [
+            {
+                "date": item.get("publishedDate") or item.get("date"),
+                "title": item.get("title") or item.get("headline"),
+                "source": item.get("site") or item.get("publisher") or item.get("source"),
+            }
+            for item in (context.get("news") or [])[:5]
+        ]
+    if task.get("include_latest_earnings"):
+        existing_company_context["latest_earnings"] = compact_rows(
+            context.get("earnings_calendar") or [],
+            ["date", "eps", "epsEstimated", "revenue", "revenueEstimated"],
+            3,
+        )
+    if task.get("include_stock_grades"):
+        existing_company_context["stock_grades"] = compact_rows(
+            context.get("stock_grades") or [],
+            ["date", "gradingCompany", "previousGrade", "newGrade", "action"],
+            4,
+        )
+    return {
+        "task": "Find source-backed external investment research claims for one company.",
+        "company": {
+            "symbol": symbol,
+            "company_name": company_name,
+            "sector": profile.get("sector"),
+            "industry": profile.get("industry"),
+            "description": profile.get("description"),
+        },
+        "discovery_focus": task["focus"],
+        "target_report_section": task["section"],
+        "budget": task.get("budget"),
+        "max_claims": task.get("max_claims"),
+        "price_move_context": price_move_context(context) if task.get("include_price_context") else None,
+        "existing_company_context": existing_company_context,
+        "source_rules": [
+            "Use only Tier 1-3 sources: company/competitor filings, earnings calls, investor presentations, regulators, reputable financial press, reputable trade press, and credible local business press.",
+            "Do not use Reddit, X/Twitter, Seeking Alpha, Substack, message boards, generic blogs, or unsourced opinion pieces.",
+            "Every returned claim must have at least one URL source.",
+            "Return only claims that could materially affect revenue growth, margins, market share, moat, valuation, capital allocation, regulatory/legal risk, product adoption, customer demand, financing/liquidity, sentiment, or near-term catalysts.",
+            f"Return at most {task.get('max_claims')} claims. Prefer fewer dense, non-overlapping claims over many narrow claims.",
+            "Exclude generic industry background and empty 'no evidence found' statements.",
+            "If no high-quality material claims exist, return an empty claims array.",
+        ],
+        "output_schema": {
+            "claims": [
+                {
+                    "section": task["section"],
+                    "headline": "short claim headline",
+                    "summary": "specific evidence-backed context, enough for a final analyst report",
+                    "whyItMatters": "investment relevance without buy/sell advice",
+                    "affectedBusinessArea": "optional product, segment, region, metric, or business area",
+                    "sources": [{"title": "source title", "url": "https://..."}],
+                }
+            ]
+        },
+    }
+
+
+def run_external_discovery_task(
+    *,
+    openai_client: Any,
+    model: str,
+    user_id: str,
+    symbol: str,
+    company_name: str,
+    task: dict[str, str],
+    context: dict[str, Any],
+    config: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    response = openai_client.responses.create(
+        model=model,
+        tools=[{"type": "web_search_preview"}],
+        input=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an investment research analyst using web search. Return JSON only. "
+                    "Do not invent facts or URLs. Do not include unsupported claims. "
+                    "Do not give buy, sell, hold, or position-sizing recommendations."
+                ),
+            },
+            {"role": "user", "content": json.dumps(external_discovery_prompt(symbol=symbol, company_name=company_name, task=task, context=context), ensure_ascii=False)},
+        ],
+    )
+    usage = openai_usage_summary(response, model, config)
+    usage_id = log_openai_usage(user_id, f"research_external_discovery_{task['id']}", usage)
+    if usage_id:
+        usage["usage_id"] = usage_id
+    parsed = parse_model_json(response.output_text)
+    raw_claims = parsed.get("claims") if isinstance(parsed, dict) and isinstance(parsed.get("claims"), list) else []
+    claims = [
+        claim
+        for raw_claim in raw_claims
+        if (claim := normalize_external_claim(raw_claim, task["section"], config))
+    ]
+    max_claims = int(task.get("max_claims") or len(claims) or 0)
+    return claims[:max_claims], usage
+
+
+def discover_external_research(
+    *,
+    symbol: str,
+    company_name: str,
+    user_id: str,
+    selected_model: str,
+    context: dict[str, Any],
+    config: dict[str, Any],
+    progress: Callable[[str, int], None],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    from openai import OpenAI
+
+    discovery_model = config.get("openai", {}).get("external_discovery_model") or selected_model
+    openai_client = OpenAI(timeout=240)
+    all_claims: list[dict[str, Any]] = []
+    usages: list[dict[str, Any]] = []
+    for index, task in enumerate(EXTERNAL_DISCOVERY_TASKS, start=1):
+        progress(f"Searching external research: {task['section']}", 70 + index)
+        try:
+            claims, usage = run_external_discovery_task(
+                openai_client=openai_client,
+                model=discovery_model,
+                user_id=user_id,
+                symbol=symbol,
+                company_name=company_name,
+                task=task,
+                context=context,
+                config=config,
+            )
+            all_claims.extend(claims)
+            if usage:
+                usages.append(usage)
+        except Exception as exc:
+            logger.warning("External discovery task failed symbol=%s task=%s error=%s", symbol, task["id"], exc)
+    clean_claims, external_sources = attach_external_claim_sources(all_claims, context)
+    section_counts: dict[str, int] = {}
+    for claim in clean_claims:
+        section = str(claim.get("section") or "unknown")
+        section_counts[section] = section_counts.get(section, 0) + 1
+    logger.info(
+        "External discovery complete symbol=%s tasks=%s sources=%s acceptedClaims=%s sections=%s",
+        symbol,
+        len(EXTERNAL_DISCOVERY_TASKS),
+        len(external_sources),
+        len(clean_claims),
+        section_counts,
+    )
+    return clean_claims, external_sources, usages
 
 
 def filing_url(item: dict[str, Any]) -> str | None:
@@ -1216,6 +1598,17 @@ def build_model_context(symbol: str, company_name: str, relationship: str, conte
         "filings": compact_rows(context["sec_filings"], ["fillingDate", "acceptedDate", "type", "formType", "finalLink", "link"], 10),
         "annual_report_json": compact_rows(context["annual_reports"], ["year", "period", "date", "fillingDate", "acceptedDate", "content", "data"], 3),
         "annual_report_extracts": context.get("annual_report_extracts") or [],
+        "external_research_claims": [
+            {
+                "section": claim.get("section"),
+                "headline": claim.get("headline"),
+                "summary": claim.get("summary"),
+                "why_it_matters": claim.get("why_it_matters"),
+                "affected_business_area": claim.get("affected_business_area"),
+                "source_keys": claim.get("source_keys") or [],
+            }
+            for claim in (context.get("external_research_claims") or [])
+        ],
         "news": compact_rows(context["news"], ["publishedDate", "title", "site", "url", "text"], 20),
         "transcript_samples": compact_rows(context["transcripts"], ["date", "quarter", "year", "content"], 6),
         "artifact_titles": [artifact["title"] for artifact in artifacts],
@@ -1228,7 +1621,7 @@ def build_model_context(symbol: str, company_name: str, relationship: str, conte
                 "has_url": bool(source.get("url")),
                 "has_modal_data": source["source_type"] in {"financial_statement", "earnings_transcript", "annual_report_json"},
             }
-            for source in context["sources"][:45]
+            for source in context["sources"][:90]
         ],
     }
 
@@ -1460,6 +1853,25 @@ def generate_deep_research(
     except Exception:
         context["annual_report_extracts"] = []
         context["annual_report_usage"] = []
+    try:
+        progress("Searching external investment context", 72)
+        external_claims, external_sources, external_usage = discover_external_research(
+            symbol=symbol,
+            company_name=company_name,
+            user_id=user_id,
+            selected_model=selected_model,
+            context=context,
+            config=config,
+            progress=progress,
+        )
+        context["external_research_claims"] = external_claims
+        context["external_research_sources"] = external_sources
+        context["external_discovery_usage"] = external_usage
+    except Exception:
+        logger.exception("External discovery failed symbol=%s", symbol)
+        context["external_research_claims"] = []
+        context["external_research_sources"] = []
+        context["external_discovery_usage"] = []
     model_context = build_model_context(symbol, company_name, relationship, context, artifacts, dcf)
 
     research: dict[str, Any]
@@ -1468,7 +1880,7 @@ def generate_deep_research(
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY is not configured.")
 
-    progress("Writing deep research narrative", 76)
+    progress("Writing deep research narrative", 82)
     from openai import OpenAI
 
     system = (
@@ -1487,15 +1899,22 @@ def generate_deep_research(
             "Use this exact section order when applicable: Business overview; Products and segments; Revenue model and customers; Competitive position; Recent developments; Financial statements and profitability; Balance sheet and cash flow; Valuation and DCF; Risks; Catalysts and monitoring checklist.",
             "Start broad and then go deeper: explain what the company does before analyzing the financials.",
             "Use earnings transcripts, filings, financial statements, analyst estimates, stock grades, and news when they are supplied.",
+            "Use external_research_claims as source-backed context and blend those claims naturally into the existing section structure. Do not label them as external, web, or non-FMP in prose.",
             "Do not say transcripts or filings are missing if transcript_samples, filings, or annual_report_extracts contain data.",
             "For each section, put relevant openable source keys into source_keys instead of inline bracket citations.",
             "Do not write about source inconsistencies, data conflicts, or internal limitations. Choose the most relevant values from the supplied structured context.",
             "Write premium long-form analysis. Each major section should be useful on its own, with a substantial paragraph summary and detailed subpoints.",
+            "Do not optimize Competitive position or Risks for brevity. Use all relevant source-backed external claims there when they improve investor understanding.",
+            "For other sections, use external claims selectively. Keep Business overview, Products and segments, Revenue model and customers, Financial statements, Balance sheet and cash flow, and Valuation and DCF close to the company/FMP/filing-driven analysis unless external evidence materially changes interpretation.",
             "Use fewer one-sentence bullets. For products and segments, use product/segment names followed by deeper explanatory paragraphs.",
             "Synthesize source material directly in the report; sources are for verification, not a substitute for analysis.",
-            "Discuss transcript commentary, annual report / 10-K disclosures, financial statement trends, stock grades, analyst context, and recent news wherever relevant.",
-            "Create a substantial Recent developments section from the last six months of news and current company context. Cover what the company is dealing with now: opportunities, pressure points, customer or product momentum, major contracts, regulatory issues, strategic changes, and near-term monitoring items.",
+            "Discuss transcript commentary, annual report / 10-K disclosures, financial statement trends, stock grades, analyst context, external research claims, and recent news wherever relevant.",
+            "Create a substantial Recent developments section from the last six months of news, current company context, and source-backed external research. Cover what the company is dealing with now: opportunities, pressure points, stock move explanations when sourced, customer or product momentum, major contracts, regulatory issues, strategic changes, and near-term monitoring items.",
+            "Create a richer Competitive position section that names specific competitors when source-backed evidence shows product, customer, pricing, market-share, or technology overlap that matters to the company.",
+            "Create richer Risks and Catalysts sections from company and external source-backed claims. Do not add empty 'no evidence found' or generic unavailable-data statements.",
+            "In Catalysts and monitoring checklist, include only the five most important monitoring items. Prefer specific, thesis-relevant items over a long generic checklist.",
             "Do not mention the name of the data provider in prose.",
+            "Maintain an analytical tone. You may say a development could be positive or negative, but do not give buy, sell, hold, or position-sizing advice.",
             "Return detailed JSON that can be rendered into a multi-section report.",
         ],
         "output_schema": {
@@ -1556,6 +1975,7 @@ def generate_deep_research(
             "stock_grades": context.get("stock_grades") or [],
             "insider_trading": context.get("insider_trading") or [],
             "news": context.get("news") or [],
+            "external_research_claims": context.get("external_research_claims") or [],
         },
         "usage": usage,
     }
