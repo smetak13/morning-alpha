@@ -118,10 +118,30 @@ class StockSearchResult(BaseModel):
     logo_url: str | None = None
 
 
+class ThesisQuestionAnswer(BaseModel):
+    question_id: str
+    answer: str
+
+
 class DraftThesisRequest(BaseModel):
     item_type: Literal["portfolio", "watchlist"]
     symbol: str
     company_name: str
+    mode: Literal["quick", "guided"] = "quick"
+    answers: list[ThesisQuestionAnswer] = Field(default_factory=list)
+
+
+GUIDED_THESIS_QUESTIONS: dict[str, str] = {
+    "buy_reason": "Why did you buy this stock?",
+    "interest_reason": "Why are you interested in this stock?",
+    "needs_to_go_well": "What needs to go well?",
+    "could_go_wrong": "What could go wrong?",
+    "watch_points": "What numbers or events do you want to watch?",
+    "worries": "What would make you worried?",
+    "lose_interest": "What would make you lose interest?",
+    "sell_or_rethink": "What would make you sell or seriously rethink it?",
+    "buy_conditions": "What would make you consider buying it?",
+}
 
 
 class PortfolioItemCreateRequest(BaseModel):
@@ -785,6 +805,10 @@ def clean_bullets(values: list[str] | None) -> list[str]:
     return [str(value).strip() for value in values if str(value).strip()]
 
 
+def clean_answer(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
 def strip_reason_prefix(value: str) -> str:
     return re.sub(
         r"^\s*(?:possible\s+)?(?:reason(?:s)?(?:\s+to\s+(?:watch|own|follow|track|monitor))?|reason\s+for\s+(?:watching|owning)|rationale)\s*:\s*",
@@ -926,6 +950,23 @@ def normalize_draft_thesis(payload: dict[str, Any], item_type: str) -> dict[str,
     return normalized
 
 
+def guided_thesis_answers(payload: DraftThesisRequest) -> list[dict[str, str]]:
+    answers: list[dict[str, str]] = []
+    for item in payload.answers:
+        question_id = item.question_id.strip()
+        answer = clean_answer(item.answer)
+        if not question_id or not answer:
+            continue
+        answers.append(
+            {
+                "question_id": question_id,
+                "question": GUIDED_THESIS_QUESTIONS.get(question_id, question_id),
+                "answer": answer,
+            }
+        )
+    return answers
+
+
 @app.post("/api/thesis/draft")
 def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
@@ -941,16 +982,23 @@ def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any
     model = config.get("openai", {}).get("model", "gpt-4.1-mini")
     schema = draft_thesis_schema(payload.item_type)
     first_label = "why_i_own_it" if payload.item_type == "portfolio" else "why_i_watch_it"
+    guided_answers = guided_thesis_answers(payload)
     first_guidance = (
         "2 to 4 concise possible reasons a long-term investor might own this company; write the reason text directly with no label prefix"
         if payload.item_type == "portfolio"
         else "2 to 4 concise possible reasons a long-term investor might watch this company; write the reason text directly with no label prefix"
     )
 
+    task = (
+        "Convert the user's investing rationale into a monitorable thesis for review and editing."
+        if payload.mode == "guided" and guided_answers
+        else "Generate a neutral draft investment thesis for a user to review and edit."
+    )
     prompt = {
-        "task": "Generate a neutral draft investment thesis for a user to review and edit.",
+        "task": task,
         "company": {"symbol": symbol, "company_name": company_name},
         "item_type": payload.item_type,
+        "mode": payload.mode,
         "required_json_schema": schema,
         "field_guidance": {
             first_label: first_guidance,
@@ -970,6 +1018,17 @@ def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any
             "For the first field, do not prefix bullets with labels such as 'Possible reason:', 'Reason to watch:', or 'Reason to own:'.",
         ],
     }
+    if payload.mode == "guided" and guided_answers:
+        prompt["user_answers"] = guided_answers
+        prompt["constraints"].extend(
+            [
+                "Use the user answers as the source of intent.",
+                "Preserve the user's actual rationale and do not add unrelated thesis pillars.",
+                "Expand vague answers into observable signals, risks, metrics, and thesis-breaking evidence.",
+                "If the user leaves optional answers blank, infer the missing sections only from the provided answers and company context.",
+                "Make inferred bullets cautious and monitorable rather than confident or advisory.",
+            ]
+        )
     try:
         response = OpenAI().responses.create(
             model=model,
@@ -979,7 +1038,7 @@ def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any
             ],
         )
         usage = openai_usage_summary(response, model, config)
-        log_openai_usage(user_id, f"{payload.item_type}_draft", usage)
+        log_openai_usage(user_id, f"{payload.item_type}_{payload.mode}_draft", usage)
         draft = parse_model_json(response.output_text)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Thesis generation failed: {exc}") from exc

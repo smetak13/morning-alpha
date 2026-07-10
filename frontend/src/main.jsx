@@ -177,6 +177,85 @@ const REPORT_FREQUENCIES = [
 
 const STOCK_SEARCH_DEBOUNCE_MS = 650;
 
+const GUIDED_THESIS_QUESTIONS = {
+  portfolio: [
+    {
+      id: "buy_reason",
+      label: "Why did you buy this stock?",
+      placeholder: "Example: I believe the company can keep growing earnings because...",
+      required: true,
+    },
+    {
+      id: "needs_to_go_well",
+      label: "What needs to go well?",
+      placeholder: "Example: Revenue keeps growing, margins improve, product adoption continues...",
+      required: true,
+    },
+    {
+      id: "could_go_wrong",
+      label: "What could go wrong?",
+      placeholder: "Example: Competition gets stronger, growth slows, debt becomes a problem...",
+      required: true,
+    },
+    {
+      id: "watch_points",
+      label: "What numbers or events do you want to watch?",
+      placeholder: "Optional: revenue growth, margins, users, earnings, product launches...",
+      required: false,
+    },
+    {
+      id: "worries",
+      label: "What would make you worried?",
+      placeholder: "Optional: missed guidance, shrinking margins, customer losses, management issues...",
+      required: false,
+    },
+    {
+      id: "sell_or_rethink",
+      label: "What would make you sell or seriously rethink it?",
+      placeholder: "Optional: the original reason no longer holds, repeated execution misses...",
+      required: false,
+    },
+  ],
+  watchlist: [
+    {
+      id: "interest_reason",
+      label: "Why are you interested in this stock?",
+      placeholder: "Example: I like the business, but I want to understand valuation and growth better...",
+      required: true,
+    },
+    {
+      id: "needs_to_go_well",
+      label: "What needs to go well?",
+      placeholder: "Example: Growth accelerates, margins improve, new product gains traction...",
+      required: true,
+    },
+    {
+      id: "could_go_wrong",
+      label: "What could go wrong?",
+      placeholder: "Example: Competition gets stronger, demand slows, execution disappoints...",
+      required: true,
+    },
+    {
+      id: "watch_points",
+      label: "What numbers or events do you want to watch?",
+      placeholder: "Optional: revenue growth, margins, customer growth, earnings, guidance...",
+      required: false,
+    },
+    {
+      id: "lose_interest",
+      label: "What would make you lose interest?",
+      placeholder: "Optional: weak execution, worsening fundamentals, thesis no longer makes sense...",
+      required: false,
+    },
+    {
+      id: "buy_conditions",
+      label: "What would make you consider buying it?",
+      placeholder: "Optional: stronger evidence, better valuation, improved profitability...",
+      required: false,
+    },
+  ],
+};
+
 function reportFrequencyValue(value) {
   return REPORT_FREQUENCIES.some(([option]) => option === value) ? value : "daily";
 }
@@ -6034,9 +6113,16 @@ function StockThesisModal({ modal, onClose, onSaved }) {
   const [stock, setStock] = useState(modal.stock ?? null);
   const [thesis, setThesis] = useState(modal.thesis ?? null);
   const [positionSize, setPositionSize] = useState(modal.positionSize ?? 10);
-  const [status, setStatus] = useState(modal.mode === "edit" ? "review" : modal.stock ? "generating" : "search");
+  const [status, setStatus] = useState(modal.mode === "edit" ? "review" : modal.stock ? "method" : "search");
+  const [draftMode, setDraftMode] = useState("quick");
+  const [guidedStep, setGuidedStep] = useState(0);
+  const [guidedAnswers, setGuidedAnswers] = useState({});
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const guidedQuestions = GUIDED_THESIS_QUESTIONS[modal.itemType];
+  const currentQuestion = guidedQuestions[guidedStep];
+  const currentAnswer = guidedAnswers[currentQuestion?.id] ?? "";
+  const canContinueGuided = !currentQuestion?.required || currentAnswer.trim().length > 0;
 
   useEffect(() => {
     if (modal.mode !== "add" || status !== "search" || search.trim().length < 1) {
@@ -6070,7 +6156,7 @@ function StockThesisModal({ modal, onClose, onSaved }) {
     };
   }, [modal.mode, search, status]);
 
-  const selectStock = async (selected) => {
+  const generateDraft = async (selected, mode = "quick", answers = {}) => {
     setStock(selected);
     setStatus("generating");
     setError("");
@@ -6081,21 +6167,59 @@ function StockThesisModal({ modal, onClose, onSaved }) {
           item_type: modal.itemType,
           symbol: selected.symbol,
           company_name: selected.company_name,
+          mode,
+          answers: Object.entries(answers).map(([question_id, answer]) => ({ question_id, answer })),
         }),
       });
       setThesis(payload.thesis);
       setStatus("review");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Draft generation failed.");
-      setStatus("search");
+      setStatus(selected ? (mode === "guided" ? "guided" : "method") : "search");
     }
   };
 
+  const selectStock = (selected) => {
+    setStock(selected);
+    setDraftMode("quick");
+    setGuidedStep(0);
+    setGuidedAnswers({});
+    setError("");
+    setStatus("method");
+  };
+
   useEffect(() => {
-    if (modal.mode === "add" && modal.stock && status === "generating" && !thesis) {
-      selectStock(modal.stock);
+    if (modal.mode === "add" && modal.stock && status === "method" && !thesis) {
+      setStock(modal.stock);
     }
   }, [modal.mode, modal.stock, status, thesis]);
+
+  const continueFromMethod = () => {
+    if (!stock) {
+      return;
+    }
+    if (draftMode === "quick") {
+      generateDraft(stock, "quick");
+      return;
+    }
+    setGuidedStep(0);
+    setStatus("guided");
+  };
+
+  const updateGuidedAnswer = (value) => {
+    setGuidedAnswers((current) => ({ ...current, [currentQuestion.id]: value }));
+  };
+
+  const continueGuided = () => {
+    if (!canContinueGuided) {
+      return;
+    }
+    if (guidedStep < guidedQuestions.length - 1) {
+      setGuidedStep((current) => current + 1);
+      return;
+    }
+    generateDraft(stock, "guided", guidedAnswers);
+  };
 
   const save = async () => {
     if (!stock || !thesis) {
@@ -6179,6 +6303,73 @@ function StockThesisModal({ modal, onClose, onSaved }) {
           </div>
         ) : null}
 
+        {modal.mode === "add" && status === "method" && stock ? (
+          <div className="thesis-method-panel">
+            <div className="selected-stock">
+              <img className="stock-logo large" {...stockLogoProps(stock.logo_url)} alt="" />
+              <div>
+                <div className="stock-title-row">
+                  <strong>{stock.symbol}</strong>
+                  {stock.exchange ? <span className="exchange-badge">{stock.exchange}</span> : null}
+                </div>
+                <span>{stock.company_name}</span>
+              </div>
+            </div>
+            <div className="thesis-method-options" role="radiogroup" aria-label="Choose thesis draft method">
+              <button
+                aria-checked={draftMode === "quick"}
+                className={draftMode === "quick" ? "thesis-method-card selected" : "thesis-method-card"}
+                onClick={() => setDraftMode("quick")}
+                role="radio"
+                type="button"
+              >
+                <span>
+                  <strong>Quick draft</strong>
+                  <small>Let AI create a starting thesis you can edit.</small>
+                </span>
+                <Check size={18} aria-hidden="true" />
+              </button>
+              <button
+                aria-checked={draftMode === "guided"}
+                className={draftMode === "guided" ? "thesis-method-card selected" : "thesis-method-card"}
+                onClick={() => setDraftMode("guided")}
+                role="radio"
+                type="button"
+              >
+                <span>
+                  <strong>Build from my answers</strong>
+                  <small>Answer a few questions so the thesis reflects your own thinking.</small>
+                </span>
+                <Check size={18} aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {modal.mode === "add" && status === "guided" && stock && currentQuestion ? (
+          <div className="guided-thesis-panel">
+            <div className="guided-progress">
+              <span>{`Question ${guidedStep + 1} of ${guidedQuestions.length}`}</span>
+              <div className="guided-progress-track" aria-hidden="true">
+                <span style={{ width: `${((guidedStep + 1) / guidedQuestions.length) * 100}%` }} />
+              </div>
+            </div>
+            <label className="guided-question">
+              <span>
+                {currentQuestion.label}
+                {currentQuestion.required ? <em>Required</em> : null}
+              </span>
+              <textarea
+                autoFocus
+                onChange={(event) => updateGuidedAnswer(event.target.value)}
+                placeholder={currentQuestion.placeholder}
+                rows={7}
+                value={currentAnswer}
+              />
+            </label>
+          </div>
+        ) : null}
+
         {status === "generating" ? (
           <div className="generating-state">
             <Sparkles size={22} aria-hidden="true" />
@@ -6227,13 +6418,45 @@ function StockThesisModal({ modal, onClose, onSaved }) {
         {error ? <p className="error">{error}</p> : null}
 
         <div className="modal-actions">
-          <button className="secondary-button" onClick={onClose} type="button">
-            Cancel
-          </button>
-          <button className="primary-button" disabled={status !== "review" || saving} onClick={save} type="button">
-            <Check size={18} aria-hidden="true" />
-            {saving ? "Saving..." : modal.mode === "edit" ? "Save changes" : "Confirm and add"}
-          </button>
+          {status === "guided" ? (
+            <>
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  if (guidedStep === 0) {
+                    setStatus("method");
+                    return;
+                  }
+                  setGuidedStep((current) => current - 1);
+                }}
+                type="button"
+              >
+                Back
+              </button>
+              <button className="primary-button" disabled={!canContinueGuided} onClick={continueGuided} type="button">
+                {guidedStep === guidedQuestions.length - 1 ? "Generate" : "Next"}
+              </button>
+            </>
+          ) : status === "method" ? (
+            <>
+              <button className="secondary-button" onClick={() => setStatus("search")} type="button">
+                Back
+              </button>
+              <button className="primary-button" onClick={continueFromMethod} type="button">
+                Continue
+              </button>
+            </>
+          ) : (
+            <>
+              <button className="secondary-button" onClick={onClose} type="button">
+                Cancel
+              </button>
+              <button className="primary-button" disabled={status !== "review" || saving} onClick={save} type="button">
+                <Check size={18} aria-hidden="true" />
+                {saving ? "Saving..." : modal.mode === "edit" ? "Save changes" : "Confirm and add"}
+              </button>
+            </>
+          )}
         </div>
       </section>
     </div>

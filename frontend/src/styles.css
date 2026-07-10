@@ -3915,6 +3915,8 @@ input[type="range"] {
 }
 
 .modal-search,
+.thesis-method-panel,
+.guided-thesis-panel,
 .review-layout,
 .generating-state {
   padding: 22px;
@@ -3975,6 +3977,127 @@ input[type="range"] {
   color: #f4c430;
   display: flex;
   gap: 12px;
+}
+
+.thesis-method-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.thesis-method-options {
+  display: grid;
+  gap: 12px;
+}
+
+.thesis-method-card {
+  align-items: center;
+  background: #181818;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  color: #f4f4f0;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: 1fr 28px;
+  justify-content: stretch;
+  min-height: 88px;
+  padding: 16px;
+  text-align: left;
+  width: 100%;
+}
+
+.thesis-method-card:hover,
+.thesis-method-card.selected {
+  border-color: #f4c430;
+}
+
+.thesis-method-card.selected {
+  background: #1d1a10;
+}
+
+.thesis-method-card span {
+  display: grid;
+  gap: 6px;
+}
+
+.thesis-method-card strong {
+  color: #ffffff;
+  font-size: 1rem;
+}
+
+.thesis-method-card small {
+  color: #a7a7a0;
+  font-size: 0.88rem;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.thesis-method-card svg {
+  color: transparent;
+}
+
+.thesis-method-card.selected svg {
+  color: #f4c430;
+}
+
+.guided-thesis-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.guided-progress {
+  display: grid;
+  gap: 8px;
+}
+
+.guided-progress > span {
+  color: #f4c430;
+  font-size: 0.78rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.guided-progress-track {
+  background: #0d0d0d;
+  border-radius: 999px;
+  height: 6px;
+  overflow: hidden;
+}
+
+.guided-progress-track span {
+  background: #f4c430;
+  display: block;
+  height: 100%;
+}
+
+.guided-question {
+  display: grid;
+  gap: 10px;
+}
+
+.guided-question > span {
+  align-items: center;
+  color: #ffffff;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 1.08rem;
+  font-weight: 750;
+}
+
+.guided-question em {
+  background: #242424;
+  border: 1px solid #343434;
+  border-radius: 999px;
+  color: #a7a7a0;
+  font-size: 0.72rem;
+  font-style: normal;
+  padding: 4px 8px;
+  text-transform: uppercase;
+}
+
+.guided-question textarea {
+  min-height: 180px;
+  resize: vertical;
 }
 
 .thesis-grid {
@@ -5099,6 +5222,8 @@ input[type="range"] {
   .long-modal-panel > .notes-stack,
   .long-modal-panel > .note-card,
   .long-modal-panel > .modal-search,
+  .long-modal-panel > .thesis-method-panel,
+  .long-modal-panel > .guided-thesis-panel,
   .long-modal-panel > .review-layout,
   .long-modal-panel > .generating-state,
   .long-modal-panel > .company-memory-content,
