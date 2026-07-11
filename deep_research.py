@@ -12,7 +12,7 @@ from report import FmpClient, load_yaml, log_openai_usage, openai_usage_summary,
 
 
 ROOT = Path(__file__).resolve().parent
-DEEP_RESEARCH_MODEL = "gpt-5.4"
+DEEP_RESEARCH_MODEL = "gpt-5.6-terra"
 logger = logging.getLogger(__name__)
 
 EXTERNAL_DISCOVERY_TASKS = [
@@ -1912,7 +1912,7 @@ def generate_deep_research(
             "Create a substantial Recent developments section from the last six months of news, current company context, and source-backed external research. Cover what the company is dealing with now: opportunities, pressure points, stock move explanations when sourced, customer or product momentum, major contracts, regulatory issues, strategic changes, and near-term monitoring items.",
             "Create a richer Competitive position section that names specific competitors when source-backed evidence shows product, customer, pricing, market-share, or technology overlap that matters to the company.",
             "Create richer Risks and Catalysts sections from company and external source-backed claims. Do not add empty 'no evidence found' or generic unavailable-data statements.",
-            "In Catalysts and monitoring checklist, include only the five most important monitoring items. Prefer specific, thesis-relevant items over a long generic checklist.",
+            "In Catalysts and monitoring checklist, first summarize where the company could plausibly get in the future if the positive thesis works, and what business developments could unlock higher company value or stock-price appreciation. Then include about five specific monitoring items that would show whether that future path is materializing. Do not turn the section into only a generic watchlist. Do not introduce the list as 'the five most important' or similar. Do not prefix individual bullet text with numbering such as '1.', '2.', '01', or '02'; the renderer adds numbering separately.",
             "Do not mention the name of the data provider in prose.",
             "Maintain an analytical tone. You may say a development could be positive or negative, but do not give buy, sell, hold, or position-sizing advice.",
             "Return detailed JSON that can be rendered into a multi-section report.",

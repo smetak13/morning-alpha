@@ -2196,7 +2196,7 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
             research_mode = requested_research_mode(payload.research_type, relationship)
             if research_mode == "deep_research":
                 config = load_yaml(ROOT / "config.yaml")
-                model = config.get("openai", {}).get("deep_research_model", "gpt-5.4")
+                model = config.get("openai", {}).get("deep_research_model", "gpt-5.6-terra")
                 stock_id = item["stock_id"] if item else get_or_create_stock(cursor, symbol, company_name)
                 run = create_deep_research_run(
                     cursor,

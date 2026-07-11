@@ -9,9 +9,10 @@ fmp:
   request_timeout_seconds: 20
 
 openai:
-  model: gpt-5.4
-  deep_research_model: gpt-5.4
+  model: gpt-5.6-terra
+  deep_research_model: gpt-5.6-terra
   external_discovery_model: gpt-5.6-luna
+  annual_report_extract_model: gpt-5.6-luna
   max_input_items: 35
   pricing_per_1m_tokens:
     gpt-4.1-mini:
@@ -22,6 +23,10 @@ openai:
       input: 1.00
       cached_input: 0.10
       output: 6.00
+    gpt-5.6-terra:
+      input: 2.50
+      cached_input: 0.25
+      output: 15
     gpt-5.4:
       input: 2.50
       cached_input: 0.25
@@ -29,7 +34,7 @@ openai:
 
 company_memory:
   enabled: true
-  model: gpt-5.4
+  model: gpt-5.6-terra
   lookback_days: 365
   shortlist_size: 8
   min_update_interval_days: 30
