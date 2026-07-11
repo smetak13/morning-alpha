@@ -2270,6 +2270,14 @@ textarea:focus {
   justify-content: flex-end;
 }
 
+.research-history-refresh-icon {
+  flex: 0 0 auto;
+}
+
+.research-history-refresh-button {
+  display: none;
+}
+
 .research-history-company-filter {
   min-width: 220px;
 }
@@ -4676,6 +4684,15 @@ input[type="range"] {
   .research-history-filter-row {
     align-items: stretch;
     flex-direction: column;
+    width: 100%;
+  }
+
+  .research-history-refresh-icon {
+    display: none;
+  }
+
+  .research-history-refresh-button {
+    display: inline-flex;
     width: 100%;
   }
 

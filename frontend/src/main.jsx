@@ -17,6 +17,7 @@ import {
   MoveRight,
   Pencil,
   Plus,
+  RefreshCw,
   Search,
   Share2,
   Sparkles,
@@ -3597,6 +3598,7 @@ function researchSignalFromPayload(payload) {
 
 function ResearchHistoryView({ routeResearchId = "" }) {
   const [filters, setFilters] = useState(defaultResearchHistoryFilters);
+  const [companySearch, setCompanySearch] = useState(() => defaultResearchHistoryFilters().stock_query);
   const [page, setPage] = useState(1);
   const [payload, setPayload] = useState({ items: [], total: 0, page_size: 10 });
   const [selectedItem, setSelectedItem] = useState(null);
@@ -3608,9 +3610,14 @@ function ResearchHistoryView({ routeResearchId = "" }) {
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
   const openedRouteResearchIdRef = useRef("");
+  const loadHistoryAbortRef = useRef(null);
   const totalPages = Math.max(1, Math.ceil((payload.total || 0) / (payload.page_size || 10)));
+  const isHistoryLoading = status === "loading";
 
   const loadHistory = useCallback(async () => {
+    loadHistoryAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadHistoryAbortRef.current = controller;
     setStatus("loading");
     setError("");
     try {
@@ -3626,18 +3633,38 @@ function ResearchHistoryView({ routeResearchId = "" }) {
       if (filters.research_type) {
         query.set("research_type", filters.research_type);
       }
-      const nextPayload = await requestJson(`/api/research-items?${query.toString()}`, { method: "GET" });
+      const nextPayload = await requestJson(`/api/research-items?${query.toString()}`, { method: "GET", signal: controller.signal });
+      if (controller.signal.aborted) {
+        return;
+      }
       setPayload(nextPayload);
       setStatus("ready");
     } catch (err) {
+      if (err?.name === "AbortError") {
+        return;
+      }
       setStatus("error");
       setError(err instanceof Error ? err.message : "Unable to load research history.");
+    } finally {
+      if (loadHistoryAbortRef.current === controller) {
+        loadHistoryAbortRef.current = null;
+      }
     }
   }, [filters.date_from, filters.date_to, filters.research_type, filters.stock_query, page]);
 
   useEffect(() => {
     loadHistory();
+    return () => loadHistoryAbortRef.current?.abort();
   }, [loadHistory]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const nextStockQuery = companySearch.trim();
+      setFilters((current) => (current.stock_query === nextStockQuery ? current : { ...current, stock_query: nextStockQuery }));
+      setPage(1);
+    }, STOCK_SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [companySearch]);
 
   const updateFilter = (key, value) => {
     setFilters((current) => ({ ...current, [key]: value }));
@@ -3708,13 +3735,16 @@ function ResearchHistoryView({ routeResearchId = "" }) {
               Company
               <div className="search-input research-search-input">
                 <Search size={18} aria-hidden="true" />
-                <input onChange={(event) => updateFilter("stock_query", event.target.value)} placeholder="Symbol or name" value={filters.stock_query} />
+                <input onChange={(event) => setCompanySearch(event.target.value)} placeholder="Symbol or name" value={companySearch} />
               </div>
             </label>
             <ReportDateField label="From" value={filters.date_from} onChange={(value) => updateFilter("date_from", value)} />
             <ReportDateField label="To" value={filters.date_to} onChange={(value) => updateFilter("date_to", value)} />
           </div>
           <div className="research-history-filter-row">
+            <button className="icon-button research-history-refresh-icon" disabled={isHistoryLoading} onClick={loadHistory} title={isHistoryLoading ? "Refreshing history" : "Refresh history"} type="button">
+              <RefreshCw size={18} aria-hidden="true" />
+            </button>
             <div className="research-type-filter">
               {[
                 ["", "All"],
@@ -3728,6 +3758,10 @@ function ResearchHistoryView({ routeResearchId = "" }) {
                 </button>
               ))}
             </div>
+            <button className="secondary-button compact-button research-history-refresh-button" disabled={isHistoryLoading} onClick={loadHistory} type="button">
+              <RefreshCw size={16} aria-hidden="true" />
+              {isHistoryLoading ? "Refreshing..." : "Refresh"}
+            </button>
           </div>
         </div>
       </div>
@@ -3756,7 +3790,13 @@ function ResearchHistoryView({ routeResearchId = "" }) {
               </tr>
             </thead>
             <tbody>
-              {payload.items.length ? (
+              {status === "loading" ? (
+                <tr>
+                  <td className="empty-table" colSpan={6}>
+                    Loading research...
+                  </td>
+                </tr>
+              ) : payload.items.length ? (
                 payload.items.map((item) => (
                   <tr key={item.id} onClick={() => openItem(item)}>
                     <td data-label="Company">
@@ -3803,7 +3843,7 @@ function ResearchHistoryView({ routeResearchId = "" }) {
               ) : (
                 <tr>
                   <td className="empty-table" colSpan={6}>
-                    {status === "loading" ? "Loading research..." : "No research found for these filters."}
+                    No research found for these filters.
                   </td>
                 </tr>
               )}
