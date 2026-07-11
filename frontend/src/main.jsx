@@ -3327,6 +3327,7 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
     : selectedRelationship === "watchlist"
       ? [["watchlist_check", "Watchlist check"], ["company_primer", "Company primer"], ["deep_research", "Deep research"]]
       : [["company_primer", "Company primer"], ["deep_research", "Deep research"]];
+  const isDeepResearchLoading = status === "loading" && researchType === "deep_research";
 
   useEffect(() => {
     const researchItemId = generatedResearchItem?.id;
@@ -3443,11 +3444,16 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
       </div>
 
       {error ? <p className="error">{error}</p> : null}
-      {status === "idle" ? <p className="muted">Choose a company to run a thesis check, entry condition check, or company primer.</p> : null}
+      {status === "idle" ? <p className="muted">Choose a company to run a thesis check, entry condition check, company primer or deep research.</p> : null}
       {status === "loading" ? (
         <div className="generating-state research-loading">
           <Sparkles size={22} aria-hidden="true" />
-          <p>{activeResearchRun ? `${activeResearchRun.progress_step || "Running deep research"}${activeResearchRun.progress_pct ? ` (${activeResearchRun.progress_pct}%)` : ""}` : "Building focused research..."}</p>
+          <div className="research-loading-copy">
+            <p>{activeResearchRun ? `${activeResearchRun.progress_step || "Running deep research"}${activeResearchRun.progress_pct ? ` (${activeResearchRun.progress_pct}%)` : ""}` : "Building focused research..."}</p>
+            {isDeepResearchLoading ? (
+              <p className="research-loading-note">Deep research can take a few minutes. You can keep working and open the finished report from Research history.</p>
+            ) : null}
+          </div>
         </div>
       ) : null}
       {payload ? (
