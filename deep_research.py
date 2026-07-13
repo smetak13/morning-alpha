@@ -17,6 +17,22 @@ logger = logging.getLogger(__name__)
 
 EXTERNAL_DISCOVERY_TASKS = [
     {
+        "id": "management_capital_allocation",
+        "section": "Management and capital allocation",
+        "budget": "low",
+        "max_claims": 3,
+        "include_price_context": False,
+        "include_recent_news_titles": True,
+        "include_stock_grades": False,
+        "include_latest_earnings": False,
+        "focus": (
+            "Management execution, capital allocation priorities, shareholder returns, governance, founder/operator "
+            "influence, major leadership changes, investor communication style, and credible management-related "
+            "controversies. Exclude generic executive biographies. Return only claims that change investor understanding "
+            "of how the company is led, how capital is allocated, or whether management is an asset or risk."
+        ),
+    },
+    {
         "id": "recent_developments",
         "section": "Recent developments",
         "budget": "low",
@@ -93,6 +109,22 @@ EXTERNAL_DISCOVERY_TASKS = [
         ),
     },
 ]
+
+MARKET_POSITIONING_POSITIONS = {
+    "strongly_advantaged",
+    "advantaged",
+    "mixed",
+    "disadvantaged",
+    "strongly_disadvantaged",
+}
+
+MARKET_POSITIONING_TASK = {
+    "id": "market_positioning",
+    "section": "Market positioning",
+    "budget": "medium",
+    "min_items": 3,
+    "max_items": 5,
+}
 
 EXTERNAL_DISCOVERY_BANNED_DOMAINS = {
     "reddit.com",
@@ -621,7 +653,7 @@ def attach_external_claim_sources(claims: list[dict[str, Any]], context: dict[st
         if source.get("url")
     }
     external_sources: list[dict[str, Any]] = []
-    next_index = 1
+    next_index = next_external_source_index(context)
     for claim in claims:
         source_keys: list[str] = []
         normalized_sources = []
@@ -657,6 +689,89 @@ def attach_external_claim_sources(claims: list[dict[str, Any]], context: dict[st
     clean_claims = [claim for claim in claims if claim.get("source_keys")]
     context.setdefault("sources", []).extend(external_sources)
     return clean_claims, external_sources
+
+
+def next_external_source_index(context: dict[str, Any]) -> int:
+    highest = 0
+    for source in context.get("sources") or []:
+        key = str(source.get("source_key") or "")
+        if not key.startswith("external_web_"):
+            continue
+        try:
+            highest = max(highest, int(key.rsplit("_", 1)[-1]))
+        except ValueError:
+            continue
+    return highest + 1
+
+
+def normalize_market_positioning_item(raw: Any, config: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    sources = [
+        source
+        for item in (raw.get("sources") or raw.get("evidence") or [])
+        if (source := normalize_external_source(item)) and source_allowed_for_external_discovery(source, config)
+    ]
+    if not sources:
+        return None
+    market_theme = str(raw.get("market_theme") or raw.get("theme") or "").strip()
+    positioning = str(raw.get("positioning") or raw.get("company_position") or "").strip().lower()
+    summary_basis = str(raw.get("summary_basis") or raw.get("basis") or raw.get("why_positioned_that_way") or "").strip()
+    peer_context = str(raw.get("peer_context") or "").strip()
+    if not market_theme or positioning not in MARKET_POSITIONING_POSITIONS or not summary_basis or not peer_context:
+        return None
+    return {
+        "market_theme": market_theme[:160],
+        "positioning": positioning,
+        "summary_basis": summary_basis[:700],
+        "peer_context": peer_context[:500],
+        "sources": sources[:3],
+    }
+
+
+def attach_market_positioning_sources(items: list[dict[str, Any]], context: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    existing_by_url = {
+        str(source.get("url")).strip(): source
+        for source in context.get("sources") or []
+        if source.get("url")
+    }
+    external_sources: list[dict[str, Any]] = []
+    next_index = next_external_source_index(context)
+    for item in items:
+        source_keys: list[str] = []
+        normalized_sources = []
+        for raw_source in item.get("sources") or []:
+            url = str(raw_source.get("url") or "").strip()
+            if not url:
+                continue
+            existing = existing_by_url.get(url)
+            if existing:
+                source_key = existing.get("source_key")
+            else:
+                source_key = f"external_web_{next_index}"
+                next_index += 1
+                source = source_entry(
+                    source_key,
+                    "external_web",
+                    raw_source.get("title") or domain_from_url(url) or "External source",
+                    url=url,
+                    publisher=raw_source.get("publisher") or domain_from_url(url) or "External web",
+                    published_at=raw_source.get("published_at"),
+                    metadata={"origin": "external_web", "section": "Market positioning"},
+                    excerpt=item.get("summary_basis"),
+                )
+                existing_by_url[url] = source
+                external_sources.append(source)
+                source_key = source["source_key"]
+            if source_key:
+                source_keys.append(source_key)
+                normalized_sources.append(raw_source)
+        if source_keys:
+            item["source_keys"] = list(dict.fromkeys(source_keys))
+            item["sources"] = normalized_sources
+    clean_items = [item for item in items if item.get("source_keys")]
+    context.setdefault("sources", []).extend(external_sources)
+    return clean_items, external_sources
 
 
 def external_discovery_prompt(
@@ -769,6 +884,110 @@ def run_external_discovery_task(
     return claims[:max_claims], usage
 
 
+def market_positioning_prompt(
+    *,
+    symbol: str,
+    company_name: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    profile = context.get("profile") or {}
+    return {
+        "task": "Find 3-5 market themes for the Market positioning section of an institutional investment research report.",
+        "company": {
+            "symbol": symbol,
+            "company_name": company_name,
+            "sector": profile.get("sector"),
+            "industry": profile.get("industry"),
+            "description": profile.get("description"),
+        },
+        "selection_rules": [
+            "Identify the markets, arenas, or themes where this company is currently most investor-relevant.",
+            "Prioritize developments from roughly the last six months, but include older structural context when needed to explain current positioning.",
+            "Do not rank themes only by current revenue share. Consider management strategy, capex, R&D, product investment, future revenue or margin impact, competitive intensity, and major segment economics.",
+            "Cover multiple important economic arenas when the company is diversified. Do not fill the list with several variations of the same megatrend.",
+            "Merge overlapping themes. For example, AI training demand, AI inference, GPU supply, and custom AI chips should usually be one broader cloud/AI infrastructure theme unless a subtheme is independently decisive.",
+            "Include a theme only when you can assess the company's positioning versus named peers or peer groups with source-backed evidence.",
+            "Exclude unclear themes instead of returning an unclear positioning.",
+            "Use strongly_advantaged or strongly_disadvantaged only when evidence versus peers is unusually clear and specific.",
+        ],
+        "positioning_values": [
+            "strongly_advantaged",
+            "advantaged",
+            "mixed",
+            "disadvantaged",
+            "strongly_disadvantaged",
+        ],
+        "source_rules": [
+            "Use only Tier 1-3 sources: company/competitor filings, earnings calls, investor presentations, regulators, reputable financial press, reputable trade press, and credible local business press.",
+            "Do not use Reddit, X/Twitter, Seeking Alpha, Substack, message boards, generic blogs, or unsourced opinion pieces.",
+            "Every returned item must have at least one URL source.",
+            "Prefer fewer dense, non-overlapping themes over narrow subthemes.",
+        ],
+        "output_schema": {
+            "market_positioning": [
+                {
+                    "market_theme": "short label such as Cloud and AI infrastructure",
+                    "positioning": "strongly_advantaged | advantaged | mixed | disadvantaged | strongly_disadvantaged",
+                    "summary_basis": "one or two sentences explaining what is changing and why the company is positioned this way",
+                    "peer_context": "one sentence naming the relevant peers or peer group used for comparison",
+                    "sources": [{"title": "source title", "url": "https://..."}],
+                }
+            ]
+        },
+    }
+
+
+def discover_market_positioning(
+    *,
+    symbol: str,
+    company_name: str,
+    user_id: str,
+    selected_model: str,
+    context: dict[str, Any],
+    config: dict[str, Any],
+    progress: Callable[[str, int], None],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
+    from openai import OpenAI
+
+    discovery_model = config.get("openai", {}).get("external_discovery_model") or selected_model
+    progress("Searching market positioning context", 77)
+    response = OpenAI(timeout=240).responses.create(
+        model=discovery_model,
+        tools=[{"type": "web_search_preview"}],
+        input=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an investment research analyst using web search. Return JSON only. "
+                    "Do not invent facts or URLs. Do not include unsupported claims. "
+                    "Do not give buy, sell, hold, or position-sizing recommendations."
+                ),
+            },
+            {"role": "user", "content": json.dumps(market_positioning_prompt(symbol=symbol, company_name=company_name, context=context), ensure_ascii=False)},
+        ],
+    )
+    usage = openai_usage_summary(response, discovery_model, config)
+    usage_id = log_openai_usage(user_id, "research_external_discovery_market_positioning", usage)
+    if usage_id:
+        usage["usage_id"] = usage_id
+    parsed = parse_model_json(response.output_text)
+    raw_items = parsed.get("market_positioning") if isinstance(parsed, dict) and isinstance(parsed.get("market_positioning"), list) else []
+    items = [
+        item
+        for raw_item in raw_items
+        if (item := normalize_market_positioning_item(raw_item, config))
+    ]
+    max_items = int(MARKET_POSITIONING_TASK["max_items"])
+    clean_items, external_sources = attach_market_positioning_sources(items[:max_items], context)
+    logger.info(
+        "Market positioning discovery complete symbol=%s sources=%s acceptedItems=%s",
+        symbol,
+        len(external_sources),
+        len(clean_items),
+    )
+    return clean_items, external_sources, usage
+
+
 def discover_external_research(
     *,
     symbol: str,
@@ -786,7 +1005,7 @@ def discover_external_research(
     all_claims: list[dict[str, Any]] = []
     usages: list[dict[str, Any]] = []
     for index, task in enumerate(EXTERNAL_DISCOVERY_TASKS, start=1):
-        progress(f"Searching external research: {task['section']}", 70 + index)
+        progress(f"Doing external research: {task['section']}", 70 + index)
         try:
             claims, usage = run_external_discovery_task(
                 openai_client=openai_client,
@@ -1609,6 +1828,16 @@ def build_model_context(symbol: str, company_name: str, relationship: str, conte
             }
             for claim in (context.get("external_research_claims") or [])
         ],
+        "market_positioning_context": [
+            {
+                "market_theme": item.get("market_theme"),
+                "positioning": item.get("positioning"),
+                "summary_basis": item.get("summary_basis"),
+                "peer_context": item.get("peer_context"),
+                "source_keys": item.get("source_keys") or [],
+            }
+            for item in (context.get("market_positioning_context") or [])
+        ],
         "news": compact_rows(context["news"], ["publishedDate", "title", "site", "url", "text"], 20),
         "transcript_samples": compact_rows(context["transcripts"], ["date", "quarter", "year", "content"], 6),
         "artifact_titles": [artifact["title"] for artifact in artifacts],
@@ -1872,6 +2101,24 @@ def generate_deep_research(
         context["external_research_claims"] = []
         context["external_research_sources"] = []
         context["external_discovery_usage"] = []
+    try:
+        market_positioning, market_positioning_sources, market_positioning_usage = discover_market_positioning(
+            symbol=symbol,
+            company_name=company_name,
+            user_id=user_id,
+            selected_model=selected_model,
+            context=context,
+            config=config,
+            progress=progress,
+        )
+        context["market_positioning_context"] = market_positioning
+        context["market_positioning_sources"] = market_positioning_sources
+        context["market_positioning_usage"] = market_positioning_usage
+    except Exception:
+        logger.exception("Market positioning discovery failed symbol=%s", symbol)
+        context["market_positioning_context"] = []
+        context["market_positioning_sources"] = []
+        context["market_positioning_usage"] = None
     model_context = build_model_context(symbol, company_name, relationship, context, artifacts, dcf)
 
     research: dict[str, Any]
@@ -1896,7 +2143,7 @@ def generate_deep_research(
         "task": "Create a comprehensive deep research report for one public company.",
         "requirements": [
             "Return one coherent report in sections only; do not duplicate sections or create primer-style top-level summaries.",
-            "Use this exact section order when applicable: Business overview; Products and segments; Revenue model and customers; Competitive position; Recent developments; Financial statements and profitability; Balance sheet and cash flow; Valuation and DCF; Risks; Catalysts and monitoring checklist.",
+            "Use this exact section order when applicable: Investment snapshot; Business overview; Management and capital allocation; Products and segments; Revenue model and customers; Competitive position; Market positioning; Recent developments; Financial statements and profitability; Balance sheet and cash flow; Valuation and market expectations; Risks; Catalysts and monitoring checklist.",
             "Start broad and then go deeper: explain what the company does before analyzing the financials.",
             "Use earnings transcripts, filings, financial statements, analyst estimates, stock grades, and news when they are supplied.",
             "Use external_research_claims as source-backed context and blend those claims naturally into the existing section structure. Do not label them as external, web, or non-FMP in prose.",
@@ -1904,22 +2151,66 @@ def generate_deep_research(
             "For each section, put relevant openable source keys into source_keys instead of inline bracket citations.",
             "Do not write about source inconsistencies, data conflicts, or internal limitations. Choose the most relevant values from the supplied structured context.",
             "Write premium long-form analysis. Each major section should be useful on its own, with a substantial paragraph summary and detailed subpoints.",
+            "Create an Investment snapshot as the first section. It is a fast visual summary for a portfolio manager who may not read the full report. Keep the prose short: one investment thesis paragraph and a What matters most list with 3-5 concise bullets.",
+            "Also return research.investment_snapshot as compact panel data. Include one row for each category in this order: Business quality, Competitive moat, Growth outlook, Balance sheet, Valuation, Capital allocation, and Key risk. Each row must have category, assessment, and optional score from 1 to 5 when a 1-5 quality/strength rating is meaningful. Do not force a score for directional items such as Key risk or Capital allocation if a label is clearer.",
+            "Investment snapshot should not repeat the whole report. It should help a reader understand the thesis, the strongest attributes, the valuation setup, and the few variables that matter most in about 25 seconds.",
+            "Create a concise Management and capital allocation section after Business overview. Cover who leads the company, execution track record, capital allocation style, reinvestment versus shareholder returns, dividend/buyback posture, governance or founder/operator context when relevant, and whether management appears to be an asset or risk.",
+            "Keep Management and capital allocation shorter than the major business, competitive, financial, and risk sections. Avoid generic executive biographies; focus on investor-relevant behavior and capital allocation evidence.",
             "Do not optimize Competitive position or Risks for brevity. Use all relevant source-backed external claims there when they improve investor understanding.",
-            "For other sections, use external claims selectively. Keep Business overview, Products and segments, Revenue model and customers, Financial statements, Balance sheet and cash flow, and Valuation and DCF close to the company/FMP/filing-driven analysis unless external evidence materially changes interpretation.",
+            "For other sections, use external claims selectively. Keep Investment snapshot, Business overview, Products and segments, Revenue model and customers, Financial statements, Balance sheet and cash flow, and Valuation and market expectations close to the company/FMP/filing-driven analysis unless external evidence materially changes interpretation.",
             "Use fewer one-sentence bullets. For products and segments, use product/segment names followed by deeper explanatory paragraphs.",
             "Synthesize source material directly in the report; sources are for verification, not a substitute for analysis.",
             "Discuss transcript commentary, annual report / 10-K disclosures, financial statement trends, stock grades, analyst context, external research claims, and recent news wherever relevant.",
             "Create a substantial Recent developments section from the last six months of news, current company context, and source-backed external research. Cover what the company is dealing with now: opportunities, pressure points, stock move explanations when sourced, customer or product momentum, major contracts, regulatory issues, strategic changes, and near-term monitoring items.",
             "Create a richer Competitive position section that names specific competitors when source-backed evidence shows product, customer, pricing, market-share, or technology overlap that matters to the company.",
+            "Create a Market positioning section after Competitive position when market_positioning_context has usable items. Market positioning assesses the external markets and themes that could reshape the company's competitive position over the next three to five years, not the company's current moat or operating performance.",
+            "This section is not a competitor directory and not Competitive position part two. It should explain what is changing in the company's most investor-relevant markets or themes, which peers matter to those changes, how the company is positioned versus those peers, and why that matters to shareholders.",
+            "Market positioning should be substantial prose, usually 3-6 dense paragraphs or bullets. Prioritize recent market developments from roughly the last six months, but include older structural context when needed to explain current positioning.",
+            "Keep the boundary clear: Competitive position should describe the current moat, direct competitors, switching costs, pricing, distribution, product overlap, share dynamics, and barriers to entry. Market positioning should describe external market changes and whether the company is advantaged or disadvantaged because of those changes.",
+            "Do not repeat Competitive position. If a point was already explained as a current competitive advantage, Market positioning should not restate it unless the paragraph explains a new external change affecting that advantage.",
+            "Use competitors in Market positioning only to explain the company's positioning against a current market theme.",
+            "For Market positioning, cover 3-5 non-overlapping market themes. Choose themes by current and future investor relevance, management strategy, capex, R&D, product investment, future revenue or margin impact, competitive intensity, and major segment economics. Do not choose only by current revenue share.",
+            "The Market positioning text must explicitly cover every market_theme returned in research.market_positioning, and research.market_positioning must not introduce any market_theme that is not explained in the Market positioning text.",
+            "For research.market_positioning, return only a compact panel data array. Each item must have market_theme and positioning. Use only these positioning values: strongly_advantaged, advantaged, mixed, disadvantaged, strongly_disadvantaged. Use strongly_* only when source-backed peer evidence is unusually clear.",
+            "Do not include unclear Market positioning items. If a theme cannot be assessed versus peers, omit it.",
+            "Create a Valuation and market expectations section rather than a DCF-centered section. The section should explain what the current valuation implies about future growth, margins, free-cash-flow normalization, and market expectations.",
+            "Use valuation multiples, historical multiple context, analyst estimates, market-implied growth artifacts, and DCF outputs where useful, but do not let a mechanical DCF output become the main point of the section.",
+            "If supplied DCF outputs are distorted by temporarily depressed free cash flow, unusually high capex, or other mechanical inputs, explain that caveat once in a concise point. Do not repeat the same DCF limitation across multiple bullets.",
+            "The valuation section should focus on what the company must deliver for today's valuation to make sense: revenue growth, segment mix, operating leverage, capex utilization, depreciation, incremental margins, and sustainable free-cash-flow margin where relevant.",
+            "Do not present the supplied DCF as a comprehensive appraisal when its assumptions mechanically extrapolate a temporarily distorted cash-flow base.",
             "Create richer Risks and Catalysts sections from company and external source-backed claims. Do not add empty 'no evidence found' or generic unavailable-data statements.",
             "In Catalysts and monitoring checklist, first summarize where the company could plausibly get in the future if the positive thesis works, and what business developments could unlock higher company value or stock-price appreciation. Then include about five specific monitoring items that would show whether that future path is materializing. Do not turn the section into only a generic watchlist. Do not introduce the list as 'the five most important' or similar. Do not prefix individual bullet text with numbering such as '1.', '2.', '01', or '02'; the renderer adds numbering separately.",
             "Do not mention the name of the data provider in prose.",
             "Maintain an analytical tone. You may say a development could be positive or negative, but do not give buy, sell, hold, or position-sizing advice.",
+            "Set signal using these criteria; the signal is a research read-through, not an investment recommendation.",
+            "Use positive_signal only when the evidence is broadly favorable across business quality, competitive position, growth outlook, financial trajectory, management/capital allocation, balance sheet, and valuation setup. Positive_signal requires valuation to look fair, reasonable, or clearly defensible relative to expected growth and cash-flow normalization; do not use it for a great company at a demanding or unresolved valuation.",
+            "Use neutral_signal when the business is solid or mixed but valuation, risks, execution uncertainty, cyclical pressure, or missing evidence prevents a clearly positive or negative read-through.",
+            "Use negative_signal when deteriorating fundamentals, competitive pressure, balance sheet stress, management/execution issues, major risk events, or valuation risk clearly outweigh the positives.",
+            "Use needs_review when the supplied evidence is too incomplete, conflicting, stale, or ambiguous to support a robust positive, neutral, or negative signal.",
             "Return detailed JSON that can be rendered into a multi-section report.",
         ],
         "output_schema": {
             "signal": "positive_signal | neutral_signal | negative_signal | needs_review",
             "sections": [{"title": "string", "summary": "string", "bullets": ["string"], "source_keys": ["string"]}],
+            "investment_snapshot": {
+                "thesis": "one concise investment thesis paragraph",
+                "rows": [
+                    {
+                        "category": "Business quality | Competitive moat | Growth outlook | Balance sheet | Valuation | Capital allocation | Key risk",
+                        "assessment": "short label such as High, Strong, Positive, Aggressive, Demanding, or AI capex returns",
+                        "score": "optional integer from 1 to 5 when meaningful",
+                    }
+                ],
+                "what_matters_most": ["3-5 concise bullets"],
+            },
+            "market_positioning": [
+                {
+                    "market_theme": "string",
+                    "positioning": "strongly_advantaged | advantaged | mixed | disadvantaged | strongly_disadvantaged",
+                    "summary_basis": "optional short internal basis for the panel item",
+                    "source_keys": ["string"],
+                }
+            ],
         },
         "context": model_context,
     }
@@ -1976,6 +2267,7 @@ def generate_deep_research(
             "insider_trading": context.get("insider_trading") or [],
             "news": context.get("news") or [],
             "external_research_claims": context.get("external_research_claims") or [],
+            "market_positioning_context": context.get("market_positioning_context") or [],
         },
         "usage": usage,
     }

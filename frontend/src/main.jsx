@@ -4947,30 +4947,160 @@ function DeepSourceChips({ sourceKeys, sourceMap, onOpenResource }) {
   );
 }
 
-function DeepResearchSections({ sections, sourceMap, onOpenResource }) {
+const MARKET_POSITIONING_LABELS = {
+  strongly_advantaged: "Strongly advantaged",
+  advantaged: "Advantaged",
+  mixed: "Mixed",
+  disadvantaged: "Disadvantaged",
+  strongly_disadvantaged: "Strongly disadvantaged",
+};
+
+const MARKET_POSITIONING_SCORES = {
+  strongly_advantaged: 5,
+  advantaged: 4,
+  mixed: 3,
+  disadvantaged: 2,
+  strongly_disadvantaged: 1,
+};
+
+const INVESTMENT_SNAPSHOT_ROW_ORDER = [
+  "business quality",
+  "competitive moat",
+  "growth outlook",
+  "balance sheet",
+  "valuation",
+  "capital allocation",
+  "key risk",
+];
+
+function boundedSnapshotScore(value) {
+  const score = Number(value);
+  if (!Number.isFinite(score)) {
+    return null;
+  }
+  return Math.max(1, Math.min(5, Math.round(score)));
+}
+
+function normalizedPositioningKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function InvestmentSnapshotPanel({ snapshot }) {
+  const rows = Array.isArray(snapshot?.rows)
+    ? snapshot.rows
+      .filter((row) => row?.category && row?.assessment)
+      .sort((a, b) => {
+        const aIndex = INVESTMENT_SNAPSHOT_ROW_ORDER.indexOf(String(a.category || "").trim().toLowerCase());
+        const bIndex = INVESTMENT_SNAPSHOT_ROW_ORDER.indexOf(String(b.category || "").trim().toLowerCase());
+        return (aIndex === -1 ? 99 : aIndex) - (bIndex === -1 ? 99 : bIndex);
+      })
+    : [];
+  const whatMatters = Array.isArray(snapshot?.what_matters_most) ? snapshot.what_matters_most.filter(Boolean).slice(0, 5) : [];
+  if (!rows.length && !snapshot?.thesis && !whatMatters.length) {
+    return null;
+  }
+  return (
+    <div className="investment-snapshot-panel">
+      {snapshot?.thesis ? (
+        <div className="investment-snapshot-thesis">
+          <p>{stripSourceBrackets(snapshot.thesis)}</p>
+        </div>
+      ) : null}
+      {rows.length ? (
+        <div className="investment-snapshot-grid">
+          {rows.map((row, index) => {
+            const score = boundedSnapshotScore(row.score);
+            return (
+              <div className="investment-snapshot-row" key={`${row.category}-${index}`}>
+                <strong>{row.category}</strong>
+                <div className={`investment-snapshot-assessment${score ? ` score-${score}` : ""}`}>
+                  {score ? (
+                    <div className="investment-snapshot-bars" aria-label={`${score} out of 5`}>
+                      {[1, 2, 3, 4, 5].map((segment) => (
+                        <i className={segment <= score ? "filled" : ""} key={segment} />
+                      ))}
+                    </div>
+                  ) : null}
+                  <span>{row.assessment}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+      {whatMatters.length ? (
+        <div className="investment-snapshot-matters">
+          <span>What matters most</span>
+          <ul>
+            {whatMatters.map((item, index) => <li key={`${item}-${index}`}>{stripSourceBrackets(item)}</li>)}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function MarketPositioningPanel({ items }) {
+  const rows = Array.isArray(items)
+    ? items.filter((item) => item?.market_theme && MARKET_POSITIONING_SCORES[normalizedPositioningKey(item?.positioning)])
+    : [];
+  if (!rows.length) {
+    return null;
+  }
+  return (
+    <div className="market-positioning-panel">
+      {rows.map((item, index) => {
+        const key = normalizedPositioningKey(item.positioning);
+        const score = MARKET_POSITIONING_SCORES[key];
+        return (
+          <div className={`market-positioning-row positioning-${key}`} key={`${item.market_theme}-${index}`}>
+            <strong>{item.market_theme}</strong>
+            <div className="market-positioning-rating" aria-label={`${MARKET_POSITIONING_LABELS[key]} versus peers`}>
+              <div className="market-positioning-bars" aria-hidden="true">
+                {[1, 2, 3, 4, 5].map((segment) => (
+                  <span className={segment <= score ? "filled" : ""} key={segment} />
+                ))}
+              </div>
+              <span>{MARKET_POSITIONING_LABELS[key]} vs peers</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DeepResearchSections({ sections, sourceMap, onOpenResource, marketPositioning, investmentSnapshot }) {
   const items = Array.isArray(sections) ? sections : [];
   if (!items.length) {
     return null;
   }
-  return items.map((section, index) => (
-    <section className="research-card deep-section-card" key={`${section?.title || "section"}-${index}`}>
-      <div className="research-card-header">
-        <h3>{section?.title || `Section ${index + 1}`}</h3>
-      </div>
-      {section?.summary ? <p className="deep-section-summary">{stripSourceBrackets(section.summary)}</p> : null}
-      {Array.isArray(section?.bullets) && section.bullets.length ? (
-        <ul>
-          {section.bullets.map((item, itemIndex) => (
-            <li key={`${section?.title || "section"}-${itemIndex}`}>
-              <span className="research-list-index">{String(itemIndex + 1).padStart(2, "0")}</span>
-              <p>{stripSourceBrackets(item)}</p>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <DeepSourceChips onOpenResource={onOpenResource} sourceKeys={section?.source_keys} sourceMap={sourceMap} />
-    </section>
-  ));
+  return items.map((section, index) => {
+    const normalizedTitle = String(section?.title || "").trim().toLowerCase();
+    const isInvestmentSnapshot = normalizedTitle === "investment snapshot";
+    const isMarketPositioning = normalizedTitle === "market positioning";
+    return (
+      <section className="research-card deep-section-card" key={`${section?.title || "section"}-${index}`}>
+        <div className="research-card-header">
+          <h3>{section?.title || `Section ${index + 1}`}</h3>
+        </div>
+        {isInvestmentSnapshot ? <InvestmentSnapshotPanel snapshot={investmentSnapshot} /> : null}
+        {!isInvestmentSnapshot && section?.summary ? <p className="deep-section-summary">{stripSourceBrackets(section.summary)}</p> : null}
+        {!isInvestmentSnapshot && Array.isArray(section?.bullets) && section.bullets.length ? (
+          <ul>
+            {section.bullets.map((item, itemIndex) => (
+              <li key={`${section?.title || "section"}-${itemIndex}`}>
+                <span className="research-list-index">{String(itemIndex + 1).padStart(2, "0")}</span>
+                <p>{stripSourceBrackets(item)}</p>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {isMarketPositioning ? <MarketPositioningPanel items={marketPositioning} /> : null}
+        <DeepSourceChips onOpenResource={onOpenResource} sourceKeys={section?.source_keys} sourceMap={sourceMap} />
+      </section>
+    );
+  });
 }
 
 function statementTableColumns(rows) {
@@ -5280,7 +5410,13 @@ function DeepResearchContent({ payload }) {
           stockGrades={stockGrades}
         />
         {hasStructuredSections ? (
-          <DeepResearchSections onOpenResource={setResourceModal} sections={research.sections} sourceMap={sourceMap} />
+          <DeepResearchSections
+            investmentSnapshot={research.investment_snapshot}
+            marketPositioning={research.market_positioning}
+            onOpenResource={setResourceModal}
+            sections={research.sections}
+            sourceMap={sourceMap}
+          />
         ) : (
           <>
             <DeepResearchList title="Business overview" items={research.business_overview} />
