@@ -1504,6 +1504,125 @@ def compact_news_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def compact_fmp_rows(rows: Any, keys: list[str], limit: int = 4, max_text_chars: int = 900) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for row in fmp_items(rows)[:limit]:
+        item: dict[str, Any] = {}
+        for key in keys:
+            value = row.get(key)
+            if value in (None, "", []):
+                continue
+            if isinstance(value, str) and len(value) > max_text_chars:
+                value = f"{value[:max_text_chars]}..."
+            item[key] = value
+        if item:
+            compacted.append(item)
+    return compacted
+
+
+def compact_transcript_inputs(symbol: str, transcripts: list[dict[str, Any]], limit: int = 2) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for index, item in enumerate(transcripts[:limit], start=1):
+        content = str(item.get("content") or item.get("transcript") or item.get("text") or "").strip()
+        if not content:
+            continue
+        quarter = fiscal_quarter_label(item)
+        date_value = item.get("date") or item.get("publishedDate")
+        compacted.append(
+            {
+                "title": f"{symbol} {quarter} earnings call transcript" if quarter else f"{symbol} earnings call transcript {index}",
+                "date": str(date_value)[:10] if date_value else None,
+                "quarter": quarter,
+                "excerpt": content[:3500],
+            }
+        )
+    return compacted
+
+
+def compact_annual_report_inputs(reports: list[dict[str, Any]], limit: int = 1) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for report in reports[:limit]:
+        text = json.dumps(report, ensure_ascii=False, default=str)
+        compacted.append(
+            {
+                "year": report.get("year") or str(report.get("date") or report.get("fillingDate") or "")[:4],
+                "period": report.get("period") or "FY",
+                "structured_10k_excerpt": text[:12_000],
+            }
+        )
+    return compacted
+
+
+def build_light_research_input_materials(
+    *,
+    symbol: str,
+    income_annual: Any,
+    income_quarter: Any,
+    balance_annual: Any,
+    balance_quarter: Any,
+    cashflow_annual: Any,
+    cashflow_quarter: Any,
+    transcripts: list[dict[str, Any]],
+    sec_filings: list[dict[str, Any]],
+    annual_reports: list[dict[str, Any]],
+) -> dict[str, Any]:
+    income_keys = [
+        "date",
+        "calendarYear",
+        "period",
+        "revenue",
+        "grossProfit",
+        "operatingIncome",
+        "netIncome",
+        "eps",
+        "epsdiluted",
+        "ebitda",
+        "weightedAverageShsOutDil",
+    ]
+    balance_keys = [
+        "date",
+        "calendarYear",
+        "period",
+        "cashAndCashEquivalents",
+        "cashAndShortTermInvestments",
+        "totalAssets",
+        "totalDebt",
+        "netDebt",
+        "totalLiabilities",
+        "totalStockholdersEquity",
+    ]
+    cashflow_keys = [
+        "date",
+        "calendarYear",
+        "period",
+        "netCashProvidedByOperatingActivities",
+        "operatingCashFlow",
+        "capitalExpenditure",
+        "freeCashFlow",
+        "dividendsPaid",
+        "commonStockRepurchased",
+    ]
+    ten_k_filings = [
+        compact_fmp_item(item, ["fillingDate", "acceptedDate", "type", "formType", "periodOfReport", "finalLink", "link"])
+        for item in sec_filings
+        if str(item.get("type") or item.get("formType") or "").upper() == "10-K"
+    ]
+    return {
+        "note": "Input-only grounding for light research; do not present this as downloadable research artifacts.",
+        "financial_statements": {
+            "income_annual": compact_fmp_rows(income_annual, income_keys, limit=5),
+            "income_quarter": compact_fmp_rows(income_quarter, income_keys, limit=4),
+            "balance_annual": compact_fmp_rows(balance_annual, balance_keys, limit=5),
+            "balance_quarter": compact_fmp_rows(balance_quarter, balance_keys, limit=4),
+            "cashflow_annual": compact_fmp_rows(cashflow_annual, cashflow_keys, limit=5),
+            "cashflow_quarter": compact_fmp_rows(cashflow_quarter, cashflow_keys, limit=4),
+        },
+        "earnings_transcript_excerpts": compact_transcript_inputs(symbol, transcripts),
+        "latest_10k_filings": [item for item in ten_k_filings if item][:3],
+        "structured_10k_excerpts": compact_annual_report_inputs(annual_reports),
+    }
+
+
 def is_blocked_research_source(item: dict[str, Any]) -> bool:
     source = str(item.get("site") or item.get("publisher") or item.get("source") or "").lower().replace(" ", "")
     url = str(item.get("url") or item.get("link") or "").lower()
@@ -2240,8 +2359,11 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
     balance_ttm = first_item(try_fmp_get(client, "balance-sheet-statement-ttm", {"symbol": symbol}))
     cashflow_ttm = first_item(try_fmp_get(client, "cash-flow-statement-ttm", {"symbol": symbol}))
     income_rows = try_fmp_get(client, "income-statement", {"symbol": symbol, "period": "annual", "limit": 6})
+    income_quarter = fmp_items(try_fmp_get(client, "income-statement", {"symbol": symbol, "period": "quarter", "limit": 8}))
     balance_annual = fmp_items(try_fmp_get(client, "balance-sheet-statement", {"symbol": symbol, "period": "annual", "limit": 10}))
+    balance_quarter = fmp_items(try_fmp_get(client, "balance-sheet-statement", {"symbol": symbol, "period": "quarter", "limit": 8}))
     cashflow_annual = fmp_items(try_fmp_get(client, "cash-flow-statement", {"symbol": symbol, "period": "annual", "limit": 10}))
+    cashflow_quarter = fmp_items(try_fmp_get(client, "cash-flow-statement", {"symbol": symbol, "period": "quarter", "limit": 8}))
     growth_annual = fmp_items(try_fmp_get(client, "financial-growth", {"symbol": symbol, "period": "annual", "limit": 10}))
     income = first_item(income_rows)
     analyst_estimate = fetch_first_available(
@@ -2253,6 +2375,17 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
     )
     earnings = fetch_latest_actual_earnings(client, symbol, dt.date.today())
     earnings_reports = fetch_research_earnings_reports(client, symbol, dt.date.today())
+    transcripts: list[dict[str, Any]] = []
+    sec_filings: list[dict[str, Any]] = []
+    annual_reports: list[dict[str, Any]] = []
+    try:
+        from deep_research import fetch_annual_report_json, fetch_sec_filings, fetch_transcripts
+
+        transcripts = fetch_transcripts(client, symbol, earnings_reports.get("reports") or [])
+        sec_filings = fetch_sec_filings(client, symbol)
+        annual_reports = fetch_annual_report_json(client, symbol)
+    except Exception as exc:
+        logger.info("Light research supplemental materials unavailable symbol=%s error=%s", symbol, exc)
     price_history = fetch_price_history(client, symbol, date_to)
     intraday_history = fetch_intraday_history(client, symbol)
     metric_snapshot = None
@@ -2334,6 +2467,18 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
             "next_earnings_date": earnings_reports.get("next_earnings_date"),
             "news": [compact_news_item(item) for item in news[:8]],
         },
+        "light_research_input_materials": build_light_research_input_materials(
+            symbol=symbol,
+            income_annual=income_rows,
+            income_quarter=income_quarter,
+            balance_annual=balance_annual,
+            balance_quarter=balance_quarter,
+            cashflow_annual=cashflow_annual,
+            cashflow_quarter=cashflow_quarter,
+            transcripts=transcripts,
+            sec_filings=sec_filings,
+            annual_reports=annual_reports,
+        ),
         "required_json_schema": research_schema(research_mode),
     }
     market_data = research_market_data(
@@ -2358,17 +2503,20 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
         instructions = (
             "Create a deep but concise company primer for a long-term investor who does not yet own or watch this company. "
             "Focus on what the company actually does, how it makes money, product lines, customer/end-market exposure, competitive position, current situation, future outlook, bull case, bear case, and what to learn next. "
+            "Use the supplied financial statements, earnings transcript excerpts, and 10-K material to ground the narrative, but keep the output concise and do not turn it into a deep research report. "
             "Do not make a buy/sell/hold recommendation. Do not over-focus on generic valuation metrics. Use supplied data only; if something is unknown, say what should be verified."
         )
     elif research_mode == "portfolio":
         instructions = (
             "Test the user's existing portfolio thesis against recent company-specific news and supplied data. "
             "Focus only on information relevant to why the user owns it, bull/bear case, key metrics, red flags, and action triggers. "
+            "Use supplied financial statements, earnings transcript excerpts, and 10-K material as grounding when they clarify thesis quality, business momentum, risks, or management commentary. "
             "Summarize only a few material articles and include their source_url. When citing an article, use source_url fields; do not put source domains in parentheses inside the prose. Do not recommend buying, selling, or holding."
         )
     else:
         instructions = (
             "Check whether recent company-specific news and supplied data support or contradict the user's watchlist thesis and entry_conditions. "
+            "Use supplied financial statements, earnings transcript excerpts, and 10-K material as grounding when they clarify entry conditions, business momentum, risks, or management commentary. "
             "Explain whether the company is moving closer to the user's entry conditions, what evidence is still missing, and summarize only material articles with source_url. When citing an article, use source_url fields; do not put source domains in parentheses inside the prose. "
             "Do not recommend buying, selling, or holding."
         )
@@ -2391,6 +2539,7 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
                                 "Keep each bullet specific and useful; avoid generic filler.",
                                 "Prefer 3-5 bullets per list.",
                                 "Use only the supplied context and mark uncertainty clearly.",
+                                "Treat light_research_input_materials as model-only grounding, not as downloadable or separately listed report artifacts.",
                                 "No buy/sell/hold recommendation and no personalized financial advice.",
                             ],
                             "context": context,
