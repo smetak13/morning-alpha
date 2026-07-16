@@ -2441,6 +2441,26 @@ textarea:focus {
   line-height: 1.45;
 }
 
+.research-detail-loading {
+  align-content: center;
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  justify-content: center;
+  justify-items: center;
+  min-height: 320px;
+  text-align: center;
+}
+
+.research-detail-loading .research-loading-copy {
+  justify-items: center;
+}
+
+.research-preview-content.loading {
+  display: grid;
+  min-height: calc(96vh - 110px);
+}
+
 .research-result {
   background: #151515;
   border: 1px solid #2a2a2a;
@@ -2495,10 +2515,53 @@ textarea:focus {
   justify-content: space-between;
 }
 
+.price-chart-summary {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  min-width: 0;
+}
+
+.price-chart-heading {
+  display: grid;
+  gap: 3px;
+}
+
 .price-chart-header strong {
   color: #ffffff;
   font-size: 1rem;
   margin-right: 8px;
+}
+
+.price-chart-heading small {
+  color: #8f8f86;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.price-chart-range {
+  align-items: center;
+  color: #cfcfc7;
+  display: grid;
+  font-size: 0.76rem;
+  gap: 3px;
+  justify-content: flex-start;
+  line-height: 1.35;
+  min-width: 92px;
+}
+
+.price-chart-range span {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.price-chart-range-high svg {
+  color: #7fdc9a;
+}
+
+.price-chart-range-low svg {
+  color: #ff9a8f;
 }
 
 .chart-change {
@@ -4406,6 +4469,23 @@ input[type="range"] {
   gap: 12px;
 }
 
+.generating-state.research-detail-loading {
+  align-content: center;
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr;
+  justify-content: center;
+  justify-items: center;
+  min-height: 320px;
+  padding-top: 100px;
+  text-align: center;
+}
+
+.generating-state.research-detail-loading > svg {
+  margin: 0;
+}
+
 .thesis-method-panel {
   display: grid;
   gap: 18px;
@@ -5183,8 +5263,25 @@ input[type="range"] {
   .research-action-row,
   .research-market-panel,
   .price-chart-header {
+    align-items: stretch;
     grid-template-columns: 1fr;
     flex-direction: column;
+  }
+
+  .price-chart-range {
+    justify-content: flex-start;
+  }
+
+  .price-chart-summary {
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .price-chart-header .chart-periods {
+    align-self: flex-end;
+    justify-content: flex-end;
+    width: fit-content;
   }
 
   .research-type-switch {

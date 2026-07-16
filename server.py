@@ -1673,12 +1673,171 @@ def fetch_price_history(client: Any, symbol: str, end: dt.date) -> list[dict[str
     return []
 
 
-def fetch_intraday_history(client: Any, symbol: str) -> list[dict[str, Any]]:
-    for endpoint in (f"historical-chart/5min/{symbol}", f"historical-chart/15min/{symbol}", f"historical-chart/1hour/{symbol}"):
-        points = normalize_price_history(try_fmp_get(client, endpoint, {}), include_time=True)
+def fetch_intraday_history(client: Any, symbol: str, end: dt.date | None = None, days: int = 35) -> list[dict[str, Any]]:
+    end = end or dt.date.today()
+    start = end - dt.timedelta(days=days)
+    for endpoint, params in (
+        ("historical-chart/15min", {"symbol": symbol, "from": start.isoformat(), "to": end.isoformat()}),
+        ("historical-chart/15min", {"symbol": symbol}),
+        (f"historical-chart/15min/{symbol}", {}),
+        (f"historical-chart/5min/{symbol}", {}),
+        (f"historical-chart/1hour/{symbol}", {}),
+    ):
+        points = normalize_price_history(try_fmp_get(client, endpoint, params), include_time=True)
         if points:
-            return points[-120:]
+            return points[-3000:]
     return []
+
+
+def parse_price_point_datetime(value: Any) -> dt.datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    for candidate in (text, text.replace(" ", "T")):
+        try:
+            parsed = dt.datetime.fromisoformat(candidate[:19])
+            return parsed
+        except ValueError:
+            continue
+    try:
+        parsed_date = dt.date.fromisoformat(text[:10])
+        return dt.datetime.combine(parsed_date, dt.time.min)
+    except ValueError:
+        return None
+
+
+def resample_price_points(points: list[dict[str, Any]], *, interval_minutes: int) -> list[dict[str, Any]]:
+    if interval_minutes <= 15:
+        return points
+    buckets: dict[dt.datetime, dict[str, Any]] = {}
+    for point in points:
+        parsed = parse_price_point_datetime(point.get("date"))
+        close = safe_float(point.get("close"))
+        if parsed is None or close is None:
+            continue
+        day_start = parsed.replace(hour=0, minute=0, second=0, microsecond=0)
+        minutes_since_midnight = parsed.hour * 60 + parsed.minute
+        bucket = day_start + dt.timedelta(minutes=(minutes_since_midnight // interval_minutes) * interval_minutes)
+        current = buckets.get(bucket)
+        if not current or str(point.get("date")) >= str(current.get("date")):
+            buckets[bucket] = {"date": str(point.get("date"))[:19], "close": close}
+    return [buckets[key] for key in sorted(buckets)]
+
+
+def filter_price_points_since(points: list[dict[str, Any]], *, days: int) -> list[dict[str, Any]]:
+    dated = [(parse_price_point_datetime(point.get("date")), point) for point in points]
+    dated = [(date_value, point) for date_value, point in dated if date_value is not None]
+    if not dated:
+        return []
+    latest = max(date_value for date_value, _point in dated)
+    cutoff = latest - dt.timedelta(days=days)
+    return [point for date_value, point in dated if date_value >= cutoff]
+
+
+def latest_price_close(points: list[dict[str, Any]]) -> float | None:
+    dated = [(parse_price_point_datetime(point.get("date")), point) for point in points]
+    dated = [(date_value, point) for date_value, point in dated if date_value is not None]
+    if not dated:
+        return None
+    _date_value, latest_point = max(dated, key=lambda item: item[0])
+    return first_number(latest_point.get("close"), latest_point.get("price"))
+
+
+def refresh_deep_research_market_data(body: dict[str, Any], symbol: str) -> tuple[dict[str, Any], bool]:
+    if not isinstance(body, dict) or body.get("mode") != "deep_research":
+        return body, False
+    next_body = dict(body)
+    market_data = dict(next_body.get("market_data") or {})
+    deep = dict(next_body.get("deep_research") or {})
+    dcf = dict(deep.get("dcf") or {}) if isinstance(deep.get("dcf"), dict) else {}
+    client = fmp_client_from_env()
+    today = dt.date.today()
+    quote = first_item(try_fmp_get(client, "quote", {"symbol": symbol}))
+    daily_history = fetch_price_history(client, symbol, today)
+    intraday_history = fetch_intraday_history(client, symbol, today, days=35)
+    current_price = first_number(latest_price_close(intraday_history), quote.get("price"), quote.get("previousClose"))
+
+    if daily_history:
+        market_data["price_history"] = daily_history
+    if intraday_history:
+        market_data["intraday_history"] = intraday_history
+        market_data["price_series"] = {
+            "1D": filter_price_points_since(intraday_history, days=1),
+            "1W": resample_price_points(filter_price_points_since(intraday_history, days=7), interval_minutes=60),
+            "1M": resample_price_points(filter_price_points_since(intraday_history, days=31), interval_minutes=240),
+            "3M": filter_price_points_since(daily_history, days=93),
+            "6M": filter_price_points_since(daily_history, days=186),
+            "1Y": filter_price_points_since(daily_history, days=370),
+            "5Y": daily_history,
+        }
+    if quote:
+        metrics = dict(market_data.get("metrics") or {})
+        eps = first_number(quote.get("eps"), metrics.get("eps"))
+        shares = first_number(quote.get("sharesOutstanding"))
+        market_cap = first_number(quote.get("marketCap"), current_price * shares if current_price is not None and shares is not None else None)
+        if current_price is not None:
+            metrics["price"] = current_price
+        if market_cap is not None:
+            metrics["market_cap"] = market_cap
+        if current_price is not None and eps not in (None, 0):
+            metrics["pe"] = current_price / eps
+        revenue_per_share = safe_float(metrics.get("revenue_per_share"))
+        fcf_per_share = safe_float(metrics.get("fcf_per_share"))
+        if current_price is not None and revenue_per_share not in (None, 0):
+            metrics["ps"] = current_price / revenue_per_share
+        if current_price not in (None, 0) and fcf_per_share is not None:
+            metrics["fcf_yield_pct"] = (fcf_per_share / current_price) * 100
+        if eps is not None:
+            metrics["eps"] = eps
+        metrics["year_high"] = first_number(quote.get("yearHigh"), metrics.get("year_high"))
+        metrics["year_low"] = first_number(quote.get("yearLow"), metrics.get("year_low"))
+        market_data["metrics"] = metrics
+
+    if dcf and current_price is not None:
+        base = dict(dcf.get("base") or {})
+        base["current_price"] = current_price
+        dcf["base"] = base
+        assumptions = dcf.get("assumptions") or {}
+        try:
+            from deep_research import compute_dcf, implied_revenue_growth_for_price
+
+            recomputed = compute_dcf(
+                latest_revenue=first_number(base.get("latest_revenue")),
+                shares=first_number(base.get("shares_outstanding")),
+                net_debt=first_number(base.get("net_debt")),
+                current_price=current_price,
+                revenue_growth_pct=float(assumptions.get("revenue_growth_pct") or 0),
+                fcf_margin_pct=float(assumptions.get("fcf_margin_pct") or 0),
+                operating_margin_pct=float(assumptions.get("operating_margin_pct") or 0),
+                tax_rate_pct=float(assumptions.get("tax_rate_pct") or 21),
+                wacc_pct=float(assumptions.get("wacc_pct") or 9),
+                terminal_growth_pct=float(assumptions.get("terminal_growth_pct") or 2.5),
+                projection_years=int(assumptions.get("projection_years") or 5),
+            )
+            dcf.update(recomputed)
+            sources = dict(dcf.get("assumption_sources") or {})
+            sources["market_implied_revenue_growth_pct"] = implied_revenue_growth_for_price(
+                current_price=current_price,
+                latest_revenue=first_number(base.get("latest_revenue")),
+                shares=first_number(base.get("shares_outstanding")),
+                net_debt=first_number(base.get("net_debt")),
+                assumptions=assumptions,
+            )
+            dcf["assumption_sources"] = sources
+        except Exception as exc:
+            logger.info("Unable to recompute refreshed DCF symbol=%s error=%s", symbol, exc)
+        provider = dcf.get("provider_dcf")
+        if isinstance(provider, dict):
+            provider = dict(provider)
+            provider_value = first_number(provider.get("dcf"))
+            provider["upside_downside_pct"] = ((provider_value / current_price) - 1) * 100 if provider_value is not None and current_price else None
+            dcf["provider_dcf"] = provider
+        deep["dcf"] = dcf
+        next_body["deep_research"] = deep
+
+    market_data["refreshed_at"] = dt.datetime.now(dt.UTC).isoformat()
+    next_body["market_data"] = market_data
+    return next_body, next_body != body
 
 
 def fetch_first_available(client: Any, candidates: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
@@ -3984,6 +4143,7 @@ RESEARCH_ITEM_SELECT = """
 @app.get("/api/research-runs/{run_id}")
 def get_research_run(run_id: str, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
+    from psycopg.types.json import Json
     from psycopg.rows import dict_row
 
     with connection(row_factory=dict_row) as conn:
@@ -4030,6 +4190,22 @@ def get_research_run(run_id: str, request: Request) -> dict[str, Any]:
                 {"id": run_id, "user_id": user_id},
             )
             row = cursor.fetchone()
+            if row and isinstance(row.get("item_body"), dict):
+                try:
+                    refreshed_body, changed = refresh_deep_research_market_data(dict(row["item_body"]), str(row["symbol"]).upper())
+                    if changed and row.get("research_item_id"):
+                        cursor.execute(
+                            """
+                            update public.research_items
+                            set body = %(body)s
+                            where id::text = %(id)s
+                              and user_id = %(user_id)s
+                            """,
+                            {"body": Json(refreshed_body), "id": row["research_item_id"], "user_id": user_id},
+                        )
+                        row["item_body"] = refreshed_body
+                except Exception as exc:
+                    logger.info("Unable to refresh research run market data id=%s error=%s", run_id, exc)
 
     if not row:
         raise HTTPException(status_code=404, detail="Research run not found.")
@@ -4105,6 +4281,7 @@ def list_research_items(
 @app.get("/api/research-items/{research_item_id}")
 def get_research_item(research_item_id: str, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
+    from psycopg.types.json import Json
     from psycopg.rows import dict_row
 
     with connection(row_factory=dict_row) as conn:
@@ -4119,6 +4296,22 @@ def get_research_item(research_item_id: str, request: Request) -> dict[str, Any]
                 {"id": research_item_id, "user_id": user_id},
             )
             row = cursor.fetchone()
+            if row and isinstance(row.get("body"), dict):
+                try:
+                    refreshed_body, changed = refresh_deep_research_market_data(dict(row["body"]), str(row["symbol"]).upper())
+                    if changed:
+                        cursor.execute(
+                            """
+                            update public.research_items
+                            set body = %(body)s
+                            where id::text = %(id)s
+                              and user_id = %(user_id)s
+                            """,
+                            {"body": Json(refreshed_body), "id": research_item_id, "user_id": user_id},
+                        )
+                        row["body"] = refreshed_body
+                except Exception as exc:
+                    logger.info("Unable to refresh research item market data id=%s error=%s", research_item_id, exc)
 
     if not row:
         raise HTTPException(status_code=404, detail="Research item not found.")

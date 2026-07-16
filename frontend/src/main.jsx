@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  ArrowDown,
+  ArrowUp,
   Bell,
   Check,
   Calendar,
@@ -1596,6 +1598,7 @@ function MainPage({ route, user, onLogout }) {
           <ResearchView
             portfolioItems={portfolio}
             routeResearchId={route.researchId}
+            userTimezone={settings.timezone || user?.timezone || browserTimezone()}
             watchlistItems={watchlist}
             onAddToWatchlist={(stock) => {
               setModal({
@@ -3173,7 +3176,7 @@ function defaultResearchTypeForRelationship(relationship) {
   return "company_primer";
 }
 
-function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItems = [], onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
+function ResearchView({ portfolioItems = [], routeResearchId = "", userTimezone = browserTimezone(), watchlistItems = [], onAddToWatchlist, onEditItem, onMoveToPortfolio }) {
   const [researchMode, setResearchMode] = useState(routeResearchId ? "history" : "new");
   const [search, setSearch] = useState("");
   const [results, setResults] = useState([]);
@@ -3367,7 +3370,7 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
           History
         </button>
       </div>
-      {researchMode === "history" ? <ResearchHistoryView routeResearchId={routeResearchId} /> : (
+      {researchMode === "history" ? <ResearchHistoryView routeResearchId={routeResearchId} userTimezone={userTimezone} /> : (
       <>
       <div className="reports-toolbar research-toolbar">
         <div>
@@ -3509,7 +3512,7 @@ function ResearchView({ portfolioItems = [], routeResearchId = "", watchlistItem
               ) : null}
             </div>
           </div>
-          <ResearchResultContent payload={payload} />
+          <ResearchResultContent payload={payload} userTimezone={userTimezone} />
           {generatedNotesError ? <p className="error">{generatedNotesError}</p> : null}
           {generatedNotes.length ? (
             <ResearchNotesSection notes={generatedNotes} />
@@ -3596,12 +3599,13 @@ function researchSignalFromPayload(payload) {
   return research.signal ?? research.watchlist_suitability ?? null;
 }
 
-function ResearchHistoryView({ routeResearchId = "" }) {
+function ResearchHistoryView({ routeResearchId = "", userTimezone = browserTimezone() }) {
   const [filters, setFilters] = useState(defaultResearchHistoryFilters);
   const [companySearch, setCompanySearch] = useState(() => defaultResearchHistoryFilters().stock_query);
   const [page, setPage] = useState(1);
   const [payload, setPayload] = useState({ items: [], total: 0, page_size: 10 });
   const [selectedItem, setSelectedItem] = useState(null);
+  const [loadingItem, setLoadingItem] = useState(null);
   const [notesModal, setNotesModal] = useState(null);
   const [noteFormItem, setNoteFormItem] = useState(null);
   const [shareTarget, setShareTarget] = useState(null);
@@ -3673,15 +3677,24 @@ function ResearchHistoryView({ routeResearchId = "" }) {
 
   const openItem = async (item, options = {}) => {
     setError("");
+    setLoadingItem(item);
+    setSelectedItem({
+      ...item,
+      body: null,
+      loading: true,
+    });
+    if (options.updateRoute !== false) {
+      openedRouteResearchIdRef.current = item.id;
+      setBrowserRoute(`/research/${encodeURIComponent(item.id)}`);
+    }
     try {
       const detail = await requestJson(`/api/research-items/${item.id}`, { method: "GET" });
       setSelectedItem(detail.item);
-      if (options.updateRoute !== false) {
-        openedRouteResearchIdRef.current = item.id;
-        setBrowserRoute(`/research/${encodeURIComponent(item.id)}`);
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load research detail.");
+      setSelectedItem(null);
+    } finally {
+      setLoadingItem(null);
     }
   };
 
@@ -3864,10 +3877,12 @@ function ResearchHistoryView({ routeResearchId = "" }) {
         </div>
       </div>
 
-      {selectedItem?.body ? (
+      {selectedItem ? (
         <ResearchPreviewModal
           item={selectedItem}
+          loading={Boolean(loadingItem && loadingItem.id === selectedItem.id)}
           revision={notesRevision}
+          userTimezone={userTimezone}
           onAddNote={() => setNoteFormItem(selectedItem)}
           onShare={() => setShareTarget(selectedItem)}
           onClose={closeItem}
@@ -3915,12 +3930,15 @@ function ResearchHistoryView({ routeResearchId = "" }) {
   );
 }
 
-function ResearchPreviewModal({ item, revision = 0, onAddNote, onShare, onClose }) {
+function ResearchPreviewModal({ item, loading = false, revision = 0, userTimezone = browserTimezone(), onAddNote, onShare, onClose }) {
   const [notes, setNotes] = useState([]);
   const [notesStatus, setNotesStatus] = useState("loading");
   const [notesError, setNotesError] = useState("");
 
   useEffect(() => {
+    if (loading) {
+      return undefined;
+    }
     let ignore = false;
     const loadNotes = async () => {
       setNotesStatus("loading");
@@ -3942,7 +3960,7 @@ function ResearchPreviewModal({ item, revision = 0, onAddNote, onShare, onClose 
     return () => {
       ignore = true;
     };
-  }, [item.id, revision]);
+  }, [item.id, loading, revision]);
 
   return (
     <div className="modal-backdrop report-preview-backdrop" onMouseDown={onClose}>
@@ -3956,12 +3974,12 @@ function ResearchPreviewModal({ item, revision = 0, onAddNote, onShare, onClose 
             </div>
           </div>
           <div className="modal-header-actions">
-            <button className="primary-button compact-button" onClick={onAddNote} type="button">
+            <button className="primary-button compact-button" disabled={loading} onClick={onAddNote} type="button">
               <Plus size={16} aria-hidden="true" />
               Add note
             </button>
-            {item.research_type !== "deep_research" ? (
-              <button className="secondary-button compact-button" onClick={onShare} type="button">
+            {!loading && item.research_type !== "deep_research" ? (
+              <button className="secondary-button compact-button" disabled={loading} onClick={onShare} type="button">
                 <Share2 size={16} aria-hidden="true" />
                 Share research
               </button>
@@ -3971,10 +3989,20 @@ function ResearchPreviewModal({ item, revision = 0, onAddNote, onShare, onClose 
             </button>
           </div>
         </div>
-        <div className="research-preview-content">
-          <ResearchResultContent payload={item.body} />
-          {notesError ? <p className="error">{notesError}</p> : null}
-          {notes.length ? (
+        <div className={loading || !item.body ? "research-preview-content loading" : "research-preview-content"}>
+          {loading || !item.body ? (
+            <div className="generating-state research-detail-loading">
+              <Sparkles size={22} aria-hidden="true" />
+              <div className="research-loading-copy">
+                <p>Loading research detail...</p>
+                <p className="research-loading-note">Refreshing market data for the saved research.</p>
+              </div>
+            </div>
+          ) : (
+            <ResearchResultContent payload={item.body} userTimezone={userTimezone} />
+          )}
+          {!loading && notesError ? <p className="error">{notesError}</p> : null}
+          {!loading && notes.length ? (
             <ResearchNotesSection notes={notes} />
           ) : null}
         </div>
@@ -4413,48 +4441,133 @@ function EarningsReportsPanel({ reports = [], nextEarningsDate, currencyCode = "
   );
 }
 
-function parseChartDate(value) {
-  return new Date(String(value || "").replace(" ", "T"));
+function timezoneOffsetMs(timeZone, date) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      day: "2-digit",
+      hour: "2-digit",
+      hour12: false,
+      minute: "2-digit",
+      month: "2-digit",
+      second: "2-digit",
+      timeZone,
+      year: "numeric",
+    }).formatToParts(date);
+    const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return Date.UTC(Number(value.year), Number(value.month) - 1, Number(value.day), Number(value.hour), Number(value.minute), Number(value.second)) - date.getTime();
+  } catch {
+    return 0;
+  }
 }
 
-function formatChartDate(value, period) {
+function zonedWallTimeToDate(parts, timeZone) {
+  const guess = new Date(Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second || 0));
+  const firstPass = new Date(guess.getTime() - timezoneOffsetMs(timeZone, guess));
+  return new Date(guess.getTime() - timezoneOffsetMs(timeZone, firstPass));
+}
+
+function parseChartDate(value, sourceTimezone = "America/New_York") {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return new Date(Number.NaN);
+  }
+  if (/[zZ]$|[+-]\d{2}:?\d{2}$/.test(raw)) {
+    return new Date(raw);
+  }
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+  if (match && match[4]) {
+    return zonedWallTimeToDate({
+      year: Number(match[1]),
+      month: Number(match[2]),
+      day: Number(match[3]),
+      hour: Number(match[4]),
+      minute: Number(match[5]),
+      second: Number(match[6] || 0),
+    }, sourceTimezone);
+  }
+  if (match) {
+    return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12, 0, 0));
+  }
+  return new Date(raw.replace(" ", "T"));
+}
+
+function formatChartDate(value, period, userTimezone = browserTimezone()) {
   const date = parseChartDate(value);
   if (Number.isNaN(date.getTime())) {
     return value || "";
   }
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: period === "5Y" || period === "MAX" ? "numeric" : undefined });
+  if (["1D", "1W", "1M"].includes(period)) {
+    return date.toLocaleString(undefined, { hour: "numeric", minute: "2-digit", month: "short", day: "numeric", timeZone: userTimezone });
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: userTimezone, year: period === "5Y" || period === "MAX" ? "numeric" : undefined });
 }
 
-function formatAxisDate(value, period) {
+function formatAxisDate(value, period, userTimezone = browserTimezone()) {
   const date = parseChartDate(value);
   if (Number.isNaN(date.getTime())) {
     return "";
   }
   if (period === "5Y" || period === "MAX") {
-    return date.toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+    return date.toLocaleDateString(undefined, { month: "short", timeZone: userTimezone, year: "2-digit" });
   }
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  if (period === "1D") {
+    return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: userTimezone });
+  }
+  if (["1W", "1M"].includes(period)) {
+    return date.toLocaleString(undefined, { hour: "numeric", minute: "2-digit", month: "short", day: "numeric", timeZone: userTimezone });
+  }
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: userTimezone });
 }
 
-function filterPriceHistory(dailyPoints, period) {
-  if (!Array.isArray(dailyPoints) || !dailyPoints.length) {
+function formatLastPriceUpdate(value, userTimezone = browserTimezone()) {
+  const date = parseChartDate(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return date.toLocaleString(undefined, { hour: "numeric", minute: "2-digit", month: "short", day: "numeric", timeZone: userTimezone });
+}
+
+function formatPriceRangeLabel(value, currencyCode = "USD") {
+  return Number.isFinite(value) ? formatCurrencyAmount(value, currencyCode) : "";
+}
+
+function normalizeChartPoints(points) {
+  return (Array.isArray(points) ? points : [])
+    .map((point) => ({ date: point?.date, close: Number(point?.close ?? point?.price), timestamp: parseChartDate(point?.date).getTime() }))
+    .filter((point) => point.date && Number.isFinite(point.close) && Number.isFinite(point.timestamp))
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function filterPriceHistory(points, period) {
+  const normalized = normalizeChartPoints(points);
+  if (!normalized.length) {
     return [];
   }
   if (period === "MAX") {
-    return dailyPoints;
+    return normalized;
   }
-  const days = { "1W": 7, "1M": 31, "3M": 93, "6M": 186, "1Y": 370, "5Y": 365 * 5 + 10 }[period] ?? 370;
-  const latest = parseChartDate(dailyPoints[dailyPoints.length - 1].date);
-  const cutoff = new Date(latest);
-  cutoff.setDate(latest.getDate() - days);
-  return dailyPoints.filter((point) => parseChartDate(point.date) >= cutoff);
+  const days = { "1D": 1, "1W": 7, "1M": 31, "3M": 93, "6M": 186, "1Y": 370, "5Y": 365 * 5 + 10 }[period] ?? 370;
+  const latestTimestamp = normalized[normalized.length - 1].timestamp;
+  const cutoff = latestTimestamp - days * 24 * 60 * 60 * 1000;
+  return normalized.filter((point) => point.timestamp >= cutoff);
 }
 
-function StockPriceChart({ dailyPoints, currencyCode = "USD" }) {
+function pricePointsForPeriod({ dailyPoints, intradayPoints, period, priceSeries }) {
+  const explicitSeries = priceSeries?.[period];
+  if (Array.isArray(explicitSeries) && explicitSeries.length) {
+    return filterPriceHistory(explicitSeries, period);
+  }
+  if (["1D", "1W", "1M"].includes(period) && Array.isArray(intradayPoints) && intradayPoints.length) {
+    return filterPriceHistory(intradayPoints, period);
+  }
+  return filterPriceHistory(dailyPoints, period);
+}
+
+function StockPriceChart({ dailyPoints, intradayPoints = [], priceSeries = {}, currencyCode = "USD", refreshedAt = "", userTimezone = browserTimezone() }) {
   const [period, setPeriod] = useState("6M");
   const [hoverIndex, setHoverIndex] = useState(null);
   const [tooltipSide, setTooltipSide] = useState("right");
-  const visiblePoints = filterPriceHistory(dailyPoints, period);
+  const visiblePoints = pricePointsForPeriod({ dailyPoints, intradayPoints, period, priceSeries });
   const width = 720;
   const height = 260;
   const left = 54;
@@ -4487,6 +4600,9 @@ function StockPriceChart({ dailyPoints, currencyCode = "USD" }) {
   const first = visiblePoints[0].close;
   const last = visiblePoints[visiblePoints.length - 1].close;
   const change = ((last / first) - 1) * 100;
+  const lastUpdate = formatLastPriceUpdate(visiblePoints[visiblePoints.length - 1]?.date || refreshedAt, userTimezone);
+  const periodHigh = Math.max(...closes);
+  const periodLow = Math.min(...closes);
   const yTicks = Array.from({ length: 4 }, (_, index) => max - (index / 3) * range);
   const xTickIndexes = Array.from(new Set([0, Math.floor((visiblePoints.length - 1) / 2), visiblePoints.length - 1]));
   const hovered = hoverIndex === null ? null : visiblePoints[hoverIndex];
@@ -4502,14 +4618,29 @@ function StockPriceChart({ dailyPoints, currencyCode = "USD" }) {
   return (
     <div className="price-chart">
       <div className="price-chart-header">
-        <div>
-          <strong>{formatCurrencyAmount(last, currencyCode)}</strong>
-          <span className={change >= 0 ? "chart-change positive" : "chart-change negative"}>
-            {change >= 0 ? "+" : ""}{change.toFixed(1)}%
-          </span>
+        <div className="price-chart-summary">
+          <div className="price-chart-heading">
+            <div>
+              <strong>{formatCurrencyAmount(last, currencyCode)}</strong>
+              <span className={change >= 0 ? "chart-change positive" : "chart-change negative"}>
+                {change >= 0 ? "+" : ""}{change.toFixed(1)}%
+              </span>
+            </div>
+            {lastUpdate ? <small>Last update: {lastUpdate}</small> : null}
+          </div>
+          <div className="price-chart-range" aria-label={`High ${formatPriceRangeLabel(periodHigh, currencyCode)}, low ${formatPriceRangeLabel(periodLow, currencyCode)}`}>
+            <span className="price-chart-range-high">
+              <ArrowUp size={13} aria-hidden="true" />
+              {formatPriceRangeLabel(periodHigh, currencyCode)}
+            </span>
+            <span className="price-chart-range-low">
+              <ArrowDown size={13} aria-hidden="true" />
+              {formatPriceRangeLabel(periodLow, currencyCode)}
+            </span>
+          </div>
         </div>
         <div className="chart-periods">
-          {["1W", "1M", "3M", "6M", "1Y", "5Y"].map((item) => (
+          {["1D", "1W", "1M", "3M", "6M", "1Y", "5Y"].map((item) => (
             <button className={period === item ? "active" : ""} key={item} onClick={() => setPeriod(item)} type="button">
               {item}
             </button>
@@ -4520,7 +4651,7 @@ function StockPriceChart({ dailyPoints, currencyCode = "USD" }) {
         {hovered && hoveredCoord ? (
           <div className={`chart-tooltip ${tooltipSide}`} style={{ left: `${(hoveredCoord.x / width) * 100}%` }}>
             <strong>{formatCurrencyAmount(hovered.close, currencyCode)}</strong>
-            <span>{formatChartDate(hovered.date, period)}</span>
+            <span>{formatChartDate(hovered.date, period, userTimezone)}</span>
           </div>
         ) : null}
         <svg className="price-chart-svg" viewBox={`0 0 ${width} ${height}`}>
@@ -4538,7 +4669,7 @@ function StockPriceChart({ dailyPoints, currencyCode = "USD" }) {
             const { x } = coordinate(point, index);
             return (
               <text className="chart-axis-label" key={`${point.date}-${index}`} textAnchor={index === 0 ? "start" : index === visiblePoints.length - 1 ? "end" : "middle"} x={x} y={height - 8}>
-                {formatAxisDate(point.date, period)}
+                {formatAxisDate(point.date, period, userTimezone)}
               </text>
             );
           })}
@@ -4558,7 +4689,7 @@ function StockPriceChart({ dailyPoints, currencyCode = "USD" }) {
   );
 }
 
-function ResearchMarketSnapshot({ marketData, showEarnings = true }) {
+function ResearchMarketSnapshot({ marketData, showEarnings = true, userTimezone = browserTimezone() }) {
   if (!marketData) {
     return null;
   }
@@ -4601,7 +4732,14 @@ function ResearchMarketSnapshot({ marketData, showEarnings = true }) {
   return (
     <section className="research-market-panel">
       <div className="research-chart-panel">
-        <StockPriceChart currencyCode={currencyCode} dailyPoints={marketData.price_history ?? []} />
+        <StockPriceChart
+          currencyCode={currencyCode}
+          dailyPoints={marketData.price_history ?? []}
+          intradayPoints={marketData.intraday_history ?? []}
+          priceSeries={marketData.price_series ?? {}}
+          refreshedAt={marketData.refreshed_at ?? ""}
+          userTimezone={userTimezone}
+        />
       </div>
       <div className="research-metrics-panel">
         <div className="metric-grid">
@@ -5557,7 +5695,7 @@ function StockGradesPanel({ currencyCode = "USD", stockGrades = [] }) {
   );
 }
 
-function DeepResearchContent({ payload }) {
+function DeepResearchContent({ payload, userTimezone = browserTimezone() }) {
   const research = payload.research || {};
   const deep = payload.deep_research || {};
   const [resourceModal, setResourceModal] = useState(null);
@@ -5570,7 +5708,7 @@ function DeepResearchContent({ payload }) {
     <>
       <div className="research-section-grid deep-research-grid">
         <ResearchSignal label="Deep research signal" value={research.signal} />
-        <ResearchMarketSnapshot marketData={payload.market_data} showEarnings={false} />
+        <ResearchMarketSnapshot marketData={payload.market_data} showEarnings={false} userTimezone={userTimezone} />
         <DeepResearchArtifacts artifacts={deep.artifacts} />
         <DeepResearchDcfCalculator currencyCode={currencyCode} dcf={deep.dcf} />
         <DeepResearchDataLibrary
@@ -5608,16 +5746,16 @@ function DeepResearchContent({ payload }) {
   );
 }
 
-function ResearchResultContent({ payload }) {
+function ResearchResultContent({ payload, userTimezone = browserTimezone() }) {
   const research = payload.research || {};
   if (payload.mode === "deep_research") {
-    return <DeepResearchContent payload={payload} />;
+    return <DeepResearchContent payload={payload} userTimezone={userTimezone} />;
   }
   if (payload.mode === "portfolio") {
     return (
       <div className="research-section-grid">
         <ResearchSignal label="Signal" value={research.signal} />
-        <ResearchMarketSnapshot marketData={payload.market_data} />
+        <ResearchMarketSnapshot marketData={payload.market_data} userTimezone={userTimezone} />
         <ResearchList title="Executive summary" items={research.executive_summary} />
         <ResearchAssessmentList title="Thesis check" items={research.thesis_check} titleKey="field" />
         <ResearchArticleList title="Recent developments" items={research.recent_developments} />
@@ -5630,7 +5768,7 @@ function ResearchResultContent({ payload }) {
     return (
       <div className="research-section-grid">
         <ResearchSignal label="Signal" value={research.signal} />
-        <ResearchMarketSnapshot marketData={payload.market_data} />
+        <ResearchMarketSnapshot marketData={payload.market_data} userTimezone={userTimezone} />
         <ResearchList title="Executive summary" items={research.executive_summary} />
         <ResearchAssessmentList title="Entry conditions check" items={research.entry_conditions_check} titleKey="condition" />
         <ResearchArticleList title="Recent developments" items={research.recent_developments} />
@@ -5642,7 +5780,7 @@ function ResearchResultContent({ payload }) {
   return (
     <div className="research-section-grid">
       <ResearchSignal label="Watchlist suitability" value={research.watchlist_suitability} />
-      <ResearchMarketSnapshot marketData={payload.market_data} />
+      <ResearchMarketSnapshot marketData={payload.market_data} userTimezone={userTimezone} />
       <ResearchList title="Company overview" items={research.company_overview} />
       <ResearchList title="Business model" items={research.business_model} />
       <ResearchList title="Products and customers" items={research.products_and_customers} />
