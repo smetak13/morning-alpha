@@ -4087,6 +4087,24 @@ function formatStatementNumber(value) {
   }).format(number);
 }
 
+function normalizeCurrencyCode(value) {
+  const code = String(value || "USD").trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(code) ? code : "USD";
+}
+
+function currencyPrefix(currencyCode) {
+  const code = normalizeCurrencyCode(currencyCode);
+  return code === "USD" ? "$" : `${code} `;
+}
+
+function formatCurrencyAmount(value, currencyCode = "USD") {
+  if (value === null || value === undefined || value === "") {
+    return "N/A";
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? `${currencyPrefix(currencyCode)}${formatCompactNumber(number)}` : "N/A";
+}
+
 function formatMetricPercent(value) {
   if (value === null || value === undefined || value === "") {
     return "N/A";
@@ -4138,7 +4156,66 @@ const currencyMetricKeys = new Set([
   "year_low",
 ]);
 
-function metricValue(key, value) {
+const statementCurrencyKeys = new Set([
+  "accountPayables",
+  "acquisitionsNet",
+  "capitalExpenditure",
+  "cashAndCashEquivalents",
+  "cashAndShortTermInvestments",
+  "changeInWorkingCapital",
+  "commonStockRepurchased",
+  "costOfRevenue",
+  "deferredRevenue",
+  "depreciationAndAmortization",
+  "dividendsPaid",
+  "ebitda",
+  "freeCashFlow",
+  "generalAndAdministrativeExpenses",
+  "goodwill",
+  "grossProfit",
+  "incomeBeforeTax",
+  "incomeTaxExpense",
+  "intangibleAssets",
+  "inventory",
+  "interestExpense",
+  "longTermDebt",
+  "longTermInvestments",
+  "netCashProvidedByOperatingActivities",
+  "netCashUsedForInvestingActivites",
+  "netCashUsedProvidedByFinancingActivities",
+  "netIncome",
+  "netReceivables",
+  "operatingCashFlow",
+  "operatingExpenses",
+  "operatingIncome",
+  "otherCurrentAssets",
+  "propertyPlantEquipmentNet",
+  "researchAndDevelopmentExpenses",
+  "retainedEarnings",
+  "sellingGeneralAndAdministrativeExpenses",
+  "sellingAndMarketingExpenses",
+  "shortTermInvestments",
+  "stockBasedCompensation",
+  "taxAssets",
+  "totalAssets",
+  "totalCurrentAssets",
+  "totalCurrentLiabilities",
+  "totalDebt",
+  "totalEquity",
+  "totalLiabilities",
+  "totalNonCurrentAssets",
+  "totalNonCurrentLiabilities",
+  "totalShareholderEquity",
+  "totalStockholdersEquity",
+]);
+
+function statementValue(key, value, currencyCode = "USD") {
+  return statementCurrencyKeys.has(key) || key === "eps" || key === "epsdiluted"
+    ? formatCurrencyAmount(value, currencyCode)
+    : formatStatementNumber(value);
+}
+
+function metricValue(key, value, currencyCode = "USD") {
   if (key === "dividend_yield_pct") {
     return formatDividendYield(value);
   }
@@ -4149,11 +4226,7 @@ function metricValue(key, value) {
     return formatMetricPercent(value);
   }
   if (currencyMetricKeys.has(key)) {
-    if (value === null || value === undefined || value === "") {
-      return "N/A";
-    }
-    const number = Number(value);
-    return Number.isFinite(number) ? `$${formatCompactNumber(number)}` : "N/A";
+    return formatCurrencyAmount(value, currencyCode);
   }
   return formatCompactNumber(value);
 }
@@ -4256,7 +4329,7 @@ function earningsReportLabel(report, index) {
   return `Quarter ${index + 1}`;
 }
 
-function EarningsReportsPanel({ reports = [], nextEarningsDate }) {
+function EarningsReportsPanel({ reports = [], nextEarningsDate, currencyCode = "USD" }) {
   const items = Array.isArray(reports) ? reports.filter((report) => report && report.report_type !== "fy") : [];
   const defaultActiveIndex = useMemo(() => {
     const today = new Date();
@@ -4315,19 +4388,19 @@ function EarningsReportsPanel({ reports = [], nextEarningsDate }) {
               <div className="earnings-detail-grid">
                 <div>
                   <span>EPS actual</span>
-                  <strong>{activeReport.eps_actual === null || activeReport.eps_actual === undefined ? "N/A" : `$${formatCompactNumber(activeReport.eps_actual)}`}</strong>
+                  <strong>{formatCurrencyAmount(activeReport.eps_actual, currencyCode)}</strong>
                 </div>
                 <div>
                   <span>EPS est.</span>
-                  <strong>{activeReport.eps_estimated === null || activeReport.eps_estimated === undefined ? "N/A" : `$${formatCompactNumber(activeReport.eps_estimated)}`}</strong>
+                  <strong>{formatCurrencyAmount(activeReport.eps_estimated, currencyCode)}</strong>
                 </div>
                 <div>
                   <span>Revenue actual</span>
-                  <strong>{activeReport.revenue_actual === null || activeReport.revenue_actual === undefined ? "N/A" : `$${formatCompactNumber(activeReport.revenue_actual)}`}</strong>
+                  <strong>{formatCurrencyAmount(activeReport.revenue_actual, currencyCode)}</strong>
                 </div>
                 <div>
                   <span>Revenue est.</span>
-                  <strong>{activeReport.revenue_estimated === null || activeReport.revenue_estimated === undefined ? "N/A" : `$${formatCompactNumber(activeReport.revenue_estimated)}`}</strong>
+                  <strong>{formatCurrencyAmount(activeReport.revenue_estimated, currencyCode)}</strong>
                 </div>
               </div>
             </div>
@@ -4377,7 +4450,7 @@ function filterPriceHistory(dailyPoints, period) {
   return dailyPoints.filter((point) => parseChartDate(point.date) >= cutoff);
 }
 
-function StockPriceChart({ dailyPoints }) {
+function StockPriceChart({ dailyPoints, currencyCode = "USD" }) {
   const [period, setPeriod] = useState("6M");
   const [hoverIndex, setHoverIndex] = useState(null);
   const [tooltipSide, setTooltipSide] = useState("right");
@@ -4430,7 +4503,7 @@ function StockPriceChart({ dailyPoints }) {
     <div className="price-chart">
       <div className="price-chart-header">
         <div>
-          <strong>${formatCompactNumber(last)}</strong>
+          <strong>{formatCurrencyAmount(last, currencyCode)}</strong>
           <span className={change >= 0 ? "chart-change positive" : "chart-change negative"}>
             {change >= 0 ? "+" : ""}{change.toFixed(1)}%
           </span>
@@ -4446,7 +4519,7 @@ function StockPriceChart({ dailyPoints }) {
       <div className="price-chart-plot" onMouseLeave={() => setHoverIndex(null)} onMouseMove={handleHover}>
         {hovered && hoveredCoord ? (
           <div className={`chart-tooltip ${tooltipSide}`} style={{ left: `${(hoveredCoord.x / width) * 100}%` }}>
-            <strong>${formatCompactNumber(hovered.close)}</strong>
+            <strong>{formatCurrencyAmount(hovered.close, currencyCode)}</strong>
             <span>{formatChartDate(hovered.date, period)}</span>
           </div>
         ) : null}
@@ -4456,7 +4529,7 @@ function StockPriceChart({ dailyPoints }) {
             return (
               <g key={tick}>
                 <line className="chart-grid-line" x1={left} x2={width - right} y1={y} y2={y} />
-                <text className="chart-axis-label" x={left - 10} y={y + 4} textAnchor="end">${formatCompactNumber(tick)}</text>
+                <text className="chart-axis-label" x={left - 10} y={y + 4} textAnchor="end">{formatCurrencyAmount(tick, currencyCode)}</text>
               </g>
             );
           })}
@@ -4490,6 +4563,7 @@ function ResearchMarketSnapshot({ marketData, showEarnings = true }) {
     return null;
   }
   const metrics = marketData.metrics || {};
+  const currencyCode = marketData.currency || "USD";
   const metricEntries = [
     "price",
     "market_cap",
@@ -4527,14 +4601,14 @@ function ResearchMarketSnapshot({ marketData, showEarnings = true }) {
   return (
     <section className="research-market-panel">
       <div className="research-chart-panel">
-        <StockPriceChart dailyPoints={marketData.price_history ?? []} />
+        <StockPriceChart currencyCode={currencyCode} dailyPoints={marketData.price_history ?? []} />
       </div>
       <div className="research-metrics-panel">
         <div className="metric-grid">
           {metricEntries.map((key) => (
             <div className="metric-tile" key={key}>
               <span>{metricLabel(key)}</span>
-              <strong>{metricValue(key, metrics[key])}</strong>
+              <strong>{metricValue(key, metrics[key], currencyCode)}</strong>
             </div>
           ))}
         </div>
@@ -4543,14 +4617,14 @@ function ResearchMarketSnapshot({ marketData, showEarnings = true }) {
             <strong>Latest earnings</strong>
             <span>{marketData.latest_earnings.date || "Date unavailable"}</span>
             <div className="earnings-details">
-              <span>EPS {formatCompactNumber(marketData.latest_earnings.eps)}</span>
-              <span>Est. {formatCompactNumber(marketData.latest_earnings.eps_estimated)}</span>
-              <span>Revenue {formatCompactNumber(marketData.latest_earnings.revenue)}</span>
+              <span>EPS {formatCurrencyAmount(marketData.latest_earnings.eps, currencyCode)}</span>
+              <span>Est. {formatCurrencyAmount(marketData.latest_earnings.eps_estimated, currencyCode)}</span>
+              <span>Revenue {formatCurrencyAmount(marketData.latest_earnings.revenue, currencyCode)}</span>
             </div>
             <a href={marketData.latest_earnings.source_url} rel="noreferrer" target="_blank">Source</a>
           </div>
         ) : null}
-        {showEarnings ? <EarningsReportsPanel reports={marketData.earnings_reports ?? []} nextEarningsDate={marketData.next_earnings_date} /> : null}
+        {showEarnings ? <EarningsReportsPanel currencyCode={currencyCode} reports={marketData.earnings_reports ?? []} nextEarningsDate={marketData.next_earnings_date} /> : null}
       </div>
     </section>
   );
@@ -4622,7 +4696,7 @@ function impliedGrowthForCurrentDcf(base, assumptions) {
   return (low + high) / 2;
 }
 
-function DeepResearchDcfCalculator({ dcf }) {
+function DeepResearchDcfCalculator({ currencyCode: marketCurrencyCode = "USD", dcf }) {
   const [assumptions, setAssumptions] = useState(() => dcf?.assumptions || {});
   useEffect(() => {
     setAssumptions(dcf?.assumptions || {});
@@ -4636,6 +4710,7 @@ function DeepResearchDcfCalculator({ dcf }) {
   const defaultGrowth = Number(assumptions.revenue_growth_pct);
   const analystGrowth = Number(sources.analyst_revenue_growth_pct);
   const showAnalystGrowth = Number.isFinite(analystGrowth) && (!Number.isFinite(defaultGrowth) || Math.abs(analystGrowth - defaultGrowth) > 0.05);
+  const currencyCode = dcf.currency || marketCurrencyCode;
   const updateAssumption = (key, value) => {
     setAssumptions((current) => ({ ...current, [key]: Number(value) }));
   };
@@ -4653,11 +4728,11 @@ function DeepResearchDcfCalculator({ dcf }) {
       <div className="deep-dcf-summary">
         <div>
           <span>Intrinsic value</span>
-          <strong>{metricValue("price", result.intrinsic_value_per_share)}</strong>
+          <strong>{metricValue("price", result.intrinsic_value_per_share, currencyCode)}</strong>
         </div>
         <div>
           <span>Current price</span>
-          <strong>{metricValue("price", dcf.base?.current_price)}</strong>
+          <strong>{metricValue("price", dcf.base?.current_price, currencyCode)}</strong>
         </div>
         <div>
           <span>Upside / downside</span>
@@ -4682,7 +4757,7 @@ function DeepResearchDcfCalculator({ dcf }) {
         </div>
         <div>
           <span>Provider DCF fair value</span>
-          <strong>{metricValue("price", dcf.provider_dcf?.dcf)}</strong>
+          <strong>{metricValue("price", dcf.provider_dcf?.dcf, currencyCode)}</strong>
           <small>
             {dcf.provider_dcf?.date || "Reference model"}
             {dcf.provider_dcf?.upside_downside_pct !== null && dcf.provider_dcf?.upside_downside_pct !== undefined
@@ -4706,7 +4781,7 @@ function DeepResearchDcfCalculator({ dcf }) {
         {result.projection.map((row) => (
           <div key={row.year}>
             <span>Year {row.year}</span>
-            <strong>{formatCompactNumber(row.free_cash_flow)}</strong>
+            <strong>{formatCurrencyAmount(row.free_cash_flow, currencyCode)}</strong>
           </div>
         ))}
       </div>
@@ -5234,7 +5309,7 @@ function statementLineItems(rows) {
   return output.slice(0, 80);
 }
 
-function DeepResourceModal({ resource, onClose }) {
+function DeepResourceModal({ resource, onClose, currencyCode = "USD" }) {
   if (!resource) {
     return null;
   }
@@ -5289,7 +5364,7 @@ function DeepResourceModal({ resource, onClose }) {
                       <tr className={lineItem.highlight ? "statement-highlight-row" : ""} key={lineItem.key}>
                         <td>{metricLabel(lineItem.key)}</td>
                         {columns.map((column) => (
-                          <td data-period={column.label} key={column.key}>{formatStatementNumber(column.row?.[lineItem.key])}</td>
+                          <td data-period={column.label} key={column.key}>{statementValue(lineItem.key, column.row?.[lineItem.key], currencyCode)}</td>
                         ))}
                       </tr>
                     )
@@ -5358,7 +5433,7 @@ function stockGradeLabel(item) {
   return item?.newGrade || item?.grade || item?.rating || item?.ratingRecommendation || "Hold";
 }
 
-function stockGradePrice(item) {
+function stockGradePrice(item, currencyCode = "USD") {
   const value =
     item?.price ??
     item?.priceTarget ??
@@ -5370,10 +5445,10 @@ function stockGradePrice(item) {
     item?.priceWhenPosted ??
     item?.publishedPrice ??
     item?.currentPrice;
-  return value === null || value === undefined || value === "" ? "" : metricValue("price", value);
+  return value === null || value === undefined || value === "" ? "" : metricValue("price", value, currencyCode);
 }
 
-function DeepResearchDataLibrary({ deep, earningsReports = [], nextEarningsDate, stockGrades = [], onOpenResource }) {
+function DeepResearchDataLibrary({ currencyCode = "USD", deep, earningsReports = [], nextEarningsDate, stockGrades = [], onOpenResource }) {
   const [statementPeriod, setStatementPeriod] = useState("annual");
   const sources = Array.isArray(deep.sources) ? deep.sources : [];
   const transcripts = Array.isArray(deep.transcripts) ? deep.transcripts : [];
@@ -5432,12 +5507,12 @@ function DeepResearchDataLibrary({ deep, earningsReports = [], nextEarningsDate,
             {!filings.length && !annualReportSources.length ? <span>No filings available.</span> : null}
           </div>
         </div>
-        <StockGradesPanel stockGrades={stockGrades} />
+        <StockGradesPanel currencyCode={currencyCode} stockGrades={stockGrades} />
       </div>
       <div className="deep-library-grid deep-material-row">
         {hasEarningsReports ? (
           <div className="deep-material-panel deep-earnings-report-panel">
-            <EarningsReportsPanel reports={earningsReports} nextEarningsDate={nextEarningsDate} />
+            <EarningsReportsPanel currencyCode={currencyCode} reports={earningsReports} nextEarningsDate={nextEarningsDate} />
           </div>
         ) : (
           <div className="deep-material-panel deep-earnings-report-panel">
@@ -5459,7 +5534,7 @@ function DeepResearchDataLibrary({ deep, earningsReports = [], nextEarningsDate,
   );
 }
 
-function StockGradesPanel({ stockGrades = [] }) {
+function StockGradesPanel({ currencyCode = "USD", stockGrades = [] }) {
   const items = Array.isArray(stockGrades) ? stockGrades.slice(0, 10) : [];
   return (
     <div className="deep-material-panel deep-stock-grades-panel">
@@ -5471,7 +5546,7 @@ function StockGradesPanel({ stockGrades = [] }) {
               <span>{item.date || item.publishedDate || "Date N/A"}</span>
               <b>{stockGradeLabel(item)}</b>
               <em>{item.gradingCompany || item.analystCompany || item.firm || item.action || "Analyst grade"}</em>
-              {stockGradePrice(item) ? <strong>{stockGradePrice(item)}</strong> : null}
+              {stockGradePrice(item, currencyCode) ? <strong>{stockGradePrice(item, currencyCode)}</strong> : null}
             </small>
           ))}
         </div>
@@ -5490,14 +5565,16 @@ function DeepResearchContent({ payload }) {
   const hasStructuredSections = Array.isArray(research.sections) && research.sections.length > 0;
   const earningsReports = Array.isArray(payload.market_data?.earnings_reports) ? payload.market_data.earnings_reports : [];
   const stockGrades = Array.isArray(deep.stock_grades) ? deep.stock_grades.slice(0, 10) : [];
+  const currencyCode = payload.market_data?.currency || deep.dcf?.currency || "USD";
   return (
     <>
       <div className="research-section-grid deep-research-grid">
         <ResearchSignal label="Deep research signal" value={research.signal} />
         <ResearchMarketSnapshot marketData={payload.market_data} showEarnings={false} />
         <DeepResearchArtifacts artifacts={deep.artifacts} />
-        <DeepResearchDcfCalculator dcf={deep.dcf} />
+        <DeepResearchDcfCalculator currencyCode={currencyCode} dcf={deep.dcf} />
         <DeepResearchDataLibrary
+          currencyCode={currencyCode}
           deep={deep}
           earningsReports={earningsReports}
           nextEarningsDate={payload.market_data?.next_earnings_date}
@@ -5526,7 +5603,7 @@ function DeepResearchContent({ payload }) {
           </>
         )}
       </div>
-      <DeepResourceModal onClose={() => setResourceModal(null)} resource={resourceModal} />
+      <DeepResourceModal currencyCode={currencyCode} onClose={() => setResourceModal(null)} resource={resourceModal} />
     </>
   );
 }

@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -1380,6 +1381,31 @@ def fetch_deep_research_context(
     }
 
 
+def resolve_trading_currency(context: dict[str, Any]) -> str:
+    currency_keys = (
+        "currency",
+        "priceCurrency",
+        "tradingCurrency",
+        "financialCurrency",
+        "reportedCurrency",
+    )
+    candidates = [
+        context.get("quote") or {},
+        context.get("profile") or {},
+        first_item(context.get("fmp_dcf") or []),
+        first_item(context.get("income_annual") or []),
+        first_item(context.get("metrics_annual") or []),
+    ]
+    for row in candidates:
+        if not isinstance(row, dict):
+            continue
+        for key in currency_keys:
+            value = str(row.get(key) or "").strip().upper()
+            if re.fullmatch(r"[A-Z]{3}", value):
+                return value
+    return "USD"
+
+
 def chart_series(
     rows: list[dict[str, Any]],
     field: str | list[str],
@@ -1697,7 +1723,9 @@ def build_dcf(context: dict[str, Any]) -> dict[str, Any]:
     )
     provider_stock_price = first_number(deep_get_any(fmp_dcf_row, "stockPrice", "Stock Price", "price", "marketPrice"))
     provider_reference_price = current_price or provider_stock_price
+    currency = resolve_trading_currency(context)
     return {
+        "currency": currency,
         "base": {
             "latest_revenue": latest_revenue,
             "latest_free_cash_flow": latest_fcf,
@@ -2272,6 +2300,7 @@ def generate_deep_research(
         },
         "research": research,
         "market_data": {
+            "currency": resolve_trading_currency(context),
             "price_history": context.get("price_history") or [],
             "pe_history": find_artifact_series(artifacts, "P/E ratio", "annual") or find_artifact_series(artifacts, "P/E ratio", "quarter"),
             "pe_history_period": find_artifact_period(artifacts, "P/E ratio", "annual"),

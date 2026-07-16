@@ -1974,6 +1974,7 @@ def research_market_data(
     price_history: list[dict[str, Any]],
     intraday_history: list[dict[str, Any]],
     metric_snapshot: dict[str, Any] | None = None,
+    currency: str = "USD",
 ) -> dict[str, Any]:
     next_eps = (
         analyst_estimate.get("estimatedEpsAvg")
@@ -2078,6 +2079,7 @@ def research_market_data(
     )
 
     return {
+        "currency": currency,
         "price_history": price_history,
         "intraday_history": intraday_history,
         "earnings_reports": earnings_reports.get("reports") or [],
@@ -2389,23 +2391,25 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
     price_history = fetch_price_history(client, symbol, date_to)
     intraday_history = fetch_intraday_history(client, symbol)
     metric_snapshot = None
+    currency = "USD"
     try:
-        from deep_research import build_metric_snapshot
+        from deep_research import build_metric_snapshot, resolve_trading_currency
 
-        metric_snapshot = build_metric_snapshot(
-            {
-                "quote": quote,
-                "market_cap": market_cap_row,
-                "metrics_ttm": metrics,
-                "ratios_ttm": ratios or first_item(ratios_annual),
-                "metrics_annual": metrics_annual,
-                "ratios_annual": ratios_annual,
-                "income_annual": fmp_items(income_rows),
-                "cashflow_annual": cashflow_annual,
-                "balance_annual": balance_annual,
-                "growth_annual": growth_annual,
-            }
-        )
+        market_context = {
+            "profile": profile,
+            "quote": quote,
+            "market_cap": market_cap_row,
+            "metrics_ttm": metrics,
+            "ratios_ttm": ratios or first_item(ratios_annual),
+            "metrics_annual": metrics_annual,
+            "ratios_annual": ratios_annual,
+            "income_annual": fmp_items(income_rows),
+            "cashflow_annual": cashflow_annual,
+            "balance_annual": balance_annual,
+            "growth_annual": growth_annual,
+        }
+        currency = resolve_trading_currency(market_context)
+        metric_snapshot = build_metric_snapshot(market_context)
     except Exception:
         metric_snapshot = None
     news: list[dict[str, Any]] = []
@@ -2498,6 +2502,7 @@ def research_company(payload: CompanyResearchRequest, request: Request) -> dict[
         price_history=price_history,
         intraday_history=intraday_history,
         metric_snapshot=metric_snapshot,
+        currency=currency,
     )
     if research_mode == "new":
         instructions = (
@@ -2905,7 +2910,14 @@ def compact_email_number(value: Any, prefix: str = "", suffix: str = "") -> str:
     return f"{prefix}{formatted}{suffix}"
 
 
-def research_email_metric_value(key: str, value: Any) -> str:
+def currency_prefix(currency: Any) -> str:
+    code = str(currency or "USD").strip().upper()
+    if not re.fullmatch(r"[A-Z]{3}", code):
+        code = "USD"
+    return "$" if code == "USD" else f"{code} "
+
+
+def research_email_metric_value(key: str, value: Any, currency: str = "USD") -> str:
     currency_metric_keys = {
         "eps",
         "fcf_per_share",
@@ -2920,14 +2932,16 @@ def research_email_metric_value(key: str, value: Any) -> str:
         number = safe_float(value)
         return f"{number:.2f}%" if number and number > 0 else "-"
     if key in currency_metric_keys:
-        return compact_email_number(value, prefix="$")
+        return compact_email_number(value, prefix=currency_prefix(currency))
     if "growth" in key or "margin" in key or "yield" in key:
         return compact_email_number(value, suffix="%")
     return compact_email_number(value)
 
 
 def research_email_metrics(body: dict[str, Any]) -> list[tuple[str, str]]:
-    metrics = (((body or {}).get("market_data") or {}).get("metrics") or {})
+    market_data = ((body or {}).get("market_data") or {})
+    metrics = market_data.get("metrics") or {}
+    currency = str(market_data.get("currency") or "USD")
     labels = {
         "price": "Price",
         "market_cap": "Market cap",
@@ -2947,7 +2961,7 @@ def research_email_metrics(body: dict[str, Any]) -> list[tuple[str, str]]:
         "year_high": "52W high",
         "year_low": "52W low",
     }
-    return [(label, research_email_metric_value(key, metrics.get(key))) for key, label in labels.items()]
+    return [(label, research_email_metric_value(key, metrics.get(key), currency)) for key, label in labels.items()]
 
 
 def render_research_email_list(title: str, items: Any) -> str:
