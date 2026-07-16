@@ -1744,7 +1744,7 @@ def latest_price_close(points: list[dict[str, Any]]) -> float | None:
 
 
 def refresh_deep_research_market_data(body: dict[str, Any], symbol: str) -> tuple[dict[str, Any], bool]:
-    if not isinstance(body, dict) or body.get("mode") != "deep_research":
+    if not isinstance(body, dict) or body.get("mode") not in {"deep_research", "portfolio", "watchlist", "new"}:
         return body, False
     next_body = dict(body)
     market_data = dict(next_body.get("market_data") or {})
@@ -1770,7 +1770,7 @@ def refresh_deep_research_market_data(body: dict[str, Any], symbol: str) -> tupl
             "1Y": filter_price_points_since(daily_history, days=370),
             "5Y": daily_history,
         }
-    if quote:
+    if quote or current_price is not None:
         metrics = dict(market_data.get("metrics") or {})
         eps = first_number(quote.get("eps"), metrics.get("eps"))
         shares = first_number(quote.get("sharesOutstanding"))
@@ -1793,7 +1793,7 @@ def refresh_deep_research_market_data(body: dict[str, Any], symbol: str) -> tupl
         metrics["year_low"] = first_number(quote.get("yearLow"), metrics.get("year_low"))
         market_data["metrics"] = metrics
 
-    if dcf and current_price is not None:
+    if body.get("mode") == "deep_research" and dcf and current_price is not None:
         base = dict(dcf.get("base") or {})
         base["current_price"] = current_price
         dcf["base"] = base
