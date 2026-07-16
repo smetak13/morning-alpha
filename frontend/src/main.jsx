@@ -4985,6 +4985,58 @@ function normalizedPositioningKey(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function normalizedProductSegments(value) {
+  const rawItems = Array.isArray(value?.items) ? value.items : [];
+  const items = rawItems
+    .map((item) => {
+      const name = String(item?.name || "").trim();
+      if (!name) {
+        return null;
+      }
+      const children = Array.isArray(item?.children)
+        ? item.children
+            .map((child) => {
+              const childName = String(child?.name || "").trim();
+              return childName
+                ? {
+                    name: childName,
+                    description: String(child?.description || "").trim(),
+                    sourceKeys: Array.isArray(child?.source_keys) ? child.source_keys.filter(Boolean) : [],
+                  }
+                : null;
+            })
+            .filter(Boolean)
+            .slice(0, 8)
+        : [];
+      return {
+        name,
+        description: String(item?.description || "").trim(),
+        percentage: Number.isFinite(Number(item?.percentage)) ? Number(item.percentage) : null,
+        sourceKeys: Array.isArray(item?.source_keys) ? item.source_keys.filter(Boolean) : [],
+        children,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 9);
+  if (items.length < 2) {
+    return null;
+  }
+  const metric = String(value?.metric || "unavailable").trim().toLowerCase();
+  const period = String(value?.period || "").trim();
+  const hasConsistentPercentages =
+    metric &&
+    metric !== "unavailable" &&
+    items.every((item) => item.percentage !== null && item.percentage >= 0 && item.percentage <= 100 && item.sourceKeys.length > 0) &&
+    Math.abs(items.reduce((sum, item) => sum + item.percentage, 0) - 100) <= 2;
+  return {
+    basis: String(value?.basis || "").trim().toLowerCase(),
+    metric,
+    period,
+    items: hasConsistentPercentages ? items : items.map((item) => ({ ...item, percentage: null })),
+    showPercentages: hasConsistentPercentages,
+  };
+}
+
 function InvestmentSnapshotPanel({ snapshot }) {
   const rows = Array.isArray(snapshot?.rows)
     ? snapshot.rows
@@ -5040,6 +5092,47 @@ function InvestmentSnapshotPanel({ snapshot }) {
   );
 }
 
+function ProductSegmentsPanel({ segments, stock }) {
+  const data = normalizedProductSegments(segments);
+  if (!data) {
+    return null;
+  }
+  const companyName = stock?.company_name || stock?.symbol || "Company";
+  const logoUrl = stock?.logo_url;
+  return (
+    <div className="product-segments-panel">
+      <div className="product-segments-heading">
+        <span>Products and segments map</span>
+      </div>
+      <div className="product-segments-flow">
+        <div className="product-segments-company-node">
+          <img className="stock-logo large" {...stockLogoProps(logoUrl)} alt="" />
+          <strong>{companyName}</strong>
+        </div>
+        <div className="product-segment-branches">
+          {data.items.map((item, index) => (
+            <article className="product-segment-branch" key={`${item.name}-${index}`}>
+              <div className="product-segment-main-node">
+                <span className="product-segment-index">{String(index + 1).padStart(2, "0")}</span>
+                <div>
+                  <strong>{item.name}</strong>
+                </div>
+              </div>
+              {item.children.length ? (
+                <div className="product-segment-child-nodes">
+                  {item.children.map((child, childIndex) => (
+                    <span key={`${item.name}-${child.name}-${childIndex}`}>{child.name}</span>
+                  ))}
+                </div>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MarketPositioningPanel({ items }) {
   const rows = Array.isArray(items)
     ? items.filter((item) => item?.market_theme && MARKET_POSITIONING_SCORES[normalizedPositioningKey(item?.positioning)])
@@ -5070,7 +5163,7 @@ function MarketPositioningPanel({ items }) {
   );
 }
 
-function DeepResearchSections({ sections, sourceMap, onOpenResource, marketPositioning, investmentSnapshot }) {
+function DeepResearchSections({ sections, sourceMap, onOpenResource, marketPositioning, investmentSnapshot, productSegments, stock }) {
   const items = Array.isArray(sections) ? sections : [];
   if (!items.length) {
     return null;
@@ -5079,6 +5172,7 @@ function DeepResearchSections({ sections, sourceMap, onOpenResource, marketPosit
     const normalizedTitle = String(section?.title || "").trim().toLowerCase();
     const isInvestmentSnapshot = normalizedTitle === "investment snapshot";
     const isMarketPositioning = normalizedTitle === "market positioning";
+    const isProductSegments = normalizedTitle === "products and segments";
     return (
       <section className="research-card deep-section-card" key={`${section?.title || "section"}-${index}`}>
         <div className="research-card-header">
@@ -5096,6 +5190,7 @@ function DeepResearchSections({ sections, sourceMap, onOpenResource, marketPosit
             ))}
           </ul>
         ) : null}
+        {isProductSegments ? <ProductSegmentsPanel segments={productSegments} stock={stock} /> : null}
         {isMarketPositioning ? <MarketPositioningPanel items={marketPositioning} /> : null}
         <DeepSourceChips onOpenResource={onOpenResource} sourceKeys={section?.source_keys} sourceMap={sourceMap} />
       </section>
@@ -5414,8 +5509,10 @@ function DeepResearchContent({ payload }) {
             investmentSnapshot={research.investment_snapshot}
             marketPositioning={research.market_positioning}
             onOpenResource={setResourceModal}
+            productSegments={research.product_segments}
             sections={research.sections}
             sourceMap={sourceMap}
+            stock={payload.stock}
           />
         ) : (
           <>

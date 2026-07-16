@@ -3319,6 +3319,158 @@ textarea:focus {
   width: 28px;
 }
 
+.product-segments-panel {
+  border-top: 1px solid rgba(58, 58, 58, 0.68);
+  display: grid;
+  gap: 14px;
+  padding: 14px 16px 16px;
+}
+
+.product-segments-heading {
+  display: block;
+}
+
+.product-segments-heading span {
+  color: #f4c430;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+.product-segments-flow {
+  align-items: center;
+  display: grid;
+  gap: 22px;
+  grid-template-columns: minmax(132px, 170px) minmax(0, 1fr);
+  position: relative;
+}
+
+.product-segments-flow::before {
+  display: none;
+}
+
+.product-segments-company-node {
+  align-items: center;
+  background: rgba(244, 196, 48, 0.09);
+  border: 1px solid rgba(244, 196, 48, 0.26);
+  border-radius: 8px;
+  display: grid;
+  gap: 9px;
+  justify-items: center;
+  min-width: 0;
+  padding: 14px 12px;
+  position: relative;
+  z-index: 1;
+}
+
+.product-segments-company-node strong {
+  color: #ffffff;
+  font-size: 0.88rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.product-segment-branches {
+  display: grid;
+  gap: 12px;
+  position: relative;
+}
+
+.product-segment-branches::before {
+  display: none;
+}
+
+.product-segment-branch {
+  align-items: start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  min-width: 0;
+  position: relative;
+}
+
+.product-segment-branch::before {
+  display: none;
+}
+
+.product-segment-branch::after {
+  display: none;
+}
+
+.product-segment-main-node {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(74, 74, 74, 0.82);
+  border-radius: 8px;
+  display: grid;
+  gap: 9px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  min-width: 0;
+  padding: 10px;
+}
+
+.product-segment-index {
+  align-items: center;
+  background: rgba(244, 196, 48, 0.1);
+  border: 1px solid rgba(244, 196, 48, 0.22);
+  border-radius: 8px;
+  color: #f4c430;
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 800;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.product-segment-main-node div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.product-segment-main-node strong {
+  color: #ffffff;
+  font-size: 0.9rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.product-segment-child-nodes {
+  align-items: flex-start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  min-width: 0;
+  padding-left: 12px;
+  padding-top: 0;
+  position: relative;
+}
+
+.product-segment-child-nodes::before {
+  display: none;
+}
+
+.product-segment-child-nodes span {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: #d7d7d0;
+  font-size: 0.76rem;
+  line-height: 1.2;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 8px 9px;
+  position: relative;
+}
+
+.product-segment-child-nodes span::before {
+  display: none;
+}
+
 .market-positioning-panel {
   border-top: 1px solid rgba(58, 58, 58, 0.68);
   display: grid;
@@ -6130,6 +6282,56 @@ input[type="range"] {
 
   .investment-snapshot-bars {
     justify-content: start;
+  }
+
+  .product-segments-panel {
+    gap: 12px;
+    padding: 13px 12px 14px;
+  }
+
+  .product-segments-flow {
+    align-items: stretch;
+    gap: 16px;
+    grid-template-columns: 1fr;
+  }
+
+  .product-segments-flow::before {
+    display: none;
+  }
+
+  .product-segments-company-node {
+    justify-self: start;
+    width: 100%;
+  }
+
+  .product-segment-branches::before {
+    display: none;
+  }
+
+  .product-segment-branch {
+    gap: 8px;
+    grid-template-columns: 1fr;
+  }
+
+  .product-segment-branch::before {
+    display: none;
+  }
+
+  .product-segment-branch::after {
+    display: none;
+  }
+
+  .product-segment-main-node {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  .product-segment-child-nodes {
+    grid-template-columns: 1fr;
+    padding-left: 18px;
+  }
+
+  .product-segment-child-nodes::before {
+    display: none;
   }
 
   .market-positioning-row {

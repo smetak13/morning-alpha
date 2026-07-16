@@ -2159,6 +2159,12 @@ def generate_deep_research(
             "Do not optimize Competitive position or Risks for brevity. Use all relevant source-backed external claims there when they improve investor understanding.",
             "For other sections, use external claims selectively. Keep Investment snapshot, Business overview, Products and segments, Revenue model and customers, Financial statements, Balance sheet and cash flow, and Valuation and market expectations close to the company/FMP/filing-driven analysis unless external evidence materially changes interpretation.",
             "Use fewer one-sentence bullets. For products and segments, use product/segment names followed by deeper explanatory paragraphs.",
+            "Also return research.product_segments as compact diagram data for Products and segments. It should visually map the Products and segments section as company -> product/business families -> concrete products or services. This is a product map, not a revenue structure.",
+            "For research.product_segments, target 4-8 top-level product/business families when the supplied sources support that level of detail. Use fewer only for genuinely simple businesses. Each top-level item may include one level of children for concrete products, platforms, services, or product families. Do not create deeper nesting.",
+            "Top-level families should correspond to product/business families discussed in the Products and segments section. Children may add more specific products/services from supplied sources when they fit under those families. Do not organize the diagram around broad financial revenue categories such as Product revenue and Service revenue unless those categories are also meaningful product/business families and no more specific product-family structure is supported.",
+            "For research.product_segments.items[].percentage, use a number only when the supplied sources explicitly disclose the mix or the percentage is directly calculable from disclosed segment values for the same metric and period. Otherwise set percentage to null. Do not estimate, infer, smooth, or force percentages.",
+            "Use percentages only for top-level items when supplied, but do not choose the diagram structure merely because percentages are available. Child items should normally have percentage null. Do not mix official percentage values with non-official product areas in the same diagram.",
+            "If top-level percentages are included, every top-level item must use the same metric and period, every item with a percentage must include source_keys, and the percentages should represent a consistent mix close to 100%. If this is not true, set all percentages to null.",
             "Synthesize source material directly in the report; sources are for verification, not a substitute for analysis.",
             "Discuss transcript commentary, annual report / 10-K disclosures, financial statement trends, stock grades, analyst context, external research claims, and recent news wherever relevant.",
             "Create a substantial Recent developments section from the last six months of news, current company context, and source-backed external research. Cover what the company is dealing with now: opportunities, pressure points, stock move explanations when sourced, customer or product momentum, major contracts, regulatory issues, strategic changes, and near-term monitoring items.",
@@ -2211,6 +2217,27 @@ def generate_deep_research(
                     "source_keys": ["string"],
                 }
             ],
+            "product_segments": {
+                "basis": "reported_business_segments | investor_relevant_product_areas | product_lines | services | geography | customer_segments",
+                "metric": "revenue | operating_income | net_income | assets | units | unavailable",
+                "period": "FY2025 | Q1 2026 | TTM | unavailable",
+                "items": [
+                    {
+                        "name": "string",
+                        "description": "short description of what this segment/product area includes",
+                        "percentage": "number from 0 to 100, or null when the mix is not explicit and consistent",
+                        "source_keys": ["string"],
+                        "children": [
+                            {
+                                "name": "string",
+                                "description": "optional short description",
+                                "percentage": None,
+                                "source_keys": ["string"],
+                            }
+                        ],
+                    }
+                ],
+            },
         },
         "context": model_context,
     }
