@@ -22,7 +22,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY alembic.ini config.yaml company_memory.py database.py deep_research.py neon_auth.py report.py report_scheduler.py server.py sync_stocks.py worker.py ./
+COPY alembic.ini config.yaml company_memory.py database.py deep_research.py market_prices.py neon_auth.py report.py report_scheduler.py server.py sync_stocks.py worker.py ./
 COPY migrations ./migrations
 COPY templates ./templates
 COPY assets ./assets

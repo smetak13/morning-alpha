@@ -11,6 +11,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urljoin
@@ -25,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from database import connection
+from market_prices import decimal_price, latest_intraday_price
 from neon_auth import load_settings
 
 
@@ -226,6 +228,16 @@ class FeedbackRequest(BaseModel):
     email: str
     category: str
     message: str
+
+
+class PricePlanCreateRequest(BaseModel):
+    target_price: Decimal
+    note: str | None = None
+    expected_direction: Literal["above", "below"]
+
+
+class PricePlanUpdateRequest(BaseModel):
+    note: str | None = None
 
 
 def create_app() -> FastAPI:
@@ -1108,6 +1120,32 @@ def validate_position_size(value: float, existing_total: float) -> float:
     return position
 
 
+def delete_price_plans_if_stock_untracked(cursor: Any, *, user_id: str, stock_id: str) -> None:
+    cursor.execute(
+        """
+        select exists (
+            select 1 from public.portfolio_items
+            where user_id = %(user_id)s and stock_id::text = %(stock_id)s
+        ) or exists (
+            select 1 from public.watchlist_items
+            where user_id = %(user_id)s and stock_id::text = %(stock_id)s
+        ) as still_tracked
+        """,
+        {"user_id": user_id, "stock_id": stock_id},
+    )
+    row = cursor.fetchone()
+    still_tracked = bool(row["still_tracked"] if isinstance(row, dict) else row[0])
+    if not still_tracked:
+        cursor.execute(
+            """
+            delete from public.price_plans
+            where user_id = %(user_id)s
+              and stock_id::text = %(stock_id)s
+            """,
+            {"user_id": user_id, "stock_id": stock_id},
+        )
+
+
 def serialize_portfolio_row(row: dict[str, Any]) -> dict[str, Any]:
     symbol = str(row["symbol"]).upper()
     return {
@@ -1327,11 +1365,17 @@ def delete_portfolio_item(item_id: str, request: Request) -> dict[str, Any]:
     with connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                "delete from public.portfolio_items where id::text = %s and user_id = %s",
+                """
+                delete from public.portfolio_items
+                where id::text = %s and user_id = %s
+                returning stock_id::text
+                """,
                 (item_id, user_id),
             )
-            if cursor.rowcount == 0:
+            deleted = cursor.fetchone()
+            if not deleted:
                 raise HTTPException(status_code=404, detail="Portfolio item not found.")
+            delete_price_plans_if_stock_untracked(cursor, user_id=user_id, stock_id=str(deleted[0]))
     return {"deleted": True}
 
 
@@ -1467,11 +1511,17 @@ def delete_watchlist_item(item_id: str, request: Request) -> dict[str, Any]:
     with connection() as conn:
         with conn.cursor() as cursor:
             cursor.execute(
-                "delete from public.watchlist_items where id::text = %s and user_id = %s",
+                """
+                delete from public.watchlist_items
+                where id::text = %s and user_id = %s
+                returning stock_id::text
+                """,
                 (item_id, user_id),
             )
-            if cursor.rowcount == 0:
+            deleted = cursor.fetchone()
+            if not deleted:
                 raise HTTPException(status_code=404, detail="Watchlist item not found.")
+            delete_price_plans_if_stock_untracked(cursor, user_id=user_id, stock_id=str(deleted[0]))
     return {"deleted": True}
 
 
@@ -1741,6 +1791,171 @@ def latest_price_close(points: list[dict[str, Any]]) -> float | None:
         return None
     _date_value, latest_point = max(dated, key=lambda item: item[0])
     return first_number(latest_point.get("close"), latest_point.get("price"))
+
+
+def iso_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def money_decimal(value: Any, field_name: str = "price") -> Decimal:
+    price = decimal_price(value)
+    if price is None:
+        raise HTTPException(status_code=422, detail=f"{field_name} must be a positive number.")
+    return price
+
+
+def price_direction(target_price: Decimal, reference_price: Decimal) -> str:
+    if target_price == reference_price:
+        raise HTTPException(status_code=422, detail="Target price must differ from the current price.")
+    return "above" if target_price > reference_price else "below"
+
+
+def serialize_money(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)
+
+
+def serialize_latest_price(price: dict[str, Any] | None, *, currency: str = "USD") -> dict[str, Any] | None:
+    if not price:
+        return None
+    return {
+        "price": serialize_money(price.get("price")),
+        "currency": currency,
+        "source": price.get("source"),
+        "price_at": iso_or_none(price.get("price_at")),
+        "checked_at": iso_or_none(price.get("checked_at")),
+    }
+
+
+def serialize_price_plan_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(row["id"]),
+        "user_id": str(row["user_id"]),
+        "stock_id": str(row["stock_id"]),
+        "target_price": serialize_money(row.get("target_price")),
+        "currency": row.get("currency") or "USD",
+        "direction": row.get("direction"),
+        "note": row.get("note") or "",
+        "status": row.get("status"),
+        "reference_price": serialize_money(row.get("reference_price")),
+        "reference_price_source": row.get("reference_price_source"),
+        "reference_price_at": iso_or_none(row.get("reference_price_at")),
+        "reference_checked_at": iso_or_none(row.get("reference_checked_at")),
+        "last_checked_price": serialize_money(row.get("last_checked_price")),
+        "last_checked_price_source": row.get("last_checked_price_source"),
+        "last_checked_price_at": iso_or_none(row.get("last_checked_price_at")),
+        "last_checked_at": iso_or_none(row.get("last_checked_at")),
+        "triggered_price": serialize_money(row.get("triggered_price")),
+        "triggered_price_source": row.get("triggered_price_source"),
+        "triggered_price_at": iso_or_none(row.get("triggered_price_at")),
+        "triggered_at": iso_or_none(row.get("triggered_at")),
+        "created_at": iso_or_none(row.get("created_at")),
+        "updated_at": iso_or_none(row.get("updated_at")),
+    }
+
+
+def latest_stock_intraday_price(symbol: str, *, currency: str = "USD") -> dict[str, Any]:
+    client = fmp_client_from_env()
+    latest = latest_intraday_price(client, symbol)
+    if latest is None:
+        raise HTTPException(status_code=503, detail="Current intraday price is unavailable. Try again later.")
+    return serialize_latest_price(latest, currency=currency) or {}
+
+
+def load_user_stock(cursor: Any, *, user_id: str, stock_id: str) -> dict[str, Any]:
+    cursor.execute(
+        """
+        select
+            stocks.id::text as stock_id,
+            stocks.symbol,
+            stocks.company_name,
+            case when portfolio_items.id is not null then 'portfolio' else 'watchlist' end as relationship
+        from public.stocks
+        left join public.portfolio_items
+          on portfolio_items.stock_id = stocks.id
+         and portfolio_items.user_id = %(user_id)s
+        left join public.watchlist_items
+          on watchlist_items.stock_id = stocks.id
+         and watchlist_items.user_id = %(user_id)s
+        where stocks.id::text = %(stock_id)s
+          and (portfolio_items.id is not null or watchlist_items.id is not null)
+        """,
+        {"user_id": user_id, "stock_id": stock_id},
+    )
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Stock not found in your portfolio or watchlist.")
+    return dict(row)
+
+
+def load_price_plans(cursor: Any, *, user_id: str, stock_id: str) -> list[dict[str, Any]]:
+    cursor.execute(
+        """
+        select
+            id::text as id,
+            user_id::text as user_id,
+            stock_id::text as stock_id,
+            target_price,
+            currency,
+            direction,
+            note,
+            status,
+            reference_price,
+            reference_price_source,
+            reference_price_at,
+            reference_checked_at,
+            last_checked_price,
+            last_checked_price_source,
+            last_checked_price_at,
+            last_checked_at,
+            triggered_price,
+            triggered_price_source,
+            triggered_price_at,
+            triggered_at,
+            created_at,
+            updated_at
+        from public.price_plans
+        where user_id = %(user_id)s
+          and stock_id::text = %(stock_id)s
+        order by
+            case status when 'active' then 0 else 1 end,
+            created_at desc
+        """,
+        {"user_id": user_id, "stock_id": stock_id},
+    )
+    return [serialize_price_plan_row(dict(row)) for row in cursor.fetchall()]
+
+
+def fetch_company_context_market_data(symbol: str) -> dict[str, Any]:
+    try:
+        client = fmp_client_from_env()
+        today = dt.date.today()
+        daily_history = fetch_price_history(client, symbol, today)
+        intraday_history = fetch_intraday_history(client, symbol, today, days=35)
+        latest = latest_intraday_price(client, symbol)
+        return {
+            "currency": "USD",
+            "price_history": daily_history,
+            "intraday_history": intraday_history,
+            "price_series": {
+                "1D": filter_price_points_since(intraday_history, days=1),
+                "1W": resample_price_points(filter_price_points_since(intraday_history, days=7), interval_minutes=60),
+                "1M": resample_price_points(filter_price_points_since(intraday_history, days=31), interval_minutes=240),
+                "3M": filter_price_points_since(daily_history, days=93),
+                "6M": filter_price_points_since(daily_history, days=186),
+                "1Y": filter_price_points_since(daily_history, days=370),
+            },
+            "latest_price": serialize_latest_price(latest, currency="USD"),
+            "refreshed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        logger.info("Company context market data unavailable symbol=%s error=%s", symbol, exc)
+        return {"currency": "USD", "price_history": [], "intraday_history": [], "price_series": {}, "latest_price": None}
 
 
 def refresh_deep_research_market_data(body: dict[str, Any], symbol: str) -> tuple[dict[str, Any], bool]:
@@ -3836,6 +4051,7 @@ def get_stock_context(stock_id: str, request: Request) -> dict[str, Any]:
                 {"stock_id": stock_id, "user_id": user_id},
             )
             memory_rows = cursor.fetchall()
+            price_plans = load_price_plans(cursor, user_id=user_id, stock_id=stock_id)
 
     stock = dict(stock_row)
     symbol = str(stock["symbol"]).upper()
@@ -3863,6 +4079,7 @@ def get_stock_context(stock_id: str, request: Request) -> dict[str, Any]:
         }
     )
     earnings = company_context_earnings(symbol)
+    market_data = fetch_company_context_market_data(symbol)
     return {
         "stock": {
             "stock_id": str(stock["stock_id"]),
@@ -3884,8 +4101,172 @@ def get_stock_context(stock_id: str, request: Request) -> dict[str, Any]:
         "notes": notes,
         "memories": [serialize_context_memory_row(dict(row)) for row in memory_rows],
         "monitor_items": build_monitor_summary(items),
+        "price_plans": price_plans,
+        "market_data": market_data,
         "next_earnings_date": earnings.get("next_earnings_date"),
     }
+
+
+@app.get("/api/stocks/{stock_id}/latest-price")
+def get_stock_latest_price(stock_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            stock = load_user_stock(cursor, user_id=user_id, stock_id=stock_id)
+    return {"latest_price": latest_stock_intraday_price(str(stock["symbol"]).upper())}
+
+
+@app.post("/api/stocks/{stock_id}/price-plans")
+def create_price_plan(stock_id: str, payload: PricePlanCreateRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    target_price = money_decimal(payload.target_price, "target_price")
+    note = (payload.note or "").strip() or None
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            stock = load_user_stock(cursor, user_id=user_id, stock_id=stock_id)
+            latest = latest_intraday_price(fmp_client_from_env(), str(stock["symbol"]).upper())
+            if latest is None:
+                raise HTTPException(status_code=503, detail="Current intraday price is unavailable. Try again later.")
+            reference_price = money_decimal(latest["price"], "reference_price")
+            direction = price_direction(target_price, reference_price)
+            if direction != payload.expected_direction:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Current price changed. Review the updated price and save again.",
+                )
+            try:
+                cursor.execute(
+                    """
+                    insert into public.price_plans (
+                        user_id,
+                        stock_id,
+                        target_price,
+                        currency,
+                        direction,
+                        note,
+                        reference_price,
+                        reference_price_source,
+                        reference_price_at,
+                        reference_checked_at
+                    )
+                    values (
+                        %(user_id)s,
+                        %(stock_id)s,
+                        %(target_price)s,
+                        'USD',
+                        %(direction)s,
+                        %(note)s,
+                        %(reference_price)s,
+                        %(reference_price_source)s,
+                        %(reference_price_at)s,
+                        %(reference_checked_at)s
+                    )
+                    returning
+                        id::text as id,
+                        user_id::text as user_id,
+                        stock_id::text as stock_id,
+                        target_price,
+                        currency,
+                        direction,
+                        note,
+                        status,
+                        reference_price,
+                        reference_price_source,
+                        reference_price_at,
+                        reference_checked_at,
+                        last_checked_price,
+                        last_checked_price_source,
+                        last_checked_price_at,
+                        last_checked_at,
+                        triggered_price,
+                        triggered_price_source,
+                        triggered_price_at,
+                        triggered_at,
+                        created_at,
+                        updated_at
+                    """,
+                    {
+                        "user_id": user_id,
+                        "stock_id": stock_id,
+                        "target_price": target_price,
+                        "direction": direction,
+                        "note": note,
+                        "reference_price": reference_price,
+                        "reference_price_source": latest["source"],
+                        "reference_price_at": latest["price_at"],
+                        "reference_checked_at": latest["checked_at"],
+                    },
+                )
+            except Exception as exc:
+                if "price_plans_active_target_key" in str(exc):
+                    raise HTTPException(status_code=409, detail="An active price plan already exists for this target price.") from exc
+                raise
+            row = cursor.fetchone()
+    return {"price_plan": serialize_price_plan_row(dict(row))}
+
+
+@app.put("/api/price-plans/{price_plan_id}")
+def update_price_plan(price_plan_id: str, payload: PricePlanUpdateRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                update public.price_plans
+                set note = %(note)s
+                where id::text = %(id)s
+                  and user_id = %(user_id)s
+                  and status = 'active'
+                returning
+                    id::text as id,
+                    user_id::text as user_id,
+                    stock_id::text as stock_id,
+                    target_price,
+                    currency,
+                    direction,
+                    note,
+                    status,
+                    reference_price,
+                    reference_price_source,
+                    reference_price_at,
+                    reference_checked_at,
+                    last_checked_price,
+                    last_checked_price_source,
+                    last_checked_price_at,
+                    last_checked_at,
+                    triggered_price,
+                    triggered_price_source,
+                    triggered_price_at,
+                    triggered_at,
+                    created_at,
+                    updated_at
+                """,
+                {"id": price_plan_id, "user_id": user_id, "note": (payload.note or "").strip() or None},
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Active price plan not found.")
+    return {"price_plan": serialize_price_plan_row(dict(row))}
+
+
+@app.delete("/api/price-plans/{price_plan_id}")
+def delete_price_plan(price_plan_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    with connection() as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "delete from public.price_plans where id::text = %s and user_id = %s",
+                (price_plan_id, user_id),
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Price plan not found.")
+    return {"deleted": True}
 
 
 def load_company_memory_detail(cursor: Any, *, user_id: str, memory_id: str) -> dict[str, Any]:

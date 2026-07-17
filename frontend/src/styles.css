@@ -2588,6 +2588,33 @@ textarea:focus {
   padding: 3px;
 }
 
+.price-chart-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.chart-plan-toggle {
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  color: #a7a7a0;
+  font-size: 0.78rem;
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.chart-plan-toggle.active {
+  border-color: rgba(244, 196, 48, 0.68);
+  color: #f4c430;
+}
+
+.chart-plan-toggle:hover {
+  border-color: #f4c430;
+}
+
 .chart-periods button {
   background: transparent;
   border: 0;
@@ -2656,6 +2683,46 @@ textarea:focus {
   stroke-width: 2;
 }
 
+.price-plan-marker {
+  cursor: pointer;
+}
+
+.price-plan-marker-line {
+  pointer-events: none;
+  stroke-dasharray: 7 5;
+  stroke-width: 1;
+}
+
+.price-plan-marker-hitbox {
+  opacity: 0;
+  pointer-events: stroke;
+  stroke: transparent;
+  stroke-width: 14;
+}
+
+.price-plan-marker text {
+  font-size: 8px;
+  font-weight: 400;
+  pointer-events: none;
+  stroke: none;
+}
+
+.price-plan-marker.above .price-plan-marker-line {
+  stroke: #7fdc9a;
+}
+
+.price-plan-marker.above text {
+  fill: #7fdc9a;
+}
+
+.price-plan-marker.below .price-plan-marker-line {
+  stroke: #ff9a8f;
+}
+
+.price-plan-marker.below text {
+  fill: #ff9a8f;
+}
+
 .chart-tooltip {
   background: #080808;
   border: 1px solid #f4c430;
@@ -2687,6 +2754,18 @@ textarea:focus {
 .chart-tooltip span {
   color: #a7a7a0;
   font-size: 0.74rem;
+}
+
+.price-plan-tooltip {
+  max-width: 240px;
+}
+
+.price-plan-tooltip span {
+  display: -webkit-box;
+  line-height: 1.35;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
 }
 
 .price-chart-empty {
@@ -5284,6 +5363,10 @@ input[type="range"] {
     width: fit-content;
   }
 
+  .price-chart-controls {
+    align-self: flex-end;
+  }
+
   .research-type-switch {
     grid-template-columns: 1fr;
     width: 100%;
@@ -5853,6 +5936,17 @@ input[type="range"] {
   margin: 18px 22px;
 }
 
+.company-context-loading {
+  background: transparent;
+  border: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.generating-state.research-detail-loading.company-context-loading {
+  padding-top: 0;
+}
+
 .company-context-content {
   align-content: start;
   align-items: start;
@@ -5870,6 +5964,160 @@ input[type="range"] {
 
 .company-context-section {
   margin: 0;
+}
+
+.company-context-chart-wrap {
+  padding: 0 18px 18px;
+}
+
+.company-context-price-section .company-context-chart-wrap {
+  padding-top: 18px;
+}
+
+.price-plan-panel {
+  display: grid;
+  gap: 12px;
+  padding: 0 18px 18px;
+}
+
+.price-plan-section-header {
+  justify-content: space-between;
+}
+
+.price-plan-section-header .deep-material-tabs {
+  margin-left: auto;
+}
+
+.price-plan-form {
+  background: #151515;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.price-plan-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.price-plan-form label span {
+  color: #a7a7a0;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.price-plan-form input,
+.price-plan-form textarea,
+.price-plan-card textarea {
+  background: #0d0d0d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  min-height: 38px;
+  padding: 9px 10px;
+  resize: vertical;
+}
+
+.price-plan-form textarea,
+.price-plan-card textarea {
+  font-weight: 400;
+}
+
+.price-plan-form input::placeholder,
+.price-plan-form textarea::placeholder {
+  color: #77776f;
+  font-weight: 400;
+}
+
+.price-plan-form input:focus,
+.price-plan-form textarea:focus,
+.price-plan-card textarea:focus {
+  border-color: #f4c430;
+  outline: none;
+}
+
+.price-plan-form-footer {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.price-plan-form-footer small {
+  color: #8f8f87;
+  line-height: 1.35;
+}
+
+.price-plan-error {
+  margin: 0;
+}
+
+.price-plan-list {
+  display: grid;
+  gap: 8px;
+}
+
+.price-plan-card {
+  background: #151515;
+  border: 1px solid #2a2a2a;
+  border-left: 3px solid #7fdc9a;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.price-plan-card.below {
+  border-left-color: #ff9a8f;
+}
+
+.price-plan-card-main {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+
+.price-plan-card-header {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.price-plan-card strong {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 400;
+}
+
+.price-plan-card span,
+.price-plan-card p {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.price-plan-card-header span {
+  color: #8f8f87;
+}
+
+.price-plan-actions {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  justify-self: end;
+}
+
+.price-plan-empty {
+  padding: 0;
 }
 
 .company-context-memory,
@@ -6501,5 +6749,52 @@ input[type="range"] {
     grid-row: 3;
     margin-top: 8px;
     justify-self: start;
+  }
+
+  .price-plan-form-footer {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .price-plan-form-footer small {
+    flex: 1 1 100%;
+  }
+
+  .price-plan-current-price {
+    display: none;
+  }
+
+  .price-plan-form-footer .primary-button {
+    margin-left: auto;
+  }
+
+  .price-plan-section-header {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .price-plan-section-header h3 {
+    flex: 1 1 100%;
+  }
+
+  .price-plan-section-header .deep-material-tabs {
+    justify-self: end;
+    margin-left: auto;
+    width: min(220px, 100%);
+  }
+
+  .price-plan-card {
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .price-plan-actions {
+    align-content: start;
+    max-width: min(42vw, 180px);
+  }
+
+  .price-plan-actions .compact-button {
+    min-height: 30px;
+    padding-inline: 9px;
   }
 }

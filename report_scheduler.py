@@ -11,6 +11,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from database import connection
+from market_prices import latest_intraday_price
 from psycopg.types.json import Json
 from report import load_dotenv_if_available, load_yaml
 from sync_stocks import fmp_client, fetch_active_stocks, sync_stocks
@@ -599,6 +600,154 @@ def create_earnings_notifications(today: dt.date) -> int:
     return inserted
 
 
+def format_price_for_notification(value: Any, currency: str) -> str:
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    prefix = "$" if str(currency or "USD").upper() == "USD" else f"{str(currency).upper()} "
+    return f"{prefix}{amount:,.2f}"
+
+
+def load_active_price_plans(cursor: Any) -> list[dict[str, Any]]:
+    cursor.execute(
+        """
+        select
+            price_plans.id::text as id,
+            price_plans.user_id::text as user_id,
+            price_plans.stock_id::text as stock_id,
+            price_plans.target_price,
+            price_plans.currency,
+            price_plans.direction,
+            price_plans.note,
+            stocks.symbol,
+            stocks.company_name
+        from public.price_plans
+        join public.stocks on stocks.id = price_plans.stock_id
+        where price_plans.status = 'active'
+        order by stocks.symbol, price_plans.created_at
+        """
+    )
+    return [dict(row) for row in cursor.fetchall()]
+
+
+def create_price_plan_notifications(client: Any, run_at_utc: dt.datetime) -> int:
+    from psycopg.rows import dict_row
+
+    triggered = 0
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            plans = load_active_price_plans(cursor)
+            by_symbol: dict[str, list[dict[str, Any]]] = {}
+            for plan in plans:
+                by_symbol.setdefault(str(plan["symbol"]).upper(), []).append(plan)
+
+            for symbol, symbol_plans in by_symbol.items():
+                latest = latest_intraday_price(client, symbol)
+                if latest is None:
+                    logging.info("Skipping price plans; intraday price unavailable symbol=%s", symbol)
+                    continue
+
+                current_price = latest["price"]
+                for plan in symbol_plans:
+                    cursor.execute(
+                        """
+                        update public.price_plans
+                        set last_checked_price = %(price)s,
+                            last_checked_price_source = %(source)s,
+                            last_checked_price_at = %(price_at)s,
+                            last_checked_at = %(checked_at)s
+                        where id::text = %(id)s
+                          and status = 'active'
+                        """,
+                        {
+                            "id": plan["id"],
+                            "price": current_price,
+                            "source": latest["source"],
+                            "price_at": latest["price_at"],
+                            "checked_at": latest["checked_at"],
+                        },
+                    )
+
+                    target_price = plan["target_price"]
+                    direction = str(plan["direction"])
+                    reached = (
+                        direction == "above" and current_price >= target_price
+                    ) or (
+                        direction == "below" and current_price <= target_price
+                    )
+                    if not reached:
+                        continue
+
+                    cursor.execute(
+                        """
+                        update public.price_plans
+                        set status = 'triggered',
+                            triggered_price = %(price)s,
+                            triggered_price_source = %(source)s,
+                            triggered_price_at = %(price_at)s,
+                            triggered_at = %(triggered_at)s
+                        where id::text = %(id)s
+                          and status = 'active'
+                        returning id::text
+                        """,
+                        {
+                            "id": plan["id"],
+                            "price": current_price,
+                            "source": latest["source"],
+                            "price_at": latest["price_at"],
+                            "triggered_at": run_at_utc,
+                        },
+                    )
+                    if not cursor.fetchone():
+                        continue
+
+                    target_label = format_price_for_notification(plan["target_price"], plan["currency"])
+                    cursor.execute(
+                        """
+                        insert into public.notifications (
+                            user_id,
+                            type,
+                            title,
+                            body,
+                            stock_id,
+                            expires_at,
+                            metadata
+                        )
+                        values (
+                            %(user_id)s,
+                            'price_plan_triggered',
+                            %(title)s,
+                            %(body)s,
+                            %(stock_id)s,
+                            %(expires_at)s,
+                            %(metadata)s
+                        )
+                        """,
+                        {
+                            "user_id": plan["user_id"],
+                            "title": f"{symbol} reached your {target_label} alert",
+                            "body": str(plan.get("note") or "").strip() or None,
+                            "stock_id": plan["stock_id"],
+                            "expires_at": run_at_utc + dt.timedelta(days=7),
+                            "metadata": Json(
+                                {
+                                    "price_plan_id": plan["id"],
+                                    "symbol": symbol,
+                                    "company_name": plan["company_name"],
+                                    "target_price": float(plan["target_price"]),
+                                    "triggered_price": float(current_price),
+                                    "direction": direction,
+                                    "source": latest["source"],
+                                    "price_at": latest["price_at"].isoformat(),
+                                }
+                            ),
+                        },
+                    )
+                    triggered += 1
+    return triggered
+
+
 def run_daily_earnings_notifications(args: argparse.Namespace, run_at_utc: dt.datetime) -> None:
     global _last_earnings_notification_date
     if not earnings_notification_sync_is_due(run_at_utc):
@@ -630,6 +779,25 @@ def run_daily_earnings_notifications(args: argparse.Namespace, run_at_utc: dt.da
     )
 
 
+def run_price_plan_notifications(args: argparse.Namespace, run_at_utc: dt.datetime) -> None:
+    logging.info("Starting price plan notification sync")
+    try:
+        config_path = Path(args.config)
+        if not config_path.is_absolute():
+            config_path = Path(__file__).resolve().parent / config_path
+        config = load_yaml(config_path)
+        client = fmp_client(config)
+        triggered = create_price_plan_notifications(client, run_at_utc)
+    except SystemExit as exc:
+        logging.error("Price plan notification sync failed error=%s", exc)
+        return
+    except Exception:
+        logging.exception("Price plan notification sync failed")
+        return
+
+    logging.info("Price plan notification sync finished triggered=%s", triggered)
+
+
 def run_scheduler_cycle(args: argparse.Namespace, run_at_utc: dt.datetime | None = None) -> None:
     run_at = (run_at_utc or dt.datetime.now(tz=UTC)).astimezone(UTC)
     lookback = dt.timedelta(minutes=args.lookback_minutes)
@@ -637,6 +805,7 @@ def run_scheduler_cycle(args: argparse.Namespace, run_at_utc: dt.datetime | None
 
     run_daily_stock_sync(args, run_at)
     run_daily_earnings_notifications(args, run_at)
+    run_price_plan_notifications(args, run_at)
 
     jobs = load_due_jobs(run_at, lookback)
     logging.info("Scheduler found %s due users", len(jobs))

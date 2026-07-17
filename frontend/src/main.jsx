@@ -296,6 +296,17 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+function formatDateTimeForTimezone(value, userTimezone = browserTimezone()) {
+  if (!value) {
+    return "";
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: userTimezone,
+  }).format(new Date(value));
+}
+
 function formatLongDate(value) {
   if (!value) {
     return "";
@@ -1652,6 +1663,7 @@ function MainPage({ route, user, onLogout }) {
         <CompanyContextModal
           item={contextTarget}
           onClose={() => setContextTarget(null)}
+          userTimezone={settings.timezone || user?.timezone || browserTimezone()}
         />
       ) : null}
     </main>
@@ -4563,9 +4575,20 @@ function pricePointsForPeriod({ dailyPoints, intradayPoints, period, priceSeries
   return filterPriceHistory(dailyPoints, period);
 }
 
-function StockPriceChart({ dailyPoints, intradayPoints = [], priceSeries = {}, currencyCode = "USD", refreshedAt = "", userTimezone = browserTimezone() }) {
+function StockPriceChart({
+  activePlans = [],
+  dailyPoints,
+  intradayPoints = [],
+  latestPrice = null,
+  priceSeries = {},
+  currencyCode = "USD",
+  refreshedAt = "",
+  userTimezone = browserTimezone(),
+}) {
   const [period, setPeriod] = useState("6M");
   const [hoverIndex, setHoverIndex] = useState(null);
+  const [hoveredPlanId, setHoveredPlanId] = useState(null);
+  const [showPricePlanMarkers, setShowPricePlanMarkers] = useState(true);
   const [tooltipSide, setTooltipSide] = useState("right");
   const visiblePoints = pricePointsForPeriod({ dailyPoints, intradayPoints, period, priceSeries });
   const width = 720;
@@ -4579,15 +4602,19 @@ function StockPriceChart({ dailyPoints, intradayPoints = [], priceSeries = {}, c
   if (!visiblePoints.length) {
     return <div className="price-chart-empty">Price chart unavailable.</div>;
   }
+  const visiblePlanPrices = showPricePlanMarkers ? activePlans.map((plan) => Number(plan.target_price)).filter(Number.isFinite) : [];
   const closes = visiblePoints.map((point) => point.close);
   const min = Math.min(...closes);
   const max = Math.max(...closes);
-  const range = max - min || 1;
+  const chartMin = Math.min(min, ...visiblePlanPrices);
+  const chartMax = Math.max(max, ...visiblePlanPrices);
+  const range = chartMax - chartMin || 1;
   const coordinate = (point, index) => {
     const x = left + (index / Math.max(1, visiblePoints.length - 1)) * plotWidth;
-    const y = top + (1 - (point.close - min) / range) * plotHeight;
+    const y = top + (1 - (point.close - chartMin) / range) * plotHeight;
     return { x, y };
   };
+  const planY = (price) => top + (1 - (Number(price) - chartMin) / range) * plotHeight;
   const path = visiblePoints
     .map((point, index) => {
       const { x, y } = coordinate(point, index);
@@ -4598,16 +4625,19 @@ function StockPriceChart({ dailyPoints, intradayPoints = [], priceSeries = {}, c
   const lastCoord = coordinate(visiblePoints[visiblePoints.length - 1], visiblePoints.length - 1);
   const areaPath = `${path} L ${lastCoord.x.toFixed(2)} ${height - bottom} L ${firstCoord.x.toFixed(2)} ${height - bottom} Z`;
   const first = visiblePoints[0].close;
-  const last = visiblePoints[visiblePoints.length - 1].close;
+  const chartLast = visiblePoints[visiblePoints.length - 1].close;
+  const displayedLast = Number(latestPrice?.price);
+  const last = Number.isFinite(displayedLast) ? displayedLast : chartLast;
   const change = ((last / first) - 1) * 100;
-  const lastUpdate = formatLastPriceUpdate(visiblePoints[visiblePoints.length - 1]?.date || refreshedAt, userTimezone);
+  const lastUpdate = formatLastPriceUpdate(latestPrice?.price_at || visiblePoints[visiblePoints.length - 1]?.date || refreshedAt, userTimezone);
   const periodHigh = Math.max(...closes);
   const periodLow = Math.min(...closes);
-  const yTicks = Array.from({ length: 4 }, (_, index) => max - (index / 3) * range);
+  const yTicks = Array.from({ length: 4 }, (_, index) => chartMax - (index / 3) * range);
   const xTickIndexes = Array.from(new Set([0, Math.floor((visiblePoints.length - 1) / 2), visiblePoints.length - 1]));
   const hovered = hoverIndex === null ? null : visiblePoints[hoverIndex];
   const hoveredCoord = hovered ? coordinate(hovered, hoverIndex) : null;
   const handleHover = (event) => {
+    setHoveredPlanId(null);
     const bounds = event.currentTarget.getBoundingClientRect();
     const svgX = ((event.clientX - bounds.left) / bounds.width) * width;
     const ratio = Math.min(1, Math.max(0, (svgX - left) / plotWidth));
@@ -4639,24 +4669,46 @@ function StockPriceChart({ dailyPoints, intradayPoints = [], priceSeries = {}, c
             </span>
           </div>
         </div>
-        <div className="chart-periods">
-          {["1D", "1W", "1M", "3M", "6M", "1Y", "5Y"].map((item) => (
-            <button className={period === item ? "active" : ""} key={item} onClick={() => setPeriod(item)} type="button">
-              {item}
+        <div className="price-chart-controls">
+          {activePlans.length ? (
+            <button
+              className={showPricePlanMarkers ? "chart-plan-toggle active" : "chart-plan-toggle"}
+              onClick={() => {
+                setShowPricePlanMarkers((current) => !current);
+                setHoveredPlanId(null);
+              }}
+              type="button"
+            >
+              Price plans
             </button>
-          ))}
+          ) : null}
+          <div className="chart-periods">
+            {["1D", "1W", "1M", "3M", "6M", "1Y", "5Y"].map((item) => (
+              <button className={period === item ? "active" : ""} key={item} onClick={() => setPeriod(item)} type="button">
+                {item}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
-      <div className="price-chart-plot" onMouseLeave={() => setHoverIndex(null)} onMouseMove={handleHover}>
-        {hovered && hoveredCoord ? (
+      <div className="price-chart-plot" onMouseLeave={() => { setHoverIndex(null); setHoveredPlanId(null); }} onMouseMove={handleHover}>
+        {hovered && hoveredCoord && !hoveredPlanId ? (
           <div className={`chart-tooltip ${tooltipSide}`} style={{ left: `${(hoveredCoord.x / width) * 100}%` }}>
             <strong>{formatCurrencyAmount(hovered.close, currencyCode)}</strong>
             <span>{formatChartDate(hovered.date, period, userTimezone)}</span>
           </div>
         ) : null}
+        {showPricePlanMarkers && hoveredPlanId ? (
+          <div className="chart-tooltip price-plan-tooltip left" style={{ left: "calc(100% - 18px)" }}>
+            <strong>{formatCurrencyAmount(activePlans.find((plan) => plan.id === hoveredPlanId)?.target_price, currencyCode)}</strong>
+            {activePlans.find((plan) => plan.id === hoveredPlanId)?.note ? (
+              <span>{activePlans.find((plan) => plan.id === hoveredPlanId).note}</span>
+            ) : null}
+          </div>
+        ) : null}
         <svg className="price-chart-svg" viewBox={`0 0 ${width} ${height}`}>
           {yTicks.map((tick) => {
-            const y = top + (1 - (tick - min) / range) * plotHeight;
+            const y = top + (1 - (tick - chartMin) / range) * plotHeight;
             return (
               <g key={tick}>
                 <line className="chart-grid-line" x1={left} x2={width - right} y1={y} y2={y} />
@@ -4683,6 +4735,33 @@ function StockPriceChart({ dailyPoints, intradayPoints = [], priceSeries = {}, c
               <circle className="chart-hover-point" cx={hoveredCoord.x} cy={hoveredCoord.y} r="4" />
             </>
           ) : null}
+          {showPricePlanMarkers ? activePlans.map((plan) => {
+            const y = planY(plan.target_price);
+            const tone = plan.direction === "above" ? "above" : "below";
+            return (
+              <g className={`price-plan-marker ${tone}`} key={plan.id}>
+                <line
+                  className="price-plan-marker-hitbox"
+                  onMouseEnter={() => {
+                    setHoverIndex(null);
+                    setHoveredPlanId(plan.id);
+                  }}
+                  onMouseLeave={() => setHoveredPlanId(null)}
+                  onMouseMove={(event) => {
+                    event.stopPropagation();
+                    setHoverIndex(null);
+                    setHoveredPlanId(plan.id);
+                  }}
+                  x1={left}
+                  x2={width - right}
+                  y1={y}
+                  y2={y}
+                />
+                <line className="price-plan-marker-line" x1={left} x2={width - right} y1={y} y2={y} />
+                <text x={width - right - 4} y={y - 5} textAnchor="end">{formatCurrencyAmount(plan.target_price, currencyCode)}</text>
+              </g>
+            );
+          }) : null}
         </svg>
       </div>
     </div>
@@ -6169,10 +6248,27 @@ function TimezoneCombobox({ options, value, onChange }) {
   );
 }
 
-function CompanyContextModal({ item, onClose }) {
+function roundedDefaultTargetPrice(price) {
+  const value = Number(price);
+  if (!Number.isFinite(value) || value <= 0) {
+    return "";
+  }
+  const target = value * 0.9;
+  const decimals = target >= 100 ? 0 : target >= 10 ? 1 : 2;
+  return String(Number(target.toFixed(decimals)));
+}
+
+function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }) {
   const [payload, setPayload] = useState(null);
   const [status, setStatus] = useState("loading");
   const [error, setError] = useState("");
+  const [latestPrice, setLatestPrice] = useState(null);
+  const [pricePlanTab, setPricePlanTab] = useState("current");
+  const [pricePlanDraft, setPricePlanDraft] = useState({ target_price: "", note: "", userEditedTarget: false });
+  const [pricePlanEditingId, setPricePlanEditingId] = useState("");
+  const [pricePlanEditNote, setPricePlanEditNote] = useState("");
+  const [pricePlanError, setPricePlanError] = useState("");
+  const [pricePlanSaving, setPricePlanSaving] = useState(false);
   const [memoryDetail, setMemoryDetail] = useState(null);
   const [memoryStatus, setMemoryStatus] = useState("idle");
   const [memoryError, setMemoryError] = useState("");
@@ -6186,6 +6282,7 @@ function CompanyContextModal({ item, onClose }) {
         const response = await requestJson(`/api/stocks/${encodeURIComponent(item.stock_id)}/context`, { method: "GET" });
         if (!cancelled) {
           setPayload(response);
+          setLatestPrice(response.market_data?.latest_price ?? null);
           setStatus("ready");
         }
       } catch (err) {
@@ -6200,6 +6297,40 @@ function CompanyContextModal({ item, onClose }) {
       cancelled = true;
     };
   }, [item.stock_id]);
+
+  useEffect(() => {
+    if (status !== "ready" || !payload?.stock?.stock_id) {
+      return undefined;
+    }
+    let cancelled = false;
+    const refreshPrice = async () => {
+      try {
+        const response = await requestJson(`/api/stocks/${encodeURIComponent(payload.stock.stock_id)}/latest-price`, { method: "GET" });
+        if (!cancelled) {
+          setLatestPrice(response.latest_price ?? null);
+        }
+      } catch {
+        if (!cancelled) {
+          setLatestPrice((current) => current);
+        }
+      }
+    };
+    const intervalId = window.setInterval(refreshPrice, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [payload?.stock?.stock_id, status]);
+
+  useEffect(() => {
+    setPricePlanDraft((current) => {
+      if (current.userEditedTarget || current.target_price) {
+        return current;
+      }
+      const defaultTarget = roundedDefaultTargetPrice(latestPrice?.price);
+      return defaultTarget ? { ...current, target_price: defaultTarget } : current;
+    });
+  }, [latestPrice?.price]);
 
   const openMemory = async (memoryId) => {
     if (!memoryId) {
@@ -6219,6 +6350,90 @@ function CompanyContextModal({ item, onClose }) {
   };
 
   const stock = payload?.stock ?? item;
+  const currencyCode = payload?.market_data?.currency || latestPrice?.currency || "USD";
+  const pricePlans = payload?.price_plans ?? [];
+  const activePricePlans = pricePlans.filter((plan) => plan.status === "active");
+  const triggeredPricePlans = pricePlans.filter((plan) => plan.status === "triggered");
+  const targetPrice = String(pricePlanDraft.target_price).trim() ? Number(pricePlanDraft.target_price) : NaN;
+  const currentPrice = Number(latestPrice?.price);
+  const draftDirection = Number.isFinite(targetPrice) && Number.isFinite(currentPrice) && targetPrice !== currentPrice
+    ? targetPrice > currentPrice ? "above" : "below"
+    : "";
+  const replacePricePlan = (nextPlan) => {
+    setPayload((current) => current ? {
+      ...current,
+      price_plans: (current.price_plans ?? []).map((plan) => plan.id === nextPlan.id ? nextPlan : plan),
+    } : current);
+  };
+  const addPricePlan = (nextPlan) => {
+    setPayload((current) => current ? {
+      ...current,
+      price_plans: [nextPlan, ...(current.price_plans ?? [])],
+    } : current);
+  };
+  const removePricePlan = (planId) => {
+    setPayload((current) => current ? {
+      ...current,
+      price_plans: (current.price_plans ?? []).filter((plan) => plan.id !== planId),
+    } : current);
+  };
+  const createPricePlan = async (event) => {
+    event.preventDefault();
+    setPricePlanError("");
+    if (!draftDirection) {
+      setPricePlanError("Target price must differ from the current price.");
+      return;
+    }
+    setPricePlanSaving(true);
+    try {
+      const response = await requestJson(`/api/stocks/${encodeURIComponent(stock.stock_id)}/price-plans`, {
+        method: "POST",
+        body: JSON.stringify({
+          target_price: targetPrice,
+          note: pricePlanDraft.note,
+          expected_direction: draftDirection,
+        }),
+      });
+      addPricePlan(response.price_plan);
+      setPricePlanDraft({ target_price: "", note: "", userEditedTarget: false });
+    } catch (err) {
+      setPricePlanError(err instanceof Error ? err.message : "Unable to create price alert.");
+      try {
+        const response = await requestJson(`/api/stocks/${encodeURIComponent(stock.stock_id)}/latest-price`, { method: "GET" });
+        setLatestPrice(response.latest_price ?? null);
+      } catch {
+        // Keep the original error visible.
+      }
+    } finally {
+      setPricePlanSaving(false);
+    }
+  };
+  const savePricePlanNote = async (plan) => {
+    setPricePlanError("");
+    setPricePlanSaving(true);
+    try {
+      const response = await requestJson(`/api/price-plans/${encodeURIComponent(plan.id)}`, {
+        method: "PUT",
+        body: JSON.stringify({ note: pricePlanEditNote }),
+      });
+      replacePricePlan(response.price_plan);
+      setPricePlanEditingId("");
+      setPricePlanEditNote("");
+    } catch (err) {
+      setPricePlanError(err instanceof Error ? err.message : "Unable to update price alert.");
+    } finally {
+      setPricePlanSaving(false);
+    }
+  };
+  const deletePricePlan = async (plan) => {
+    setPricePlanError("");
+    try {
+      await requestJson(`/api/price-plans/${encodeURIComponent(plan.id)}`, { method: "DELETE" });
+      removePricePlan(plan.id);
+    } catch (err) {
+      setPricePlanError(err instanceof Error ? err.message : "Unable to delete price alert.");
+    }
+  };
   const notesByReport = useMemo(() => {
     const groups = new Map();
     for (const note of payload?.notes ?? []) {
@@ -6252,7 +6467,15 @@ function CompanyContextModal({ item, onClose }) {
           </button>
         </div>
 
-        {status === "loading" ? <p className="muted company-context-status">Loading company context...</p> : null}
+        {status === "loading" ? (
+          <div className="generating-state research-loading research-detail-loading company-context-loading">
+            <Sparkles size={22} aria-hidden="true" />
+            <div className="research-loading-copy">
+              <p>Loading company context...</p>
+              <p className="research-loading-note">Refreshing market data, notes, and report history.</p>
+            </div>
+          </div>
+        ) : null}
         {status === "error" ? <p className="form-error company-context-status">{error}</p> : null}
 
         {status === "ready" && payload ? (
@@ -6275,6 +6498,111 @@ function CompanyContextModal({ item, onClose }) {
                 <strong>{payload.next_earnings_date ? formatDateOnly(payload.next_earnings_date) : "N/A"}</strong>
               </div>
             </div>
+
+            <section className="research-card company-context-section company-context-price-section">
+              <div className="company-context-chart-wrap">
+                <StockPriceChart
+                  activePlans={activePricePlans}
+                  currencyCode={currencyCode}
+                  dailyPoints={payload.market_data?.price_history ?? []}
+                  intradayPoints={payload.market_data?.intraday_history ?? []}
+                  latestPrice={latestPrice}
+                  priceSeries={payload.market_data?.price_series ?? {}}
+                  refreshedAt={payload.market_data?.refreshed_at ?? ""}
+                  userTimezone={userTimezone}
+                />
+              </div>
+            </section>
+
+            <section className="research-card company-context-section">
+              <div className="research-card-header price-plan-section-header">
+                <h3>Price plans</h3>
+                <div className="deep-material-tabs compact" aria-label="Price plan status">
+                  <button className={pricePlanTab === "current" ? "active" : ""} onClick={() => setPricePlanTab("current")} type="button">Current</button>
+                  <button className={pricePlanTab === "triggered" ? "active" : ""} onClick={() => setPricePlanTab("triggered")} type="button">Triggered</button>
+                </div>
+              </div>
+              <div className="price-plan-panel">
+                {pricePlanTab === "current" ? (
+                  <form className="price-plan-form" onSubmit={createPricePlan}>
+                    <label>
+                      <span>Target price</span>
+                      <input
+                        inputMode="decimal"
+                        min="0"
+                        onChange={(event) => setPricePlanDraft((current) => ({ ...current, target_price: event.target.value, userEditedTarget: true }))}
+                        placeholder={roundedDefaultTargetPrice(latestPrice?.price) || "Target price"}
+                        step="0.01"
+                        type="number"
+                        value={pricePlanDraft.target_price}
+                      />
+                    </label>
+                    <label>
+                      <span>Note</span>
+                      <textarea
+                        onChange={(event) => setPricePlanDraft((current) => ({ ...current, note: event.target.value }))}
+                        placeholder="What did you want to consider at this price?"
+                        rows={2}
+                        value={pricePlanDraft.note}
+                      />
+                    </label>
+                    <div className="price-plan-form-footer">
+                      <small className="price-plan-current-price">
+                        Current price: {latestPrice ? `${formatCurrencyAmount(latestPrice.price, currencyCode)} (${formatLastPriceUpdate(latestPrice.price_at, userTimezone)})` : "unavailable"}
+                        {draftDirection ? ` - ${draftDirection === "above" ? "triggers if price rises" : "triggers if price falls"}` : ""}
+                      </small>
+                      <button className="primary-button compact-button" disabled={pricePlanSaving || !draftDirection} type="submit">
+                        <Plus size={16} aria-hidden="true" />
+                        Add price alert
+                      </button>
+                    </div>
+                  </form>
+                ) : null}
+                {pricePlanError ? <p className="form-error price-plan-error">{pricePlanError}</p> : null}
+                <div className="price-plan-list">
+                  {(pricePlanTab === "current" ? activePricePlans : triggeredPricePlans).map((plan) => (
+                    <article className={`price-plan-card ${plan.direction}`} key={plan.id}>
+                      <div className="price-plan-card-main">
+                        <div className="price-plan-card-header">
+                          <strong>{formatCurrencyAmount(plan.target_price, plan.currency || currencyCode)}</strong>
+                          <span>{plan.status === "triggered" ? `Triggered ${formatDateTimeForTimezone(plan.triggered_at, userTimezone)}` : plan.direction === "above" ? "Above current reference" : "Below current reference"}</span>
+                        </div>
+                        {pricePlanEditingId === plan.id ? (
+                          <textarea
+                            autoFocus
+                            onChange={(event) => setPricePlanEditNote(event.target.value)}
+                            rows={2}
+                            value={pricePlanEditNote}
+                          />
+                        ) : plan.note ? (
+                          <p>{plan.note}</p>
+                        ) : (
+                          <p className="muted">No note.</p>
+                        )}
+                      </div>
+                      <div className="price-plan-actions">
+                        {plan.status === "active" ? (
+                          pricePlanEditingId === plan.id ? (
+                            <>
+                              <button className="secondary-button compact-button" disabled={pricePlanSaving} onClick={() => savePricePlanNote(plan)} type="button">Save note</button>
+                              <button className="secondary-button compact-button" onClick={() => { setPricePlanEditingId(""); setPricePlanEditNote(""); }} type="button">Cancel</button>
+                            </>
+                          ) : (
+                            <button className="secondary-button compact-button" onClick={() => { setPricePlanEditingId(plan.id); setPricePlanEditNote(plan.note || ""); }} type="button">Edit note</button>
+                          )
+                        ) : null}
+                        <button className="icon-button danger" onClick={() => deletePricePlan(plan)} title="Delete price plan" type="button">
+                          <Trash2 size={16} aria-hidden="true" />
+                        </button>
+                      </div>
+                    </article>
+                  ))}
+                  {(pricePlanTab === "current" ? activePricePlans : triggeredPricePlans).length ? null : (
+                    <p className="muted price-plan-empty">{pricePlanTab === "current" ? "No active price plans." : "No triggered price plans yet."}</p>
+                  )}
+                </div>
+              </div>
+            </section>
 
             {stock.relationship === "portfolio" ? (
               <section className="research-card company-context-section">
