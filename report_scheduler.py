@@ -11,7 +11,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from database import connection
-from market_prices import latest_intraday_price
+from market_prices import latest_market_price
 from psycopg.types.json import Json
 from report import load_dotenv_if_available, load_yaml
 from sync_stocks import fmp_client, fetch_active_stocks, sync_stocks
@@ -643,9 +643,9 @@ def create_price_plan_notifications(client: Any, run_at_utc: dt.datetime) -> int
                 by_symbol.setdefault(str(plan["symbol"]).upper(), []).append(plan)
 
             for symbol, symbol_plans in by_symbol.items():
-                latest = latest_intraday_price(client, symbol)
+                latest = latest_market_price(client, symbol, now=run_at_utc)
                 if latest is None:
-                    logging.info("Skipping price plans; intraday price unavailable symbol=%s", symbol)
+                    logging.info("Skipping price plans; market price unavailable symbol=%s", symbol)
                     continue
 
                 current_price = latest["price"]

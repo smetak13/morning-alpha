@@ -6258,6 +6258,19 @@ function roundedDefaultTargetPrice(price) {
   return String(Number(target.toFixed(decimals)));
 }
 
+function mergeLatestPriceIntoSeries(points, latestPrice) {
+  const price = Number(latestPrice?.price);
+  const date = latestPrice?.price_at || latestPrice?.checked_at;
+  if (!Number.isFinite(price) || !date) {
+    return Array.isArray(points) ? points : [];
+  }
+  const nextPoint = { date, close: price };
+  const existing = Array.isArray(points) ? points : [];
+  const next = existing.filter((point) => String(point.date) !== String(date));
+  next.push(nextPoint);
+  return next.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
 function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }) {
   const [payload, setPayload] = useState(null);
   const [status, setStatus] = useState("loading");
@@ -6307,7 +6320,27 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
       try {
         const response = await requestJson(`/api/stocks/${encodeURIComponent(payload.stock.stock_id)}/latest-price`, { method: "GET" });
         if (!cancelled) {
-          setLatestPrice(response.latest_price ?? null);
+          const nextLatest = response.latest_price ?? null;
+          setLatestPrice(nextLatest);
+          if (nextLatest) {
+            setPayload((current) => {
+              if (!current?.market_data) {
+                return current;
+              }
+              const marketData = current.market_data;
+              return {
+                ...current,
+                market_data: {
+                  ...marketData,
+                  latest_price: nextLatest,
+                  price_series: {
+                    ...(marketData.price_series ?? {}),
+                    "1D": mergeLatestPriceIntoSeries(marketData.intraday_history ?? [], nextLatest),
+                  },
+                },
+              };
+            });
+          }
         }
       } catch {
         if (!cancelled) {
@@ -6541,7 +6574,7 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
                       <span>Note</span>
                       <textarea
                         onChange={(event) => setPricePlanDraft((current) => ({ ...current, note: event.target.value }))}
-                        placeholder="What did you want to consider at this price?"
+                        placeholder="e.g. buy more, trim position, revisit valuation"
                         rows={2}
                         value={pricePlanDraft.note}
                       />

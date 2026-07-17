@@ -26,7 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from database import connection
-from market_prices import decimal_price, latest_intraday_price
+from market_prices import decimal_price, latest_market_price
 from neon_auth import load_settings
 
 
@@ -1784,6 +1784,34 @@ def filter_price_points_since(points: list[dict[str, Any]], *, days: int) -> lis
     return [point for date_value, point in dated if date_value >= cutoff]
 
 
+def append_latest_point(points: list[dict[str, Any]], latest: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not latest or latest.get("price") in (None, "") or latest.get("price_at") is None:
+        return points
+    price_at = latest["price_at"]
+    if isinstance(price_at, dt.datetime):
+        latest_at = price_at.astimezone(dt.timezone.utc)
+        latest_date = latest_at.isoformat()
+    else:
+        latest_at = parse_price_point_datetime(price_at)
+        latest_date = str(price_at)
+    close = safe_float(latest.get("price"))
+    if latest_at is None or close is None:
+        return points
+
+    next_points = []
+    replaced = False
+    for point in points:
+        point_at = parse_price_point_datetime(point.get("date"))
+        if point_at is not None and point_at == latest_at:
+            next_points.append({"date": latest_date, "close": close})
+            replaced = True
+        else:
+            next_points.append(point)
+    if not replaced:
+        next_points.append({"date": latest_date, "close": close})
+    return sorted(next_points, key=lambda point: str(point.get("date") or ""))
+
+
 def latest_price_close(points: list[dict[str, Any]]) -> float | None:
     dated = [(parse_price_point_datetime(point.get("date")), point) for point in points]
     dated = [(date_value, point) for date_value, point in dated if date_value is not None]
@@ -1861,9 +1889,9 @@ def serialize_price_plan_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def latest_stock_intraday_price(symbol: str, *, currency: str = "USD") -> dict[str, Any]:
     client = fmp_client_from_env()
-    latest = latest_intraday_price(client, symbol)
+    latest = latest_market_price(client, symbol)
     if latest is None:
-        raise HTTPException(status_code=503, detail="Current intraday price is unavailable. Try again later.")
+        raise HTTPException(status_code=503, detail="Current market price is unavailable. Try again later.")
     return serialize_latest_price(latest, currency=currency) or {}
 
 
@@ -1937,13 +1965,14 @@ def fetch_company_context_market_data(symbol: str) -> dict[str, Any]:
         today = dt.date.today()
         daily_history = fetch_price_history(client, symbol, today)
         intraday_history = fetch_intraday_history(client, symbol, today, days=35)
-        latest = latest_intraday_price(client, symbol)
+        latest = latest_market_price(client, symbol)
+        one_day_series = append_latest_point(filter_price_points_since(intraday_history, days=1), latest)
         return {
             "currency": "USD",
             "price_history": daily_history,
             "intraday_history": intraday_history,
             "price_series": {
-                "1D": filter_price_points_since(intraday_history, days=1),
+                "1D": filter_price_points_since(one_day_series, days=1),
                 "1W": resample_price_points(filter_price_points_since(intraday_history, days=7), interval_minutes=60),
                 "1M": resample_price_points(filter_price_points_since(intraday_history, days=31), interval_minutes=240),
                 "3M": filter_price_points_since(daily_history, days=93),
@@ -4128,9 +4157,9 @@ def create_price_plan(stock_id: str, payload: PricePlanCreateRequest, request: R
     with connection(row_factory=dict_row) as conn:
         with conn.cursor() as cursor:
             stock = load_user_stock(cursor, user_id=user_id, stock_id=stock_id)
-            latest = latest_intraday_price(fmp_client_from_env(), str(stock["symbol"]).upper())
+            latest = latest_market_price(fmp_client_from_env(), str(stock["symbol"]).upper())
             if latest is None:
-                raise HTTPException(status_code=503, detail="Current intraday price is unavailable. Try again later.")
+                raise HTTPException(status_code=503, detail="Current market price is unavailable. Try again later.")
             reference_price = money_decimal(latest["price"], "reference_price")
             direction = price_direction(target_price, reference_price)
             if direction != payload.expected_direction:
