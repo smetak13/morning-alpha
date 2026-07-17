@@ -6788,6 +6788,31 @@ input[type="range"] {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
+  .price-plan-card.is-editing {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .price-plan-card.is-editing .price-plan-card-main {
+    display: contents;
+  }
+
+  .price-plan-card.is-editing .price-plan-card-header {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .price-plan-card.is-editing textarea {
+    box-sizing: border-box;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+
+  .price-plan-card.is-editing .price-plan-actions {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
   .price-plan-actions {
     align-content: start;
     max-width: min(42vw, 180px);

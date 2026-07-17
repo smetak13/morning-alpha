@@ -20,6 +20,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Save,
   Search,
   Share2,
   Sparkles,
@@ -6282,6 +6283,8 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
   const [pricePlanEditNote, setPricePlanEditNote] = useState("");
   const [pricePlanError, setPricePlanError] = useState("");
   const [pricePlanSaving, setPricePlanSaving] = useState(false);
+  const pricePlanEditTextareaRef = useRef(null);
+  const pricePlanSaveButtonRef = useRef(null);
   const [memoryDetail, setMemoryDetail] = useState(null);
   const [memoryStatus, setMemoryStatus] = useState("idle");
   const [memoryError, setMemoryError] = useState("");
@@ -6364,6 +6367,27 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
       return defaultTarget ? { ...current, target_price: defaultTarget } : current;
     });
   }, [latestPrice?.price]);
+
+  useEffect(() => {
+    if (!pricePlanEditingId) {
+      return undefined;
+    }
+    const cancelPricePlanEditOnOutsideClick = (event) => {
+      const target = event.target;
+      if (
+        pricePlanEditTextareaRef.current?.contains(target) ||
+        pricePlanSaveButtonRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setPricePlanEditingId("");
+      setPricePlanEditNote("");
+    };
+    document.addEventListener("mousedown", cancelPricePlanEditOnOutsideClick);
+    return () => {
+      document.removeEventListener("mousedown", cancelPricePlanEditOnOutsideClick);
+    };
+  }, [pricePlanEditingId]);
 
   const openMemory = async (memoryId) => {
     if (!memoryId) {
@@ -6594,7 +6618,7 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
                 {pricePlanError ? <p className="form-error price-plan-error">{pricePlanError}</p> : null}
                 <div className="price-plan-list">
                   {(pricePlanTab === "current" ? activePricePlans : triggeredPricePlans).map((plan) => (
-                    <article className={`price-plan-card ${plan.direction}`} key={plan.id}>
+                    <article className={`price-plan-card ${plan.direction}${pricePlanEditingId === plan.id ? " is-editing" : ""}`} key={plan.id}>
                       <div className="price-plan-card-main">
                         <div className="price-plan-card-header">
                           <strong>{formatCurrencyAmount(plan.target_price, plan.currency || currencyCode)}</strong>
@@ -6603,6 +6627,7 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
                         {pricePlanEditingId === plan.id ? (
                           <textarea
                             autoFocus
+                            ref={pricePlanEditTextareaRef}
                             onChange={(event) => setPricePlanEditNote(event.target.value)}
                             rows={2}
                             value={pricePlanEditNote}
@@ -6617,11 +6642,14 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
                         {plan.status === "active" ? (
                           pricePlanEditingId === plan.id ? (
                             <>
-                              <button className="secondary-button compact-button" disabled={pricePlanSaving} onClick={() => savePricePlanNote(plan)} type="button">Save note</button>
-                              <button className="secondary-button compact-button" onClick={() => { setPricePlanEditingId(""); setPricePlanEditNote(""); }} type="button">Cancel</button>
+                              <button ref={pricePlanSaveButtonRef} className="icon-button" disabled={pricePlanSaving} onClick={() => savePricePlanNote(plan)} title="Save note" type="button">
+                                <Save size={17} aria-hidden="true" />
+                              </button>
                             </>
                           ) : (
-                            <button className="secondary-button compact-button" onClick={() => { setPricePlanEditingId(plan.id); setPricePlanEditNote(plan.note || ""); }} type="button">Edit note</button>
+                            <button className="icon-button" onClick={() => { setPricePlanEditingId(plan.id); setPricePlanEditNote(plan.note || ""); }} title="Edit note" type="button">
+                              <Pencil size={17} aria-hidden="true" />
+                            </button>
                           )
                         ) : null}
                         <button className="icon-button danger" onClick={() => deletePricePlan(plan)} title="Delete price plan" type="button">
