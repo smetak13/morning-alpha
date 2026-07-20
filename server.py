@@ -1784,6 +1784,15 @@ def filter_price_points_since(points: list[dict[str, Any]], *, days: int) -> lis
     return [point for date_value, point in dated if date_value >= cutoff]
 
 
+def latest_intraday_session_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    dated = [(parse_price_point_datetime(point.get("date")), point) for point in points]
+    dated = [(date_value, point) for date_value, point in dated if date_value is not None]
+    if not dated:
+        return []
+    latest_date = max(date_value.date() for date_value, _point in dated)
+    return [point for date_value, point in dated if date_value.date() == latest_date]
+
+
 def append_latest_point(points: list[dict[str, Any]], latest: dict[str, Any] | None) -> list[dict[str, Any]]:
     if not latest or latest.get("price") in (None, "") or latest.get("price_at") is None:
         return points
@@ -1966,13 +1975,13 @@ def fetch_company_context_market_data(symbol: str) -> dict[str, Any]:
         daily_history = fetch_price_history(client, symbol, today)
         intraday_history = fetch_intraday_history(client, symbol, today, days=35)
         latest = latest_market_price(client, symbol)
-        one_day_series = append_latest_point(filter_price_points_since(intraday_history, days=1), latest)
+        one_day_series = append_latest_point(latest_intraday_session_points(intraday_history), latest)
         return {
             "currency": "USD",
             "price_history": daily_history,
             "intraday_history": intraday_history,
             "price_series": {
-                "1D": filter_price_points_since(one_day_series, days=1),
+                "1D": one_day_series,
                 "1W": resample_price_points(filter_price_points_since(intraday_history, days=7), interval_minutes=60),
                 "1M": resample_price_points(filter_price_points_since(intraday_history, days=31), interval_minutes=240),
                 "3M": filter_price_points_since(daily_history, days=93),
@@ -2006,7 +2015,7 @@ def refresh_deep_research_market_data(body: dict[str, Any], symbol: str) -> tupl
     if intraday_history:
         market_data["intraday_history"] = intraday_history
         market_data["price_series"] = {
-            "1D": filter_price_points_since(intraday_history, days=1),
+            "1D": latest_intraday_session_points(intraday_history),
             "1W": resample_price_points(filter_price_points_since(intraday_history, days=7), interval_minutes=60),
             "1M": resample_price_points(filter_price_points_since(intraday_history, days=31), interval_minutes=240),
             "3M": filter_price_points_since(daily_history, days=93),

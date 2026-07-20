@@ -4565,12 +4565,27 @@ function filterPriceHistory(points, period) {
   return normalized.filter((point) => point.timestamp >= cutoff);
 }
 
+function latestIntradaySessionPoints(points) {
+  const normalized = normalizeChartPoints(points);
+  if (!normalized.length) {
+    return [];
+  }
+  const latest = String(normalized[normalized.length - 1].date).slice(0, 10);
+  return normalized.filter((point) => String(point.date).slice(0, 10) === latest);
+}
+
 function pricePointsForPeriod({ dailyPoints, intradayPoints, period, priceSeries }) {
   const explicitSeries = priceSeries?.[period];
   if (Array.isArray(explicitSeries) && explicitSeries.length) {
+    if (period === "1D") {
+      return normalizeChartPoints(explicitSeries);
+    }
     return filterPriceHistory(explicitSeries, period);
   }
   if (["1D", "1W", "1M"].includes(period) && Array.isArray(intradayPoints) && intradayPoints.length) {
+    if (period === "1D") {
+      return latestIntradaySessionPoints(intradayPoints);
+    }
     return filterPriceHistory(intradayPoints, period);
   }
   return filterPriceHistory(dailyPoints, period);
@@ -6266,10 +6281,10 @@ function mergeLatestPriceIntoSeries(points, latestPrice) {
     return Array.isArray(points) ? points : [];
   }
   const nextPoint = { date, close: price };
-  const existing = Array.isArray(points) ? points : [];
+  const existing = latestIntradaySessionPoints(points);
   const next = existing.filter((point) => String(point.date) !== String(date));
   next.push(nextPoint);
-  return next.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  return normalizeChartPoints(next);
 }
 
 function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }) {
