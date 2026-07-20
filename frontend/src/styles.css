@@ -6009,6 +6009,27 @@ input[type="range"] {
   text-transform: uppercase;
 }
 
+.price-plan-checkbox {
+  align-items: center;
+  display: flex !important;
+  flex-direction: row;
+  gap: 8px !important;
+}
+
+.price-plan-checkbox input {
+  accent-color: #f4c430;
+  flex: 0 0 auto;
+  min-height: auto !important;
+  padding: 0 !important;
+}
+
+.price-plan-checkbox span {
+  color: var(--text-soft) !important;
+  font-size: 13px !important;
+  font-weight: 400 !important;
+  text-transform: none !important;
+}
+
 .price-plan-form input,
 .price-plan-form textarea,
 .price-plan-card textarea {
@@ -6020,6 +6041,16 @@ input[type="range"] {
   min-height: 38px;
   padding: 9px 10px;
   resize: vertical;
+}
+
+.price-plan-checkbox input[type="checkbox"] {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  height: 16px;
+  min-height: auto;
+  padding: 0;
+  width: 16px;
 }
 
 .price-plan-form textarea,
@@ -6105,6 +6136,10 @@ input[type="range"] {
 
 .price-plan-card-header span {
   color: #8f8f87;
+}
+
+.price-plan-email-status {
+  color: #f4d76b !important;
 }
 
 .price-plan-actions {
@@ -6806,6 +6841,11 @@ input[type="range"] {
     grid-column: 1 / -1;
     grid-row: 2;
     width: 100%;
+  }
+
+  .price-plan-card.is-editing .price-plan-edit-checkbox {
+    grid-column: 1 / -1;
+    grid-row: 3;
   }
 
   .price-plan-card.is-editing .price-plan-actions {

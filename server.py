@@ -234,10 +234,12 @@ class PricePlanCreateRequest(BaseModel):
     target_price: Decimal
     note: str | None = None
     expected_direction: Literal["above", "below"]
+    email_on_trigger: bool = False
 
 
 class PricePlanUpdateRequest(BaseModel):
     note: str | None = None
+    email_on_trigger: bool | None = None
 
 
 def create_app() -> FastAPI:
@@ -1878,6 +1880,7 @@ def serialize_price_plan_row(row: dict[str, Any]) -> dict[str, Any]:
         "currency": row.get("currency") or "USD",
         "direction": row.get("direction"),
         "note": row.get("note") or "",
+        "email_on_trigger": bool(row.get("email_on_trigger")),
         "status": row.get("status"),
         "reference_price": serialize_money(row.get("reference_price")),
         "reference_price_source": row.get("reference_price_source"),
@@ -1941,6 +1944,7 @@ def load_price_plans(cursor: Any, *, user_id: str, stock_id: str) -> list[dict[s
             currency,
             direction,
             note,
+            email_on_trigger,
             status,
             reference_price,
             reference_price_source,
@@ -4186,6 +4190,7 @@ def create_price_plan(stock_id: str, payload: PricePlanCreateRequest, request: R
                         currency,
                         direction,
                         note,
+                        email_on_trigger,
                         reference_price,
                         reference_price_source,
                         reference_price_at,
@@ -4198,6 +4203,7 @@ def create_price_plan(stock_id: str, payload: PricePlanCreateRequest, request: R
                         'USD',
                         %(direction)s,
                         %(note)s,
+                        %(email_on_trigger)s,
                         %(reference_price)s,
                         %(reference_price_source)s,
                         %(reference_price_at)s,
@@ -4211,6 +4217,7 @@ def create_price_plan(stock_id: str, payload: PricePlanCreateRequest, request: R
                         currency,
                         direction,
                         note,
+                        email_on_trigger,
                         status,
                         reference_price,
                         reference_price_source,
@@ -4233,6 +4240,7 @@ def create_price_plan(stock_id: str, payload: PricePlanCreateRequest, request: R
                         "target_price": target_price,
                         "direction": direction,
                         "note": note,
+                        "email_on_trigger": bool(payload.email_on_trigger),
                         "reference_price": reference_price,
                         "reference_price_source": latest["source"],
                         "reference_price_at": latest["price_at"],
@@ -4257,7 +4265,8 @@ def update_price_plan(price_plan_id: str, payload: PricePlanUpdateRequest, reque
             cursor.execute(
                 """
                 update public.price_plans
-                set note = %(note)s
+                set note = %(note)s,
+                    email_on_trigger = coalesce(%(email_on_trigger)s, email_on_trigger)
                 where id::text = %(id)s
                   and user_id = %(user_id)s
                   and status = 'active'
@@ -4269,6 +4278,7 @@ def update_price_plan(price_plan_id: str, payload: PricePlanUpdateRequest, reque
                     currency,
                     direction,
                     note,
+                    email_on_trigger,
                     status,
                     reference_price,
                     reference_price_source,
@@ -4285,7 +4295,12 @@ def update_price_plan(price_plan_id: str, payload: PricePlanUpdateRequest, reque
                     created_at,
                     updated_at
                 """,
-                {"id": price_plan_id, "user_id": user_id, "note": (payload.note or "").strip() or None},
+                {
+                    "id": price_plan_id,
+                    "user_id": user_id,
+                    "note": (payload.note or "").strip() or None,
+                    "email_on_trigger": payload.email_on_trigger,
+                },
             )
             row = cursor.fetchone()
             if not row:

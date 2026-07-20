@@ -6293,12 +6293,14 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
   const [error, setError] = useState("");
   const [latestPrice, setLatestPrice] = useState(null);
   const [pricePlanTab, setPricePlanTab] = useState("current");
-  const [pricePlanDraft, setPricePlanDraft] = useState({ target_price: "", note: "", userEditedTarget: false });
+  const [pricePlanDraft, setPricePlanDraft] = useState({ target_price: "", note: "", email_on_trigger: false, userEditedTarget: false });
   const [pricePlanEditingId, setPricePlanEditingId] = useState("");
   const [pricePlanEditNote, setPricePlanEditNote] = useState("");
+  const [pricePlanEditEmailOnTrigger, setPricePlanEditEmailOnTrigger] = useState(false);
   const [pricePlanError, setPricePlanError] = useState("");
   const [pricePlanSaving, setPricePlanSaving] = useState(false);
   const pricePlanEditTextareaRef = useRef(null);
+  const pricePlanEditCheckboxRef = useRef(null);
   const pricePlanSaveButtonRef = useRef(null);
   const [memoryDetail, setMemoryDetail] = useState(null);
   const [memoryStatus, setMemoryStatus] = useState("idle");
@@ -6391,12 +6393,14 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
       const target = event.target;
       if (
         pricePlanEditTextareaRef.current?.contains(target) ||
+        pricePlanEditCheckboxRef.current?.contains(target) ||
         pricePlanSaveButtonRef.current?.contains(target)
       ) {
         return;
       }
       setPricePlanEditingId("");
       setPricePlanEditNote("");
+      setPricePlanEditEmailOnTrigger(false);
     };
     document.addEventListener("mousedown", cancelPricePlanEditOnOutsideClick);
     return () => {
@@ -6463,11 +6467,12 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
         body: JSON.stringify({
           target_price: targetPrice,
           note: pricePlanDraft.note,
+          email_on_trigger: pricePlanDraft.email_on_trigger,
           expected_direction: draftDirection,
         }),
       });
       addPricePlan(response.price_plan);
-      setPricePlanDraft({ target_price: "", note: "", userEditedTarget: false });
+      setPricePlanDraft({ target_price: "", note: "", email_on_trigger: false, userEditedTarget: false });
     } catch (err) {
       setPricePlanError(err instanceof Error ? err.message : "Unable to create price alert.");
       try {
@@ -6486,11 +6491,12 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
     try {
       const response = await requestJson(`/api/price-plans/${encodeURIComponent(plan.id)}`, {
         method: "PUT",
-        body: JSON.stringify({ note: pricePlanEditNote }),
+        body: JSON.stringify({ note: pricePlanEditNote, email_on_trigger: pricePlanEditEmailOnTrigger }),
       });
       replacePricePlan(response.price_plan);
       setPricePlanEditingId("");
       setPricePlanEditNote("");
+      setPricePlanEditEmailOnTrigger(false);
     } catch (err) {
       setPricePlanError(err instanceof Error ? err.message : "Unable to update price alert.");
     } finally {
@@ -6618,6 +6624,14 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
                         value={pricePlanDraft.note}
                       />
                     </label>
+                    <label className="price-plan-checkbox">
+                      <input
+                        checked={pricePlanDraft.email_on_trigger}
+                        onChange={(event) => setPricePlanDraft((current) => ({ ...current, email_on_trigger: event.target.checked }))}
+                        type="checkbox"
+                      />
+                      <span>Email me when triggered</span>
+                    </label>
                     <div className="price-plan-form-footer">
                       <small className="price-plan-current-price">
                         Current price: {latestPrice ? `${formatCurrencyAmount(latestPrice.price, currencyCode)} (${formatLastPriceUpdate(latestPrice.price_at, userTimezone)})` : "unavailable"}
@@ -6640,18 +6654,29 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
                           <span>{plan.status === "triggered" ? `Triggered ${formatDateTimeForTimezone(plan.triggered_at, userTimezone)}` : plan.direction === "above" ? "Above current reference" : "Below current reference"}</span>
                         </div>
                         {pricePlanEditingId === plan.id ? (
-                          <textarea
-                            autoFocus
-                            ref={pricePlanEditTextareaRef}
-                            onChange={(event) => setPricePlanEditNote(event.target.value)}
-                            rows={2}
-                            value={pricePlanEditNote}
-                          />
+                          <>
+                            <textarea
+                              autoFocus
+                              ref={pricePlanEditTextareaRef}
+                              onChange={(event) => setPricePlanEditNote(event.target.value)}
+                              rows={2}
+                              value={pricePlanEditNote}
+                            />
+                            <label className="price-plan-checkbox price-plan-edit-checkbox" ref={pricePlanEditCheckboxRef}>
+                              <input
+                                checked={pricePlanEditEmailOnTrigger}
+                                onChange={(event) => setPricePlanEditEmailOnTrigger(event.target.checked)}
+                                type="checkbox"
+                              />
+                              <span>Email me when triggered</span>
+                            </label>
+                          </>
                         ) : plan.note ? (
                           <p>{plan.note}</p>
                         ) : (
                           <p className="muted">No note.</p>
                         )}
+                        {pricePlanEditingId !== plan.id && plan.email_on_trigger ? <p className="price-plan-email-status">Email alert enabled</p> : null}
                       </div>
                       <div className="price-plan-actions">
                         {plan.status === "active" ? (
@@ -6662,7 +6687,7 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
                               </button>
                             </>
                           ) : (
-                            <button className="icon-button" onClick={() => { setPricePlanEditingId(plan.id); setPricePlanEditNote(plan.note || ""); }} title="Edit note" type="button">
+                            <button className="icon-button" onClick={() => { setPricePlanEditingId(plan.id); setPricePlanEditNote(plan.note || ""); setPricePlanEditEmailOnTrigger(Boolean(plan.email_on_trigger)); }} title="Edit price plan" type="button">
                               <Pencil size={17} aria-hidden="true" />
                             </button>
                           )

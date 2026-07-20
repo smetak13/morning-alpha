@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import argparse
 import datetime as dt
+import html
 import logging
 import time
 from dataclasses import dataclass
@@ -13,7 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from database import connection
 from market_prices import latest_market_price
 from psycopg.types.json import Json
-from report import load_dotenv_if_available, load_yaml
+from report import email_asset_src, load_dotenv_if_available, load_yaml, send_email
 from sync_stocks import fmp_client, fetch_active_stocks, sync_stocks
 
 
@@ -609,6 +610,163 @@ def format_price_for_notification(value: Any, currency: str) -> str:
     return f"{prefix}{amount:,.2f}"
 
 
+def html_escape(value: Any) -> str:
+    return html.escape(str(value or ""), quote=True)
+
+
+def html_email_text(value: Any) -> str:
+    return html_escape(value).replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+
+
+def price_plan_condition_label(direction: str) -> str:
+    return "Price rose above your target" if direction == "above" else "Price fell below your target"
+
+
+def format_price_plan_time(value: Any, timezone: str | None) -> str:
+    if isinstance(value, dt.datetime):
+        timestamp = value if value.tzinfo else value.replace(tzinfo=UTC)
+        timezone_name = normalize_timezone(timezone)
+        local_timestamp = timestamp.astimezone(ZoneInfo(timezone_name))
+        timezone_label = local_timestamp.tzname() or timezone_name
+        return local_timestamp.strftime("%b %d, %Y %H:%M").replace(" 0", " ") + f" {timezone_label}"
+    return str(value or "Unavailable")
+
+
+def price_plan_stock_logo_url(symbol: str) -> str:
+    cleaned_symbol = "".join(char for char in str(symbol or "").upper().strip() if char.isalnum() or char in {".", "-"})
+    return f"https://financialmodelingprep.com/image-stock/{cleaned_symbol}.png" if cleaned_symbol else ""
+
+
+def render_price_plan_email(
+    *,
+    symbol: str,
+    company_name: str,
+    target_label: str,
+    triggered_label: str,
+    direction: str,
+    price_at: Any,
+    timezone: str | None,
+    note: str | None,
+) -> str:
+    logo_src = email_asset_src("ma-logo.png")
+    brand_html = (
+        f'<img src="{html_escape(logo_src)}" width="270" height="50" alt="Morning Alpha" style="border:0;display:block;height:auto;line-height:0;max-width:270px;width:270px;">'
+        if logo_src
+        else '<strong style="color:#ffffff;font-size:20px;">Morning Alpha</strong>'
+    )
+    stock_logo_src = price_plan_stock_logo_url(symbol)
+    stock_logo_html = (
+        f"""
+        <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="46" style="border-collapse:collapse;width:46px;">
+          <tr>
+            <td align="center" bgcolor="#222222" style="background:#222222;background-color:#222222!important;border:1px solid #343434;border-radius:8px;height:44px;padding:0;text-align:center;vertical-align:middle;width:44px;">
+              <img src="{html_escape(stock_logo_src)}" width="34" height="34" alt="{html_escape(symbol)}" style="-webkit-filter:none!important;border:0;display:inline-block;filter:none!important;height:34px;line-height:34px;max-height:34px;max-width:34px;min-height:34px;min-width:34px;object-fit:contain;outline:0;text-decoration:none;vertical-align:middle;width:34px;">
+            </td>
+          </tr>
+        </table>
+        """
+        if stock_logo_src
+        else f"""
+        <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="46" style="border-collapse:collapse;width:46px;">
+          <tr>
+            <td align="center" bgcolor="#0d0d0d" style="background:#0d0d0d;background-color:#0d0d0d!important;border:1px solid #2a2a2a;border-radius:8px;color:#f4c430;font-size:16px;font-weight:700;height:44px;line-height:44px;text-align:center;vertical-align:middle;width:44px;">{html_escape(symbol[:2])}</td>
+          </tr>
+        </table>
+        """
+    )
+    metrics = [
+        ("Target price", target_label),
+        ("Triggered price", triggered_label),
+        ("Trigger condition", price_plan_condition_label(direction)),
+        ("Price observed at", format_price_plan_time(price_at, timezone)),
+    ]
+    metric_cells = [
+        f"""
+        <td width="50%" style="width:50%;padding:6px;vertical-align:top;">
+          <div style="background:#0d0d0d;border:1px solid #2a2a2a;border-radius:8px;margin:0;padding:10px;">
+            <div style="color:#a7a7a0;font-size:12px;line-height:1.25;">{html_escape(label)}</div>
+            <div style="color:#ffffff;font-size:15px;font-weight:700;line-height:1.25;margin-top:4px;">{html_escape(value)}</div>
+          </div>
+        </td>
+        """
+        for label, value in metrics
+    ]
+    metric_rows = "".join(f"<tr>{''.join(metric_cells[index:index + 2])}</tr>" for index in range(0, len(metric_cells), 2))
+    note_html = (
+        f"""
+        <div style="background:#111111;border:1px solid #2a2a2a;border-radius:8px;margin:14px 0 0;padding:12px;">
+          <div style="color:#f4c430;font-size:11px;font-weight:700;letter-spacing:.04em;line-height:1.25;margin-bottom:6px;text-transform:uppercase;">Note</div>
+          <p style="color:#d7d7d0;font-size:14px;line-height:1.55;margin:0;">{html_email_text(note)}</p>
+        </div>
+        """
+        if note
+        else ""
+    )
+    return f"""
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="color-scheme" content="dark">
+        <meta name="supported-color-schemes" content="dark">
+        <title>{html_escape(symbol)} price alert</title>
+      </head>
+      <body style="margin:0;padding:0;background:#080808;color:#f4f4f0;font-family:Arial,Helvetica,sans-serif;">
+        <div style="background:#080808;padding:28px 12px;">
+          <div style="max-width:760px;margin:0 auto;background:#111111;border:1px solid #2a2a2a;border-radius:8px;overflow:hidden;">
+            <div style="background:#151515;border-bottom:1px solid #2a2a2a;padding:26px 28px 22px;">
+              <div style="margin-bottom:26px;">{brand_html}</div>
+              <div style="color:#8f8f87;font-size:10px;font-weight:700;letter-spacing:.08em;line-height:1.2;text-transform:uppercase;">Price alert</div>
+              <h1 style="color:#ffffff;font-size:28px;line-height:1.15;margin:8px 0 0;">{html_escape(symbol)} reached your price alert</h1>
+            </div>
+            <div style="padding:24px 28px 28px;">
+              <div style="background:#181818;border:1px solid #2a2a2a;border-radius:8px;margin:0 0 14px;overflow:hidden;">
+                <div style="background:#151515;border-bottom:1px solid #2a2a2a;padding:14px 16px;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;">
+                    <tr>
+                      <td width="58" style="width:58px;vertical-align:middle;padding:0 12px 0 0;">{stock_logo_html}</td>
+                      <td style="vertical-align:middle;padding:0;">
+                        <div style="color:#ffffff;font-size:18px;font-weight:700;line-height:1.25;">{html_escape(symbol)}</div>
+                        <div style="color:#d7d7d0;font-size:14px;line-height:1.4;margin-top:2px;">{html_escape(company_name)}</div>
+                        <div style="margin-top:9px;">
+                          <span style="background:rgba(244,196,48,.12);border:1px solid #f4c430;border-radius:999px;color:#f4d76b;display:inline-block;font-size:9px;font-weight:700;letter-spacing:0;line-height:1.2;padding:6px 10px;text-transform:uppercase;">Price alert triggered</span>
+                        </div>
+                      </td>
+                    </tr>
+                  </table>
+                </div>
+                <div style="padding:16px;">
+                  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;table-layout:fixed;">{metric_rows}</table>
+                  {note_html}
+                </div>
+              </div>
+              <p style="border-top:1px solid #343434;color:#a7a7a0;font-size:12px;line-height:1.5;margin:24px 0 0;padding-top:16px;">This is an informational alert from your Morning Alpha price plan, not investment advice.</p>
+            </div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+
+def send_price_plan_email(plan: dict[str, Any], *, symbol: str, current_price: Any, latest: dict[str, Any]) -> None:
+    target_label = format_price_for_notification(plan["target_price"], plan["currency"])
+    triggered_label = format_price_for_notification(current_price, plan["currency"])
+    subject = f"{symbol} reached your {target_label} price alert"
+    html_body = render_price_plan_email(
+        symbol=symbol,
+        company_name=str(plan.get("company_name") or symbol),
+        target_label=target_label,
+        triggered_label=triggered_label,
+        direction=str(plan["direction"]),
+        price_at=latest.get("price_at"),
+        timezone=str(plan.get("timezone") or ""),
+        note=str(plan.get("note") or "").strip() or None,
+    )
+    send_email(subject, html_body, recipient_email=str(plan["user_email"]))
+
+
 def load_active_price_plans(cursor: Any) -> list[dict[str, Any]]:
     cursor.execute(
         """
@@ -620,10 +778,14 @@ def load_active_price_plans(cursor: Any) -> list[dict[str, Any]]:
             price_plans.currency,
             price_plans.direction,
             price_plans.note,
+            price_plans.email_on_trigger,
+            users.email as user_email,
+            users.timezone,
             stocks.symbol,
             stocks.company_name
         from public.price_plans
         join public.stocks on stocks.id = price_plans.stock_id
+        join public.users on users.id = price_plans.user_id
         where price_plans.status = 'active'
         order by stocks.symbol, price_plans.created_at
         """
@@ -745,6 +907,18 @@ def create_price_plan_notifications(client: Any, run_at_utc: dt.datetime) -> int
                         },
                     )
                     triggered += 1
+                    user_email = str(plan.get("user_email") or "").strip()
+                    if plan.get("email_on_trigger") and user_email:
+                        try:
+                            send_price_plan_email(plan, symbol=symbol, current_price=current_price, latest=latest)
+                        except (Exception, SystemExit) as exc:
+                            logging.error(
+                                "Price plan email failed price_plan_id=%s user_id=%s email=%s error=%s",
+                                plan["id"],
+                                plan["user_id"],
+                                user_email,
+                                exc,
+                            )
     return triggered
 
 
