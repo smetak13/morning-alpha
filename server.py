@@ -242,6 +242,16 @@ class PricePlanUpdateRequest(BaseModel):
     email_on_trigger: bool | None = None
 
 
+class BulkCompanyRequest(BaseModel):
+    symbol: str
+    company_name: str | None = None
+    item_type: Literal["portfolio", "watchlist"] = "portfolio"
+
+
+class BulkAddCompaniesRequest(BaseModel):
+    companies: list[BulkCompanyRequest] = Field(default_factory=list)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Morning Alpha API", lifespan=lifespan)
 
@@ -981,38 +991,51 @@ def guided_thesis_answers(payload: DraftThesisRequest) -> list[dict[str, str]]:
     return answers
 
 
-@app.post("/api/thesis/draft")
-def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any]:
-    user_id = current_user_id(request)
+def generate_thesis_draft(
+    *,
+    user_id: str,
+    item_type: Literal["portfolio", "watchlist"],
+    symbol: str,
+    company_name: str,
+    mode: Literal["quick", "guided"] = "quick",
+    answers: list[ThesisQuestionAnswer] | None = None,
+) -> dict[str, Any]:
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured.")
 
     from openai import OpenAI
     from report import load_yaml, log_openai_usage, openai_usage_summary, parse_model_json
 
-    symbol = clean_symbol(payload.symbol)
-    company_name = payload.company_name.strip() or symbol
+    symbol = clean_symbol(symbol)
+    company_name = company_name.strip() or symbol
     config = load_yaml(ROOT / "config.yaml")
     model = config.get("openai", {}).get("model", "gpt-4.1-mini")
-    schema = draft_thesis_schema(payload.item_type)
-    first_label = "why_i_own_it" if payload.item_type == "portfolio" else "why_i_watch_it"
-    guided_answers = guided_thesis_answers(payload)
+    schema = draft_thesis_schema(item_type)
+    first_label = "why_i_own_it" if item_type == "portfolio" else "why_i_watch_it"
+    guided_payload = DraftThesisRequest(
+        item_type=item_type,
+        symbol=symbol,
+        company_name=company_name,
+        mode=mode,
+        answers=answers or [],
+    )
+    guided_answers = guided_thesis_answers(guided_payload)
     first_guidance = (
         "2 to 4 concise possible reasons a long-term investor might own this company; write the reason text directly with no label prefix"
-        if payload.item_type == "portfolio"
+        if item_type == "portfolio"
         else "2 to 4 concise possible reasons a long-term investor might watch this company; write the reason text directly with no label prefix"
     )
 
     task = (
         "Convert the user's investing rationale into a monitorable thesis for review and editing."
-        if payload.mode == "guided" and guided_answers
+        if mode == "guided" and guided_answers
         else "Generate a neutral draft investment thesis for a user to review and edit."
     )
     prompt = {
         "task": task,
         "company": {"symbol": symbol, "company_name": company_name},
-        "item_type": payload.item_type,
-        "mode": payload.mode,
+        "item_type": item_type,
+        "mode": mode,
         "required_json_schema": schema,
         "field_guidance": {
             first_label: first_guidance,
@@ -1032,7 +1055,7 @@ def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any
             "For the first field, do not prefix bullets with labels such as 'Possible reason:', 'Reason to watch:', or 'Reason to own:'.",
         ],
     }
-    if payload.mode == "guided" and guided_answers:
+    if mode == "guided" and guided_answers:
         prompt["user_answers"] = guided_answers
         prompt["constraints"].extend(
             [
@@ -1052,7 +1075,7 @@ def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any
             ],
         )
         usage = openai_usage_summary(response, model, config)
-        log_openai_usage(user_id, f"{payload.item_type}_{payload.mode}_draft", usage)
+        log_openai_usage(user_id, f"{item_type}_{mode}_draft", usage)
         draft = parse_model_json(response.output_text)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Thesis generation failed: {exc}") from exc
@@ -1063,9 +1086,21 @@ def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any
             "company_name": company_name,
             "logo_url": stock_logo_url(symbol),
         },
-        "item_type": payload.item_type,
-        "thesis": normalize_draft_thesis(draft, payload.item_type),
+        "item_type": item_type,
+        "thesis": normalize_draft_thesis(draft, item_type),
     }
+
+
+@app.post("/api/thesis/draft")
+def draft_thesis(payload: DraftThesisRequest, request: Request) -> dict[str, Any]:
+    return generate_thesis_draft(
+        user_id=current_user_id(request),
+        item_type=payload.item_type,
+        symbol=payload.symbol,
+        company_name=payload.company_name,
+        mode=payload.mode,
+        answers=payload.answers,
+    )
 
 
 def get_or_create_stock(cursor: Any, symbol: str, company_name: str) -> str:
@@ -1399,6 +1434,184 @@ def list_watchlist_items(request: Request) -> dict[str, Any]:
             rows = cursor.fetchall()
 
     return {"items": [serialize_watchlist_row(dict(row)) for row in rows]}
+
+
+def stock_is_already_tracked(cursor: Any, *, user_id: str, stock_id: str) -> bool:
+    cursor.execute(
+        """
+        select exists (
+            select 1 from public.portfolio_items
+            where user_id = %(user_id)s and stock_id::text = %(stock_id)s
+        ) or exists (
+            select 1 from public.watchlist_items
+            where user_id = %(user_id)s and stock_id::text = %(stock_id)s
+        ) as tracked
+        """,
+        {"user_id": user_id, "stock_id": stock_id},
+    )
+    row = cursor.fetchone()
+    return bool(row["tracked"] if isinstance(row, dict) else row[0])
+
+
+def insert_portfolio_item_with_thesis(cursor: Any, *, user_id: str, stock_id: str, thesis: dict[str, list[str]]) -> str | None:
+    cursor.execute(
+        """
+        insert into public.portfolio_items (
+            user_id,
+            stock_id,
+            position_size_pct,
+            include_in_report,
+            why_i_own_it,
+            bull_case,
+            bear_case,
+            key_metrics,
+            red_flags,
+            action_triggers
+        )
+        values (
+            %(user_id)s,
+            %(stock_id)s,
+            null,
+            true,
+            %(why_i_own_it)s,
+            %(bull_case)s,
+            %(bear_case)s,
+            %(key_metrics)s,
+            %(red_flags)s,
+            %(action_triggers)s
+        )
+        on conflict (user_id, stock_id) do nothing
+        returning id::text
+        """,
+        {
+            "user_id": user_id,
+            "stock_id": stock_id,
+            "why_i_own_it": clean_bullets(thesis.get("why_i_own_it")),
+            "bull_case": clean_bullets(thesis.get("bull_case")),
+            "bear_case": clean_bullets(thesis.get("bear_case")),
+            "key_metrics": clean_bullets(thesis.get("key_metrics")),
+            "red_flags": clean_bullets(thesis.get("red_flags")),
+            "action_triggers": clean_bullets(thesis.get("action_triggers")),
+        },
+    )
+    row = cursor.fetchone()
+    return str(row["id"]) if row else None
+
+
+def insert_watchlist_item_with_thesis(cursor: Any, *, user_id: str, stock_id: str, thesis: dict[str, list[str]]) -> str | None:
+    cursor.execute(
+        """
+        insert into public.watchlist_items (
+            user_id,
+            stock_id,
+            include_in_report,
+            why_i_watch_it,
+            bull_case,
+            bear_case,
+            key_metrics,
+            red_flags,
+            entry_conditions
+        )
+        values (
+            %(user_id)s,
+            %(stock_id)s,
+            true,
+            %(why_i_watch_it)s,
+            %(bull_case)s,
+            %(bear_case)s,
+            %(key_metrics)s,
+            %(red_flags)s,
+            %(entry_conditions)s
+        )
+        on conflict (user_id, stock_id) do nothing
+        returning id::text
+        """,
+        {
+            "user_id": user_id,
+            "stock_id": stock_id,
+            "why_i_watch_it": clean_bullets(thesis.get("why_i_watch_it")),
+            "bull_case": clean_bullets(thesis.get("bull_case")),
+            "bear_case": clean_bullets(thesis.get("bear_case")),
+            "key_metrics": clean_bullets(thesis.get("key_metrics")),
+            "red_flags": clean_bullets(thesis.get("red_flags")),
+            "entry_conditions": clean_bullets(thesis.get("entry_conditions")),
+        },
+    )
+    row = cursor.fetchone()
+    return str(row["id"]) if row else None
+
+
+@app.post("/api/companies/bulk-add")
+def bulk_add_companies(payload: BulkAddCompaniesRequest, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    raw_companies = payload.companies[:25]
+    if not raw_companies:
+        raise HTTPException(status_code=422, detail="Add at least one company.")
+
+    seen: set[str] = set()
+    results: list[dict[str, Any]] = []
+    added_portfolio_ids: list[str] = []
+    added_watchlist_ids: list[str] = []
+
+    for company in raw_companies:
+        symbol = clean_symbol(company.symbol)
+        if not symbol:
+            results.append({"symbol": company.symbol, "status": "failed", "error": "Ticker is required."})
+            continue
+        if symbol in seen:
+            results.append({"symbol": symbol, "status": "skipped", "reason": "Duplicate in import."})
+            continue
+        seen.add(symbol)
+
+        item_type = company.item_type
+        company_name = (company.company_name or symbol).strip() or symbol
+        try:
+            with connection(row_factory=dict_row) as conn:
+                with conn.cursor() as cursor:
+                    stock_id = get_or_create_stock(cursor, symbol, company_name)
+                    if stock_is_already_tracked(cursor, user_id=user_id, stock_id=stock_id):
+                        results.append({"symbol": symbol, "company_name": company_name, "item_type": item_type, "status": "skipped", "reason": "Already tracked."})
+                        continue
+            draft = generate_thesis_draft(
+                user_id=user_id,
+                item_type=item_type,
+                symbol=symbol,
+                company_name=company_name,
+                mode="quick",
+            )
+            with connection(row_factory=dict_row) as conn:
+                with conn.cursor() as cursor:
+                    if item_type == "portfolio":
+                        item_id = insert_portfolio_item_with_thesis(cursor, user_id=user_id, stock_id=stock_id, thesis=draft["thesis"])
+                        if item_id:
+                            added_portfolio_ids.append(item_id)
+                            results.append({"symbol": symbol, "company_name": company_name, "item_type": item_type, "status": "added", "item_id": item_id})
+                        else:
+                            results.append({"symbol": symbol, "company_name": company_name, "item_type": item_type, "status": "skipped", "reason": "Already tracked."})
+                    else:
+                        item_id = insert_watchlist_item_with_thesis(cursor, user_id=user_id, stock_id=stock_id, thesis=draft["thesis"])
+                        if item_id:
+                            added_watchlist_ids.append(item_id)
+                            results.append({"symbol": symbol, "company_name": company_name, "item_type": item_type, "status": "added", "item_id": item_id})
+                        else:
+                            results.append({"symbol": symbol, "company_name": company_name, "item_type": item_type, "status": "skipped", "reason": "Already tracked."})
+        except HTTPException as exc:
+            results.append({"symbol": symbol, "company_name": company_name, "item_type": item_type, "status": "failed", "error": exc.detail})
+        except Exception as exc:
+            logger.exception("Bulk add failed for symbol=%s user_id=%s", symbol, user_id)
+            results.append({"symbol": symbol, "company_name": company_name, "item_type": item_type, "status": "failed", "error": str(exc)})
+
+    added_count = sum(1 for item in results if item["status"] == "added")
+    return {
+        "results": results,
+        "added_count": added_count,
+        "skipped_count": sum(1 for item in results if item["status"] == "skipped"),
+        "failed_count": sum(1 for item in results if item["status"] == "failed"),
+        "portfolio_item_ids": added_portfolio_ids,
+        "watchlist_item_ids": added_watchlist_ids,
+    }
 
 
 @app.post("/api/watchlist-items")

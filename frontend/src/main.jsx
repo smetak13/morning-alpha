@@ -768,26 +768,26 @@ const PRICING_TIERS = [
   {
     name: "Starter",
     price: "$12.99",
-    description: "For investors who want portfolio and watchlist updates filtered through their own thesis, not a generic market news feed.",
+    description: "For ongoing thesis monitoring across your portfolio and watchlist.",
     features: [
-      "Personalized email reports for portfolio and watchlist",
-      "Thesis-aware alerts for important company events",
-      "Company research and lightweight primers",
-      "Notes and action items tied to reports and research",
+      "Daily thesis-aware Morning Reports",
       "Portfolio and watchlist thesis tracking",
+      "30 Research Checks per month",
+      "3 one-time Deep Research credits included",
+      "Notes and price plans",
     ],
   },
   {
     name: "Professional",
-    price: "$19.99",
-    description: "For investors who want the daily workflow plus a premium deep research workspace.",
+    price: "$24.99",
+    description: "For monitoring plus deep company research.",
     featured: true,
     features: [
-      "Everything in Starter",
-      "Premium Deep Research workspace",
-      "50 deep researches per month",
+      "15 Deep Research credits per month",
+      "100 Research Checks per month",
       "DCF calculator, charts, filings, transcripts, and financial statements",
-      "Business model, risks, catalysts, and current situation summaries",
+      "Daily thesis-aware Morning Reports",
+      "Notes, price plans, and thesis tracking",
     ],
   },
 ];
@@ -985,11 +985,12 @@ function PricingSection() {
               ))}
             </ul>
             <a className={tier.featured ? "landing-cta pricing-cta" : "secondary-button pricing-cta"} href="/">
-              Get Started
+              Start free trial
             </a>
           </article>
         ))}
       </div>
+      <p className="pricing-trial-note">3-day trial, no card required. Scheduled Morning Reports are included during trial. Morning Alpha is a research and monitoring tool; it does not provide buy, sell, hold, or position-sizing recommendations.</p>
     </section>
   );
 }
@@ -1195,6 +1196,7 @@ function MainPage({ route, user, onLogout }) {
   const [settings, setSettings] = useState(() => userSettingsFromProfile(user));
   const [settingsError, setSettingsError] = useState("");
   const [modal, setModal] = useState(null);
+  const [bulkModal, setBulkModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [contextTarget, setContextTarget] = useState(null);
   const [editingMobilePositionId, setEditingMobilePositionId] = useState(null);
@@ -1360,6 +1362,10 @@ function MainPage({ route, user, onLogout }) {
       positionSize: Math.min(10, remaining),
       maxPositionSize: remaining,
     });
+  };
+
+  const openBulkModal = (defaultItemType = "portfolio") => {
+    setBulkModal({ defaultItemType });
   };
 
   const openEditModal = (itemType, item) => {
@@ -1572,6 +1578,7 @@ function MainPage({ route, user, onLogout }) {
               itemType="portfolio"
               items={portfolio}
               onAdd={() => openAddModal("portfolio")}
+              onBulkAdd={() => openBulkModal("portfolio")}
               onDelete={(item) => setDeleteTarget({ itemType: "portfolio", item })}
               onEdit={(item) => openEditModal("portfolio", item)}
               onOpenContext={(item) => setContextTarget(item)}
@@ -1591,6 +1598,7 @@ function MainPage({ route, user, onLogout }) {
               itemType="watchlist"
               items={watchlist}
               onAdd={() => openAddModal("watchlist")}
+              onBulkAdd={() => openBulkModal("watchlist")}
               onDelete={(item) => setDeleteTarget({ itemType: "watchlist", item })}
               onEdit={(item) => openEditModal("watchlist", item)}
               onOpenContext={(item) => setContextTarget(item)}
@@ -1646,6 +1654,20 @@ function MainPage({ route, user, onLogout }) {
               await requestJson(`/api/watchlist-items/${modal.moveFromWatchlistId}`, { method: "DELETE" });
             }
             setModal(null);
+            await loadItems();
+          }}
+        />
+      ) : null}
+
+      {bulkModal ? (
+        <BulkAddCompaniesModal
+          defaultItemType={bulkModal.defaultItemType}
+          existingSymbols={[...portfolio, ...watchlist].map((item) => item.symbol)}
+          onClose={() => {
+            setBulkModal(null);
+          }}
+          onCompleted={async () => {
+            setBulkModal(null);
             await loadItems();
           }}
         />
@@ -6953,6 +6975,7 @@ function HoldingsSection({
   itemType,
   items,
   onAdd,
+  onBulkAdd,
   onDelete,
   onEdit,
   onOpenContext,
@@ -6999,6 +7022,10 @@ function HoldingsSection({
           <button className="primary-button compact-button" onClick={onAdd} type="button">
             <Plus size={17} aria-hidden="true" />
             {actionLabel}
+          </button>
+          <button className="secondary-button compact-button" onClick={onBulkAdd} type="button">
+            <Plus size={17} aria-hidden="true" />
+            Add companies
           </button>
           {itemType === "portfolio" ? (
             <button className="secondary-button compact-button" onClick={onSort} type="button">
@@ -7188,6 +7215,292 @@ function PositionSlider({ item, isMobileEditing = false, onChange, onCommit, onM
         </button>
       </div>
       <span className="position-value">{(isMobileEditing ? Number(draftValue) : current).toFixed(1)}%</span>
+    </div>
+  );
+}
+
+function parseTickerList(value) {
+  return [...new Set(String(value || "").split(/[,\n\r\t ]+/).map((item) => item.trim().toUpperCase()).filter(Boolean))];
+}
+
+function BulkAddCompaniesModal({ defaultItemType = "portfolio", existingSymbols = [], onClose, onCompleted }) {
+  const [search, setSearch] = useState("");
+  const [results, setResults] = useState([]);
+  const [selected, setSelected] = useState([]);
+  const [pasteText, setPasteText] = useState("");
+  const [needsReview, setNeedsReview] = useState([]);
+  const [status, setStatus] = useState("idle");
+  const [error, setError] = useState("");
+  const trackedSymbols = useMemo(
+    () => new Set(existingSymbols.map((symbol) => String(symbol || "").toUpperCase()).filter(Boolean)),
+    [existingSymbols],
+  );
+  const selectedSymbols = useMemo(() => new Set(selected.map((item) => item.symbol)), [selected]);
+
+  useEffect(() => {
+    if (search.trim().length < 1) {
+      setResults([]);
+      return undefined;
+    }
+    const query = search.trim();
+    const controller = new AbortController();
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      setError("");
+      try {
+        const payload = await requestJson(`/api/stocks/search?q=${encodeURIComponent(query)}`, {
+          method: "GET",
+          signal: controller.signal,
+        });
+        if (active) {
+          setResults(payload.results ?? []);
+        }
+      } catch (err) {
+        if (err?.name === "AbortError" || !active) {
+          return;
+        }
+        setError("Stock search is temporarily unavailable.");
+      }
+    }, STOCK_SEARCH_DEBOUNCE_MS);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [search]);
+
+  const addCompany = (stock, itemType = defaultItemType) => {
+    const symbol = String(stock.symbol || "").toUpperCase();
+    if (!symbol) {
+      return false;
+    }
+    if (trackedSymbols.has(symbol)) {
+      setError(`${symbol} is already in your portfolio or watchlist.`);
+      return false;
+    }
+    if (selectedSymbols.has(symbol)) {
+      return false;
+    }
+    setSelected((current) => [
+      ...current,
+      {
+        symbol,
+        company_name: stock.company_name || symbol,
+        exchange: stock.exchange || "",
+        logo_url: stock.logo_url,
+        item_type: itemType,
+      },
+    ]);
+    setSearch("");
+    setResults([]);
+    setError("");
+    return true;
+  };
+
+  const updateCompanyType = (symbol, itemType) => {
+    setSelected((current) => current.map((item) => (item.symbol === symbol ? { ...item, item_type: itemType } : item)));
+  };
+
+  const removeCompany = (symbol) => {
+    setSelected((current) => current.filter((item) => item.symbol !== symbol));
+  };
+
+  const resolvePastedTickers = async () => {
+    const tickers = parseTickerList(pasteText);
+    if (!tickers.length) {
+      setNeedsReview([]);
+      return;
+    }
+    setStatus("resolving");
+    setError("");
+    const unresolved = [];
+    const symbolsInImport = new Set(selectedSymbols);
+    try {
+      for (const ticker of tickers) {
+        if (trackedSymbols.has(ticker)) {
+          continue;
+        }
+        if (symbolsInImport.has(ticker)) {
+          continue;
+        }
+        try {
+          const payload = await requestJson(`/api/stocks/search?q=${encodeURIComponent(ticker)}`, { method: "GET" });
+          const matches = payload.results ?? [];
+          const exact = matches.find((item) => String(item.symbol || "").toUpperCase() === ticker);
+          const match = exact || matches[0];
+          if (match) {
+            const matchSymbol = String(match.symbol || "").toUpperCase();
+            if (trackedSymbols.has(matchSymbol)) {
+              continue;
+            } else if (symbolsInImport.has(matchSymbol)) {
+              continue;
+            } else {
+              symbolsInImport.add(matchSymbol);
+              setSelected((current) => [
+                ...current,
+                {
+                  symbol: matchSymbol,
+                  company_name: match.company_name || matchSymbol,
+                  exchange: match.exchange || "",
+                  logo_url: match.logo_url,
+                  item_type: defaultItemType,
+                },
+              ]);
+            }
+          } else {
+            unresolved.push(ticker);
+          }
+        } catch {
+          unresolved.push(ticker);
+        }
+      }
+      setNeedsReview(unresolved);
+      setPasteText("");
+      setStatus("idle");
+    } catch (err) {
+      setStatus("idle");
+      setError(err instanceof Error ? err.message : "Unable to resolve pasted tickers.");
+    }
+  };
+
+  const submit = async () => {
+    if (!selected.length) {
+      setError("Add at least one company.");
+      return;
+    }
+    setStatus("generating");
+    setError("");
+    try {
+      const payload = await requestJson("/api/companies/bulk-add", {
+        method: "POST",
+        body: JSON.stringify({
+          companies: selected.map((item) => ({
+            symbol: item.symbol,
+            company_name: item.company_name,
+            item_type: item.item_type,
+          })),
+        }),
+      });
+      setStatus("complete");
+      if (payload.added_count > 0) {
+        await onCompleted(payload);
+      }
+    } catch (err) {
+      setStatus("idle");
+      setError(err instanceof Error ? err.message : "Unable to add companies.");
+    }
+  };
+
+  const isBusy = status === "resolving" || status === "generating";
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section className="modal-panel long-modal-panel bulk-add-panel" aria-modal="true" onMouseDown={(event) => event.stopPropagation()} role="dialog">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Portfolio workspace</p>
+            <h2>Add your companies</h2>
+          </div>
+          <button className="icon-button" disabled={isBusy} onClick={onClose} title="Close" type="button">
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+        <div className="bulk-add-content">
+          <p className="muted">Import the companies you actively follow. Morning Alpha will generate starter theses automatically.</p>
+
+          <div className="bulk-add-grid">
+            <div className="bulk-add-search">
+              <label>
+                Search by symbol or company name
+                <div className="search-input">
+                  <Search size={18} aria-hidden="true" />
+                  <input onChange={(event) => setSearch(event.target.value)} placeholder="META or Meta Platforms" value={search} />
+                </div>
+              </label>
+              {results.length ? (
+                <div className="search-results">
+                  {results.map((result) => (
+                    <button
+                      key={`${result.symbol}-${result.exchange || ""}`}
+                      className="search-result"
+                      onClick={() => addCompany(result)}
+                      type="button"
+                    >
+                      <img className="stock-logo" {...stockLogoProps(result.logo_url)} alt="" />
+                      <div className="stock-search-copy">
+                        <div className="stock-title-row">
+                          <strong>{result.symbol}</strong>
+                          {result.exchange ? <span className="exchange-badge">{result.exchange}</span> : null}
+                        </div>
+                        <span>{result.company_name}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="bulk-paste-box">
+              <label>
+                Paste tickers separated by commas
+                <textarea onChange={(event) => setPasteText(event.target.value)} placeholder="META, ASML, MELI" rows={5} value={pasteText} />
+              </label>
+              <button className="secondary-button compact-button" disabled={isBusy || !pasteText.trim()} onClick={resolvePastedTickers} type="button">
+                {status === "resolving" ? "Resolving..." : "Add pasted tickers"}
+              </button>
+              {needsReview.length ? <p className="muted">Needs review: {needsReview.join(", ")}</p> : null}
+            </div>
+          </div>
+
+          <div className="bulk-selected-panel">
+            <div className="bulk-selected-header">
+              <strong>{selected.length} selected</strong>
+            </div>
+            {selected.length ? (
+              <div className="bulk-selected-list">
+                {selected.map((item) => (
+                  <article className="bulk-selected-company" key={item.symbol}>
+                    <div className="stock-cell">
+                      <img className="stock-logo" {...stockLogoProps(item.logo_url)} alt="" />
+                      <div>
+                        <strong>{item.symbol}</strong>
+                        <span>{item.company_name}</span>
+                      </div>
+                    </div>
+                    <div className="bulk-company-actions">
+                      <div className="bulk-type-toggle" aria-label={`${item.symbol} relationship`}>
+                        {[
+                          ["portfolio", "Own"],
+                          ["watchlist", "Watch"],
+                        ].map(([value, label]) => (
+                          <button className={item.item_type === value ? "active" : ""} key={value} onClick={() => updateCompanyType(item.symbol, value)} type="button">
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <button className="icon-button danger" onClick={() => removeCompany(item.symbol)} title={`Remove ${item.symbol}`} type="button">
+                        <Trash2 size={16} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-table">No companies selected yet.</p>
+            )}
+          </div>
+
+          {error ? <p className="error">{error}</p> : null}
+        </div>
+        <div className="modal-actions">
+          <button className="secondary-button" disabled={isBusy} onClick={onClose} type="button">
+            Cancel
+          </button>
+          <button className="primary-button" disabled={isBusy || !selected.length} onClick={submit} type="button">
+            <Sparkles size={18} aria-hidden="true" />
+            {status === "generating" ? "Generating theses..." : "Add and generate starter theses"}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
