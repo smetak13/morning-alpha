@@ -4229,6 +4229,19 @@ textarea:focus {
   border-bottom: 0;
 }
 
+.holdings-table tbody tr.context-table-row {
+  cursor: pointer;
+}
+
+.holdings-table tbody tr.context-table-row:hover {
+  background: #181818;
+}
+
+.holdings-table tbody tr.context-table-row:focus-visible {
+  outline: 2px solid #f4c430;
+  outline-offset: -2px;
+}
+
 .stock-cell,
 .selected-stock,
 .search-result {
@@ -5598,6 +5611,10 @@ input[type="range"] {
     background: #181818;
   }
 
+  .holdings-table tbody tr.context-table-row {
+    cursor: default;
+  }
+
   .reports-table td,
   .holdings-table td {
     align-items: center;
@@ -5632,15 +5649,27 @@ input[type="range"] {
 
   .mobile-card-title-row {
     align-items: flex-start;
-    display: flex;
+    display: grid;
     gap: 12px;
-    justify-content: space-between;
+    grid-template-columns: minmax(0, 1fr) auto;
     width: 100%;
   }
 
   .mobile-card-title-row .stock-cell,
   .mobile-card-title-row .report-date-cell {
     min-width: 0;
+  }
+
+  .mobile-card-title-row .stock-cell > div,
+  .mobile-card-title-row .report-date-cell > div {
+    min-width: 0;
+  }
+
+  .mobile-card-title-row .stock-cell strong,
+  .mobile-card-title-row .stock-cell span,
+  .mobile-card-title-row .report-date-cell strong,
+  .mobile-card-title-row .report-date-cell span {
+    overflow-wrap: anywhere;
   }
 
   .mobile-open-button {

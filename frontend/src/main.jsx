@@ -24,7 +24,6 @@ import {
   Search,
   Share2,
   Sparkles,
-  Timeline,
   Trash2,
   UserPlus,
   X,
@@ -6967,6 +6966,31 @@ function HoldingsSection({
   portfolioTotal = 0,
   title,
 }) {
+  const isInteractiveRowTarget = (target) => {
+    return target instanceof Element && Boolean(target.closest("a, button, input, label, select, textarea"));
+  };
+
+  const openContextFromRow = (event, item) => {
+    if (
+      !onOpenContext ||
+      window.matchMedia?.("(max-width: 900px)").matches ||
+      isInteractiveRowTarget(event.target)
+    ) {
+      return;
+    }
+
+    onOpenContext(item);
+  };
+
+  const handleContextRowKeyDown = (event, item) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    event.preventDefault();
+    openContextFromRow(event, item);
+  };
+
   return (
     <section className="data-section">
       <div className="section-toolbar">
@@ -7004,17 +7028,29 @@ function HoldingsSection({
           <tbody>
             {items.length ? (
               items.map((item) => (
-                <tr key={item.id}>
+                <tr
+                  aria-label={`Open company context for ${item.symbol}`}
+                  className="context-table-row"
+                  key={item.id}
+                  onClick={(event) => openContextFromRow(event, item)}
+                  onKeyDown={(event) => handleContextRowKeyDown(event, item)}
+                  tabIndex={0}
+                >
                   <td data-label="Company">
-                    <div className="stock-cell">
-                      <img className="stock-logo" {...stockLogoProps(item.logo_url)} alt="" />
-                      <div>
-                        <strong>{item.symbol}</strong>
-                        <span>{item.company_name}</span>
+                    <div className="mobile-card-title-row">
+                      <div className="stock-cell">
+                        <img className="stock-logo" {...stockLogoProps(item.logo_url)} alt="" />
+                        <div>
+                          <strong>{item.symbol}</strong>
+                          <span>{item.company_name}</span>
+                        </div>
                       </div>
+                      <button className="mobile-open-button" onClick={(event) => { event.stopPropagation(); onOpenContext?.(item); }} type="button">
+                        Context
+                      </button>
                     </div>
                   </td>
-                  <td data-label="Position">
+                  <td data-label="Position" onClick={(event) => event.stopPropagation()}>
                     {itemType === "portfolio" ? (
                       <PositionSlider
                         item={item}
@@ -7033,18 +7069,15 @@ function HoldingsSection({
                     <ReportToggle checked={item.include_in_report !== false} onChange={(next) => onReportToggle(item, next)} />
                   </td>
                   <td className="actions-cell" data-label="Actions">
-                    <button className="icon-button" onClick={() => onEdit(item)} title="Edit thesis" type="button">
+                    <button className="icon-button" onClick={(event) => { event.stopPropagation(); onEdit(item); }} title="Edit thesis" type="button">
                       <Pencil size={17} aria-hidden="true" />
                     </button>
-                    <button className="icon-button" onClick={() => onOpenContext?.(item)} title="Company context" type="button">
-                      <Timeline size={17} aria-hidden="true" />
-                    </button>
                     {itemType === "watchlist" ? (
-                      <button className="icon-button" onClick={() => onMoveToPortfolio(item)} title="Move to portfolio" type="button">
+                      <button className="icon-button" onClick={(event) => { event.stopPropagation(); onMoveToPortfolio(item); }} title="Move to portfolio" type="button">
                         <MoveRight size={17} aria-hidden="true" />
                       </button>
                     ) : null}
-                    <button className="icon-button danger" onClick={() => onDelete(item)} title="Delete" type="button">
+                    <button className="icon-button danger" onClick={(event) => { event.stopPropagation(); onDelete(item); }} title="Delete" type="button">
                       <Trash2 size={17} aria-hidden="true" />
                     </button>
                   </td>
