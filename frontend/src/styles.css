@@ -2372,6 +2372,7 @@ textarea:focus {
 
 .research-preview-panel.long-modal-panel > .research-preview-content,
 .research-preview-panel.long-modal-panel > .deep-resource-content {
+  flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
 }
@@ -2458,7 +2459,7 @@ textarea:focus {
 
 .research-preview-content.loading {
   display: grid;
-  min-height: calc(96vh - 110px);
+  align-items: center;
 }
 
 .research-result {
@@ -4570,7 +4571,6 @@ input[type="range"] {
   justify-content: center;
   justify-items: center;
   min-height: 320px;
-  padding-top: 100px;
   text-align: center;
 }
 
@@ -5970,10 +5970,6 @@ input[type="range"] {
   border: 0;
   flex: 1 1 auto;
   min-height: 0;
-}
-
-.generating-state.research-detail-loading.company-context-loading {
-  padding-top: 0;
 }
 
 .company-context-content {
