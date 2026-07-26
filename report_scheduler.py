@@ -23,6 +23,7 @@ SCHEDULER_INTERVAL_MINS = int(os.getenv("SCHEDULER_INTERVAL_MINS", "15"))
 UTC = dt.timezone.utc
 PRAGUE_TZ = ZoneInfo(DEFAULT_TIMEZONE)
 STOCK_SYNC_MIN_SYMBOL_COUNT = int(os.getenv("STOCK_SYNC_MIN_SYMBOL_COUNT", "10000"))
+EARNINGS_REMINDER_LOOKAHEAD_DAYS = 7
 _last_stock_sync_date: dt.date | None = None
 _last_earnings_notification_date: dt.date | None = None
 
@@ -429,6 +430,21 @@ def refresh_stock_earnings_events(*, client: Any, today: dt.date) -> int:
             for stock in stocks:
                 symbol = str(stock["symbol"]).upper()
                 events = fetch_upcoming_earnings_events(client, symbol, today)
+                if events:
+                    cursor.execute(
+                        """
+                        delete from public.stock_earnings_events
+                        where stock_id = %(stock_id)s
+                          and event_date between %(today)s and %(week_end)s
+                          and not (event_date = any(%(event_dates)s))
+                        """,
+                        {
+                            "stock_id": stock["stock_id"],
+                            "today": today,
+                            "week_end": today + dt.timedelta(days=EARNINGS_REMINDER_LOOKAHEAD_DAYS),
+                            "event_dates": [event["event_date"] for event in events],
+                        },
+                    )
                 for event in events:
                     cursor.execute(
                         """
@@ -477,6 +493,26 @@ def refresh_stock_earnings_events(*, client: Any, today: dt.date) -> int:
     return updated
 
 
+def delete_stale_earnings_notifications(cursor: Any, today: dt.date) -> int:
+    cursor.execute(
+        """
+        delete from public.notifications notifications
+        where notifications.type = 'earnings_call_reminder'
+          and notifications.read_at is null
+          and notifications.stock_id is not null
+          and notifications.event_date between %(today)s and %(week_end)s
+          and not exists (
+              select 1
+              from public.stock_earnings_events events
+              where events.stock_id = notifications.stock_id
+                and events.event_date = notifications.event_date
+          )
+        """,
+        {"today": today, "week_end": today + dt.timedelta(days=EARNINGS_REMINDER_LOOKAHEAD_DAYS)},
+    )
+    return cursor.rowcount or 0
+
+
 def reminder_title(symbol: str, company_name: str, reminder_kind: str) -> str:
     prefix = "Soon" if reminder_kind == "1d" else "Upcoming"
     return f"{prefix}: {symbol} earnings call"
@@ -496,6 +532,7 @@ def create_earnings_notifications(today: dt.date) -> int:
     inserted = 0
     with connection(row_factory=dict_row) as conn:
         with conn.cursor() as cursor:
+            delete_stale_earnings_notifications(cursor, today)
             cursor.execute(
                 """
                 select
@@ -521,7 +558,7 @@ def create_earnings_notifications(today: dt.date) -> int:
                 where events.event_date between %(today)s and %(week_end)s
                 order by holdings.user_id, events.event_date, stocks.symbol
                 """,
-                {"today": today, "week_end": today + dt.timedelta(days=7)},
+                {"today": today, "week_end": today + dt.timedelta(days=EARNINGS_REMINDER_LOOKAHEAD_DAYS)},
             )
             rows = cursor.fetchall()
             for row in rows:
