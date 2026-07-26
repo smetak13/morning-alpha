@@ -2000,9 +2000,9 @@ def fetch_company_context_market_data(symbol: str) -> dict[str, Any]:
         return {"currency": "USD", "price_history": [], "intraday_history": [], "price_series": {}, "latest_price": None}
 
 
-def refresh_deep_research_market_data(body: dict[str, Any], symbol: str) -> tuple[dict[str, Any], bool]:
+def refresh_research_load_market_snapshot(body: dict[str, Any], symbol: str) -> dict[str, Any]:
     if not isinstance(body, dict) or body.get("mode") not in {"deep_research", "portfolio", "watchlist", "new"}:
-        return body, False
+        return body
     next_body = dict(body)
     market_data = dict(next_body.get("market_data") or {})
     deep = dict(next_body.get("deep_research") or {})
@@ -2012,14 +2012,15 @@ def refresh_deep_research_market_data(body: dict[str, Any], symbol: str) -> tupl
     quote = first_item(try_fmp_get(client, "quote", {"symbol": symbol}))
     daily_history = fetch_price_history(client, symbol, today)
     intraday_history = fetch_intraday_history(client, symbol, today, days=35)
-    current_price = first_number(latest_price_close(intraday_history), quote.get("price"), quote.get("previousClose"))
+    latest = latest_market_price(client, symbol)
+    current_price = first_number((latest or {}).get("price"), latest_price_close(intraday_history), quote.get("price"), quote.get("previousClose"))
 
     if daily_history:
         market_data["price_history"] = daily_history
     if intraday_history:
         market_data["intraday_history"] = intraday_history
         market_data["price_series"] = {
-            "1D": latest_intraday_session_points(intraday_history),
+            "1D": append_latest_point(latest_intraday_session_points(intraday_history), latest),
             "1W": resample_price_points(filter_price_points_since(intraday_history, days=7), interval_minutes=60),
             "1M": resample_price_points(filter_price_points_since(intraday_history, days=31), interval_minutes=240),
             "3M": filter_price_points_since(daily_history, days=93),
@@ -2027,10 +2028,12 @@ def refresh_deep_research_market_data(body: dict[str, Any], symbol: str) -> tupl
             "1Y": filter_price_points_since(daily_history, days=370),
             "5Y": daily_history,
         }
+    market_data["latest_price"] = serialize_latest_price(latest, currency=str(market_data.get("currency") or "USD"))
+
     if quote or current_price is not None:
         metrics = dict(market_data.get("metrics") or {})
         eps = first_number(quote.get("eps"), metrics.get("eps"))
-        shares = first_number(quote.get("sharesOutstanding"))
+        shares = first_number(quote.get("sharesOutstanding"), metrics.get("shares_outstanding"))
         market_cap = first_number(quote.get("marketCap"), current_price * shares if current_price is not None and shares is not None else None)
         if current_price is not None:
             metrics["price"] = current_price
@@ -2094,7 +2097,7 @@ def refresh_deep_research_market_data(body: dict[str, Any], symbol: str) -> tupl
 
     market_data["refreshed_at"] = dt.datetime.now(dt.UTC).isoformat()
     next_body["market_data"] = market_data
-    return next_body, next_body != body
+    return next_body
 
 
 def fetch_first_available(client: Any, candidates: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
@@ -4160,6 +4163,17 @@ def get_stock_latest_price(stock_id: str, request: Request) -> dict[str, Any]:
     return {"latest_price": latest_stock_intraday_price(str(stock["symbol"]).upper())}
 
 
+@app.get("/api/stocks/{stock_id}/market-data")
+def get_stock_market_data(stock_id: str, request: Request) -> dict[str, Any]:
+    user_id = current_user_id(request)
+    from psycopg.rows import dict_row
+
+    with connection(row_factory=dict_row) as conn:
+        with conn.cursor() as cursor:
+            stock = load_user_stock(cursor, user_id=user_id, stock_id=stock_id)
+    return {"market_data": fetch_company_context_market_data(str(stock["symbol"]).upper())}
+
+
 @app.post("/api/stocks/{stock_id}/price-plans")
 def create_price_plan(stock_id: str, payload: PricePlanCreateRequest, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
@@ -4577,7 +4591,6 @@ RESEARCH_ITEM_SELECT = """
 @app.get("/api/research-runs/{run_id}")
 def get_research_run(run_id: str, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
-    from psycopg.types.json import Json
     from psycopg.rows import dict_row
 
     with connection(row_factory=dict_row) as conn:
@@ -4624,26 +4637,16 @@ def get_research_run(run_id: str, request: Request) -> dict[str, Any]:
                 {"id": run_id, "user_id": user_id},
             )
             row = cursor.fetchone()
-            if row and isinstance(row.get("item_body"), dict):
-                try:
-                    refreshed_body, changed = refresh_deep_research_market_data(dict(row["item_body"]), str(row["symbol"]).upper())
-                    if changed and row.get("research_item_id"):
-                        cursor.execute(
-                            """
-                            update public.research_items
-                            set body = %(body)s
-                            where id::text = %(id)s
-                              and user_id = %(user_id)s
-                            """,
-                            {"body": Json(refreshed_body), "id": row["research_item_id"], "user_id": user_id},
-                        )
-                        row["item_body"] = refreshed_body
-                except Exception as exc:
-                    logger.info("Unable to refresh research run market data id=%s error=%s", run_id, exc)
 
     if not row:
         raise HTTPException(status_code=404, detail="Research run not found.")
-    return {"run": serialize_research_run_row(dict(row))}
+    run_row = dict(row)
+    if isinstance(run_row.get("item_body"), dict):
+        try:
+            run_row["item_body"] = refresh_research_load_market_snapshot(dict(run_row["item_body"]), str(run_row["symbol"]).upper())
+        except Exception as exc:
+            logger.info("Unable to refresh research run load market snapshot id=%s error=%s", run_id, exc)
+    return {"run": serialize_research_run_row(run_row)}
 
 
 @app.get("/api/research-items")
@@ -4715,7 +4718,6 @@ def list_research_items(
 @app.get("/api/research-items/{research_item_id}")
 def get_research_item(research_item_id: str, request: Request) -> dict[str, Any]:
     user_id = current_user_id(request)
-    from psycopg.types.json import Json
     from psycopg.rows import dict_row
 
     with connection(row_factory=dict_row) as conn:
@@ -4730,26 +4732,16 @@ def get_research_item(research_item_id: str, request: Request) -> dict[str, Any]
                 {"id": research_item_id, "user_id": user_id},
             )
             row = cursor.fetchone()
-            if row and isinstance(row.get("body"), dict):
-                try:
-                    refreshed_body, changed = refresh_deep_research_market_data(dict(row["body"]), str(row["symbol"]).upper())
-                    if changed:
-                        cursor.execute(
-                            """
-                            update public.research_items
-                            set body = %(body)s
-                            where id::text = %(id)s
-                              and user_id = %(user_id)s
-                            """,
-                            {"body": Json(refreshed_body), "id": research_item_id, "user_id": user_id},
-                        )
-                        row["body"] = refreshed_body
-                except Exception as exc:
-                    logger.info("Unable to refresh research item market data id=%s error=%s", research_item_id, exc)
 
     if not row:
         raise HTTPException(status_code=404, detail="Research item not found.")
-    return {"item": serialize_research_item_row(dict(row), include_body=True)}
+    item_row = dict(row)
+    if isinstance(item_row.get("body"), dict):
+        try:
+            item_row["body"] = refresh_research_load_market_snapshot(dict(item_row["body"]), str(item_row["symbol"]).upper())
+        except Exception as exc:
+            logger.info("Unable to refresh research item load market snapshot id=%s error=%s", research_item_id, exc)
+    return {"item": serialize_research_item_row(item_row, include_body=True)}
 
 
 @app.delete("/api/research-items/{research_item_id}")

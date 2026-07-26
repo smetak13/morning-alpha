@@ -4784,7 +4784,7 @@ function StockPriceChart({
   );
 }
 
-function ResearchMarketSnapshot({ marketData, showEarnings = true, userTimezone = browserTimezone() }) {
+function ResearchMarketSnapshot({ latestPrice = null, marketData, showEarnings = true, userTimezone = browserTimezone() }) {
   if (!marketData) {
     return null;
   }
@@ -4831,6 +4831,7 @@ function ResearchMarketSnapshot({ marketData, showEarnings = true, userTimezone 
           currencyCode={currencyCode}
           dailyPoints={marketData.price_history ?? []}
           intradayPoints={marketData.intraday_history ?? []}
+          latestPrice={latestPrice ?? marketData.latest_price ?? null}
           priceSeries={marketData.price_series ?? {}}
           refreshedAt={marketData.refreshed_at ?? ""}
           userTimezone={userTimezone}
@@ -5791,26 +5792,27 @@ function StockGradesPanel({ currencyCode = "USD", stockGrades = [] }) {
 }
 
 function DeepResearchContent({ payload, userTimezone = browserTimezone() }) {
-  const research = payload.research || {};
-  const deep = payload.deep_research || {};
+  const livePayload = useDeepResearchLiveMarketData(payload);
+  const research = livePayload.research || {};
+  const deep = livePayload.deep_research || {};
   const [resourceModal, setResourceModal] = useState(null);
   const sourceMap = useMemo(() => sourceByKeyMap(deep.sources), [deep.sources]);
   const hasStructuredSections = Array.isArray(research.sections) && research.sections.length > 0;
-  const earningsReports = Array.isArray(payload.market_data?.earnings_reports) ? payload.market_data.earnings_reports : [];
+  const earningsReports = Array.isArray(livePayload.market_data?.earnings_reports) ? livePayload.market_data.earnings_reports : [];
   const stockGrades = Array.isArray(deep.stock_grades) ? deep.stock_grades.slice(0, 10) : [];
-  const currencyCode = payload.market_data?.currency || deep.dcf?.currency || "USD";
+  const currencyCode = livePayload.market_data?.currency || deep.dcf?.currency || "USD";
   return (
     <>
       <div className="research-section-grid deep-research-grid">
         <ResearchSignal label="Deep research signal" value={research.signal} />
-        <ResearchMarketSnapshot marketData={payload.market_data} showEarnings={false} userTimezone={userTimezone} />
+        <ResearchMarketSnapshot marketData={livePayload.market_data} showEarnings={false} userTimezone={userTimezone} />
         <DeepResearchArtifacts artifacts={deep.artifacts} />
         <DeepResearchDcfCalculator currencyCode={currencyCode} dcf={deep.dcf} />
         <DeepResearchDataLibrary
           currencyCode={currencyCode}
           deep={deep}
           earningsReports={earningsReports}
-          nextEarningsDate={payload.market_data?.next_earnings_date}
+          nextEarningsDate={livePayload.market_data?.next_earnings_date}
           onOpenResource={setResourceModal}
           stockGrades={stockGrades}
         />
@@ -5822,7 +5824,7 @@ function DeepResearchContent({ payload, userTimezone = browserTimezone() }) {
             productSegments={research.product_segments}
             sections={research.sections}
             sourceMap={sourceMap}
-            stock={payload.stock}
+            stock={livePayload.stock}
           />
         ) : (
           <>
@@ -6287,6 +6289,90 @@ function mergeLatestPriceIntoSeries(points, latestPrice) {
   return normalizeChartPoints(next);
 }
 
+function payloadWithLatestMarketPrice(payload, latestPrice) {
+  if (!payload?.market_data || !latestPrice) {
+    return payload;
+  }
+  const marketData = payload.market_data;
+  const oneDayBase = Array.isArray(marketData.intraday_history) && marketData.intraday_history.length
+    ? marketData.intraday_history
+    : marketData.price_series?.["1D"] ?? [];
+  return {
+    ...payload,
+    market_data: {
+      ...marketData,
+      latest_price: latestPrice,
+      price_series: {
+        ...(marketData.price_series ?? {}),
+        "1D": mergeLatestPriceIntoSeries(oneDayBase, latestPrice),
+      },
+    },
+  };
+}
+
+function payloadWithLiveChartMarketData(payload, chartMarketData) {
+  if (!payload?.market_data || !chartMarketData) {
+    return payload;
+  }
+  const currentMarketData = payload.market_data;
+  return {
+    ...payload,
+    market_data: {
+      ...currentMarketData,
+      currency: chartMarketData.currency || currentMarketData.currency,
+      price_history: chartMarketData.price_history ?? currentMarketData.price_history,
+      intraday_history: chartMarketData.intraday_history ?? currentMarketData.intraday_history,
+      latest_price: chartMarketData.latest_price ?? currentMarketData.latest_price,
+      price_series: chartMarketData.price_series ?? currentMarketData.price_series,
+      refreshed_at: chartMarketData.refreshed_at ?? currentMarketData.refreshed_at,
+    },
+  };
+}
+
+function useDeepResearchLiveMarketData(payload) {
+  const [livePayload, setLivePayload] = useState(payload);
+  const stockId = payload?.stock?.stock_id;
+
+  useEffect(() => {
+    setLivePayload(payload);
+  }, [payload]);
+
+  useEffect(() => {
+    if (payload?.mode !== "deep_research" || !stockId) {
+      return undefined;
+    }
+    let cancelled = false;
+    const refreshChartMarketData = async () => {
+      try {
+        const response = await requestJson(`/api/stocks/${encodeURIComponent(stockId)}/market-data`, { method: "GET" });
+        if (!cancelled && response.market_data) {
+          setLivePayload((current) => payloadWithLiveChartMarketData(current, response.market_data));
+        }
+      } catch {
+        // Keep the research snapshot visible if live chart data is unavailable.
+      }
+    };
+    const refreshPrice = async () => {
+      try {
+        const response = await requestJson(`/api/stocks/${encodeURIComponent(stockId)}/latest-price`, { method: "GET" });
+        if (!cancelled && response.latest_price) {
+          setLivePayload((current) => payloadWithLatestMarketPrice(current, response.latest_price));
+        }
+      } catch {
+        // Keep the last successful market snapshot visible.
+      }
+    };
+    refreshChartMarketData();
+    const intervalId = window.setInterval(refreshPrice, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [payload?.mode, stockId]);
+
+  return livePayload;
+}
+
 function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }) {
   const [payload, setPayload] = useState(null);
   const [status, setStatus] = useState("loading");
@@ -6343,23 +6429,7 @@ function CompanyContextModal({ item, onClose, userTimezone = browserTimezone() }
           const nextLatest = response.latest_price ?? null;
           setLatestPrice(nextLatest);
           if (nextLatest) {
-            setPayload((current) => {
-              if (!current?.market_data) {
-                return current;
-              }
-              const marketData = current.market_data;
-              return {
-                ...current,
-                market_data: {
-                  ...marketData,
-                  latest_price: nextLatest,
-                  price_series: {
-                    ...(marketData.price_series ?? {}),
-                    "1D": mergeLatestPriceIntoSeries(marketData.intraday_history ?? [], nextLatest),
-                  },
-                },
-              };
-            });
+            setPayload((current) => payloadWithLatestMarketPrice(current, nextLatest));
           }
         }
       } catch {
