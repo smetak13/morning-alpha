@@ -7077,7 +7077,14 @@ function HoldingsSection({
                       </button>
                     </div>
                   </td>
-                  <td data-label="Position" onClick={(event) => event.stopPropagation()}>
+                  <td
+                    data-label="Position"
+                    onClick={(event) => {
+                      if (itemType === "portfolio") {
+                        event.stopPropagation();
+                      }
+                    }}
+                  >
                     {itemType === "portfolio" ? (
                       <PositionSlider
                         item={item}
